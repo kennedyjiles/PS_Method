@@ -3,14 +3,9 @@ import builtins
 import os
 import json, hashlib, h5py
 from numba import njit
-from .functions_library_universal import cauchy_sum
+from .functions_library_universal import cauchy_sum, maybe_njit, npfloat
 
-try:
-    npfloat = builtins.npfloat
-except AttributeError:
-    npfloat = np.float64  # fallback if driver didn't set it
-
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def lorentz_force_hyperB(t, y, gamma, qoverm):
     y = y.astype(npfloat)
     gamma = npfloat(gamma)
@@ -22,7 +17,7 @@ def lorentz_force_hyperB(t, y, gamma, qoverm):
 
     return np.array([y[3], y[4], y[5], ax, ay, az], dtype=npfloat)
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def PS_hyperB(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol):
     n_total = 9        # x, y, z, v_x, v_y, v_z, sinh, cosh, Bz 
     final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=npfloat)          # array to store everything

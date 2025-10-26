@@ -3,12 +3,7 @@ import builtins
 import os
 import json, hashlib, h5py
 from numba import njit
-from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift
-
-try:
-    npfloat = builtins.npfloat
-except AttributeError:
-    npfloat = np.float64  # fallback if driver didn't set it
+from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, npfloat, maybe_njit
 
 one = npfloat(1.0)
 two = npfloat(2.0)
@@ -168,7 +163,7 @@ twopointfive = npfloat(2.5)
 
 #     return final_coeff_matrix, orders_used
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def lorentz_force_dipole(t, y, qoverm):
     # Unpack position and velocity
     x, y_, z, vx, vy, vz = y
@@ -187,7 +182,7 @@ def lorentz_force_dipole(t, y, qoverm):
 
     return np.array([vx, vy, vz, ax, ay, az], dtype=npfloat)
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def PS_dipoleB(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     n_total = 17
     final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=npfloat)
@@ -325,7 +320,7 @@ def PS_dipoleB(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
 
     return final_coeff_matrix, orders_used
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def compute_mu_ps(solution_ps, mass):
     x, y, z = solution_ps[0], solution_ps[1], solution_ps[2]
     vx, vy, vz = solution_ps[3], solution_ps[4], solution_ps[5]
@@ -344,7 +339,7 @@ def compute_mu_ps(solution_ps, mass):
         mu[i] = mass * np.dot(v_perp, v_perp) / (2 * np.sqrt(B2))
     return mu
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def compute_mu_rk(solution_rk, mass):
     mu = np.zeros(len(solution_rk))
     for i in range(len(solution_rk)):
@@ -376,7 +371,7 @@ def compute_mu_rk(solution_rk, mass):
 # ==== RKG Functions ====
 # ========================
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def vector_potential_dipole(r):
     x, y, z = r
     r2 = x**2 + y**2 + z**2
@@ -392,7 +387,8 @@ def vector_potential_dipole(r):
     return np.array([Ax, Ay, Az], dtype=npfloat)
 
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+# @((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def hamiltonian_rhs(t, y, qoverm):
     x, y_, z = y[0], y[1], y[2]
     px, py, pz = y[3], y[4], y[5]
@@ -436,7 +432,7 @@ def hamiltonian_rhs(t, y, qoverm):
     return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=npfloat)
 
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):  # when using with the Lorentz force I used tol=1e-12 and eps=1e-12
     sqrt3 = np.sqrt(3.0)
     a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
@@ -494,7 +490,7 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
     return y0 + dt * (b1 * K[0] + b2 * K[1])
 
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def rkgl4_hamiltonian(func, y0, t_eval, args=()):
     nt = len(t_eval)
     d_out = np.zeros((nt, len(y0)), dtype=np.float64)
