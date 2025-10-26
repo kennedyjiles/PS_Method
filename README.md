@@ -69,9 +69,10 @@ pip install numpy scipy matplotlib pandas h5py numba
 
 ---
 
+
 ## Running Simulations
 
-Each of the three main scripts can be executed directly from the repository root:
+Each of the three main simulation drivers (`constB.py`, `hyperB.py`, `dipoleB.py`) can be executed directly from the repository root:
 
 ```bash
 python constB.py
@@ -79,7 +80,11 @@ python hyperB.py
 python dipoleB.py
 ```
 
-At the top of each file, a configuration block defines the **run mode**, **integration parameters**, and **output options**.
+By default, **all scripts run in `demo` mode** unless otherwise specified. The default settings produce short, lightweight runs suitable for quick verification and visualization.
+
+At the top of each main driver file, a small configuration block defines the **run mode**, with a note on available modes. To switch between modes, update this block or supply a command-line argument if supported. The main driver file (e.g., `dipoleB.py`) determines which configuration to execute—`demo` or `paper`—and calls the corresponding setup and integration routines.
+
+Each **test particle file** (e.g., `constB_testparticles.py`, `dipoleB_testparticles.py`) defines the initial particle parameters (position, velocity, charge-to-mass ratio, kinetic, etc.)  and integration settings (time step, number of steps, maximum PS order, tolerances, etc.). These parameters are passed to the solver functions in the corresponding field-specific library. 
 
 ### Run modes
 | Mode | Purpose | Description |
