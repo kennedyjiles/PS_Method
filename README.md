@@ -1,93 +1,213 @@
-Parker-Sochacki Method — Particle Simulation Utilities
-=====================================================
+# Parker–Sochacki Method: Charged-Particle Motion in Magnetic Fields
 
-Summary
--------
-This repository contains Python code and supporting utilities for simulating charged-particle motion using the Parker–Sochacki Method vs several Runge-Kutta Methods. It includes example simulation drivers for different magnetic field geometries, a set of reusable function libraries, test particle scripts and plotting helpers.
+## Overview
+This repository contains the full suite of Python codes developed to compare the **Parker–Sochacki (PS) power-series integration method** against several **Runge–Kutta-based solvers** (RK4, RK45, and symplectic RKG) for charged-particle motion in various magnetic-field configurations.
 
-Repository layout
------------------
-- `constB.py`, `dipoleB.py`, `hyperB.py` — top-level simulation drivers for constant, dipole and hyperbolic magnetic-field configurations.
-- `inspect_hdf5.py` — helper to inspect HDF5 output files (if used by simulations).
-- `master_simulation_log.csv` — CSV log used to record simulation runs and parameters.
-- `functions/` — reusable function libraries used across simulations:
-  - `functions_library_constB.py`
-  - `functions_library_dipole.py`
-  - `functions_library_hyper.py`
-  - `functions_library_universal.py`
-- `test_particles/` — example/test particle scripts and small test drivers (includes archived example particle scripts).
-- `misc_plots/` — scripts and generated plots (example outputs, CSVs and plotting helpers).
+The project was developed as part of graduate research at **George Mason University**, focused on energy and magnetic-moment conservation, adaptive truncation, and numerical performance across field geometries representative of magnetospheric environments.
 
-Requirements
-------------
-A `ps_method.yml` file is provided to create a reproducible conda environment with the exact package versions used for the paper. The main dependencies are:
+Three benchmark problems are included:
+- **`constB.py`** — Uniform magnetic field (circular gyro-motion benchmark)
+- **`hyperB.py`** — Hyperbolic field \( B_z = B_0 \tanh(\alpha y) \) (current-sheet analog)
+- **`dipoleB.py`** — Earth-like dipole field (non-uniform, curved-field geometry)
 
-- python=3.9.13
-- numpy=1.21.5
-- scipy=1.9.1
-- matplotlib=3.5.2
-- pandas=1.4.4
-- h5py=3.7.0
-- numba=0.56.3
+Each driver can be run in **demo** or **paper** mode, depending on whether a fast diagnostic or full-scale reproduction of published results is desired.
 
-To ensure full compatibility with the published results, use the provided `ps_method.yml` file to create your environment.
+---
 
-Install (recommended virtualenv)
--------------------------------
-1. Create and activate a virtual environment:
+## Repository Layout
 
-   python3 -m venv .venv
-   source .venv/bin/activate
+```
+.
+├── constB.py                   # Main simulation driver (uniform field)
+├── hyperB.py                   # Main simulation driver (hyperbolic/current-sheet field)
+├── dipoleB.py                  # Main simulation driver (dipole field)
+│
+├── functions/
+│   ├── functions_library_constB.py
+│   ├── functions_library_hyper.py
+│   ├── functions_library_dipole.py
+│   └── functions_library_universal.py     # Shared numerical + plotting utilities
+│
+├── test_particles/
+│   ├── constB_testparticles.py
+│   ├── hyperB_testparticles.py
+│   └── dipoleB_testparticles.py
+│
+├── misc_plots/                 # Example figures and post-processing scripts
+├── master_simulation_log.csv   # Optional CSV record of parameter sets
+├── ps_method.yml               # Conda environment specification
+└── README.md
+```
 
-2. Install dependencies (example):
+---
 
-   pip install numpy scipy matplotlib pandas h5py
+## Installation and Environment Setup
 
-Running simulations
--------------------
-- To run one of the main simulation drivers from the repository root:
+### Option 1 — Conda (recommended)
+Create the exact environment used for the paper:
 
-  python constB.py\
-  python dipoleB.py\
-  python hyperB.py\
+```bash
+conda env create -f ps_method.yml
+conda activate ps_method
+```
 
-- See the top of each driver for configurable parameters (initial conditions, timesteps, output paths).
+### Option 2 — Virtual environment with pip
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install numpy scipy matplotlib pandas h5py numba
+```
 
-Testing and example particles
------------------------------
-- The `test_particles/` folder contains lightweight scripts for exercising the integrators and particle setup. Each script includes two modes:
+### Key dependencies
+- Python ≥ 3.9  
+- NumPy ≥ 1.21  
+- SciPy ≥ 1.9  
+- Matplotlib ≥ 3.5  
+- Pandas ≥ 1.4  
+- h5py ≥ 3.7  
+- Numba ≥ 0.56  
 
-  - Demo mode: quick, minimal examples that typically run in a couple of seconds and produce a small set of outputs useful for verifying the environment and visualizing a short trajectory.
+---
 
-  - Paper mode: configuration that reproduces the longer runs and parameter choices used in the paper; these runs can take substantially longer and generate the datasets and figures used in published results.
+## Running Simulations
 
-- How to choose a mode:
-  - Many scripts accept a command-line argument (e.g. `demo` or `paper`) or expose a top-level `MODE` or configuration variable — check the header of the specific script for details. Example usages (if supported by the script):
+Each of the three main scripts can be executed directly from the repository root:
 
-    - Quick demo: `python test_particles/constB_testparticles.py demo`
-    - Reproduce paper results: `python test_particles/constB_testparticles.py paper`
+```bash
+python constB.py
+python hyperB.py
+python dipoleB.py
+```
 
-  - If the script does not accept arguments, open the script and set the small configuration block at the top to `demo` or `paper`, then run the script normally.
+At the top of each file, a configuration block defines the **run mode**, **integration parameters**, and **output options**.
 
-- Recommendation: use demo mode to confirm the environment and get fast visual feedback. Use paper mode when you need to reproduce published figures or generate the full datasets; allocate more time or run on a dedicated compute node for paper-mode runs.
+### Run modes
+| Mode | Purpose | Description |
+|------|----------|-------------|
+| `demo` | Quick verification | Short, lightweight run for testing setup and viewing basic trajectory plots (typically seconds). |
+| `paper` | Full simulation | High-order PS expansion with small time steps, reproducing results from the paper (can take several minutes). |
 
-- To change the physical parameters or variables for a simulation (such as initial positions, velocities, field strengths, or integration settings), edit the relevant values directly in the corresponding script within the `test_particles/` directory. Each test particle file contains a configuration section near the top where these parameters can be adjusted to explore different scenarios or reproduce specific results.
+Example (inside a driver or test script):
+```python
+run = "demo"      # or "paper"
+```
 
-Plots and analysis
-------------------
-- The main simulation codes will automatically generate output folders containing plots and data relevant to each run. These folders are created in the working directory and include figures such as particle trajectories, kinetic energy error, and other diagnostics for the specific simulation parameters used.
+---
 
-- The `misc_plots/` directory contains additional plotting scripts and example outputs. These are especially useful for reproducing or complementing figures from the paper, with a particular focus on the dipole simulations and the collection of substation runs. Use these scripts to further analyze, compare, or visualize results beyond the standard outputs of the main codes.
+## Example Command-Line Usage
 
-- If you are interested in the substation runs or want to explore the broader set of results used in the paper, start by reviewing the scripts and CSVs in `misc_plots/`.
+### 1. Constant Magnetic Field
+Quick demo:
+```bash
+python constB.py
+```
+Produces a circular trajectory and energy conservation plot in `constB_outputs_demo/`.
 
-Project notes
--------------
-- The core numerical helpers are in `functions/`. Split across files by field-geometry so the drivers remain small.
-- This repository appears to have been developed for research/educational purposes. Back up any important data before running long simulations.
+Reproduce paper results:
+```bash
+python constB.py --mode paper
+```
+Generates high-order PS runs with kinetic energy error plots (10⁻¹¹–10⁻¹⁸ range).
 
-Contact
--------
-For questions about usage or development, open an issue in the repository or contact the project owner.
+### 2. Hyperbolic Magnetic Field
+Quick demo:
+```bash
+python hyperB.py
+```
+Visualizes the figure-eight motion near the current sheet with adaptive PS truncation.
 
-(Generated README — edit to add project-specific instructions, parameter descriptions and usage examples.)
+### 3. Dipole Magnetic Field
+Quick demo:
+```bash
+python dipoleB.py
+```
+Produces a 3-D trajectory in Earth-like dipole geometry and logs drift/bounce statistics.
+
+Reproduce full paper datasets:
+```bash
+python dipoleB.py --mode paper
+```
+Expected outputs are saved under `dipoleB_outputs_paper/` with trajectory and error summaries.
+
+---
+
+## Precision and Truncation Control
+
+### Floating-point precision
+Precision can be toggled globally using the `npfloat` alias inside the library files:
+- `npfloat = np.float64` (default, fast and sufficient for most demo runs)
+- `npfloat = np.float128` (extended precision for paper-quality energy conservation)
+
+When using `float128`, make sure your platform supports it (Linux/macOS only; Windows typically maps it to long double).
+
+### Adaptive PS-order truncation
+The Parker–Sochacki expansion is truncated dynamically based on term magnitude:
+- The **PS order \(M\)** increases until consecutive term contributions drop below a chosen tolerance.
+- Tolerances can be set to machine epsilon (`np.finfo(npfloat).eps`) or a user-defined threshold (e.g., `1e-35`).
+- This adaptive termination ensures efficient convergence without compromising accuracy.
+
+---
+
+## Output and Post-Processing
+
+Each run automatically creates a results folder in the working directory, e.g.:
+
+```
+constB_outputs_demo/
+dipoleB_outputs_paper/
+```
+
+These directories typically include:
+- 3-D trajectory plots (`.png`, `.pdf`)
+- Time-series diagnostics (kinetic energy, relative error, magnetic moment)
+- Optional `.csv` or `.h5` data archives for post-processing
+- Logs of PS order and truncation metrics (for paper mode)
+
+Supplementary analysis and comparison figures are stored under **`misc_plots/`**, along with scripts that generate the publication figures for the dipole runs and substation analyses.
+
+---
+
+## Performance Notes
+
+- **Numba acceleration:** All core PS recurrence loops and Runge–Kutta updates are JIT-compiled with `@njit` for near-C performance.  
+- **Series order:** Typical PS orders range 10–40 depending on field geometry and tolerance.  
+- **Step size:** Usually expressed in units of the gyroperiod; ensuring ~65–100 integration points per gyration yields accurate energy conservation.  
+- **Conservation metrics:** Relative kinetic-energy errors reach \(10^{-11}\)–\(10^{-18}\) depending on precision.
+
+---
+
+## Extending the Framework
+
+To modify or extend:
+1. Add a new field configuration by creating a `functions_library_<field>.py` file and corresponding `<field>.py` driver.
+2. Define recurrence relations for the PS method and include analytical or RK reference solvers for comparison.
+3. Register any new helper in `functions_library_universal.py` for consistent plotting, timing, and error handling.
+
+---
+
+## Reproducibility and Data
+
+- The repository is deterministic: given the same initial conditions, PS order, and tolerance, results should reproduce exactly.
+- For large simulations, HDF5 caching can be enabled to store all particle time series efficiently.
+- The `master_simulation_log.csv` records parameter sets for traceability.
+
+---
+
+## Citation
+If you use this code or build upon it in your research, please cite:
+
+> H. Jiles and R. Weigel, *“Comparative Evaluation of the Parker–Sochacki Power-Series Method and Runge–Kutta Integrators for Charged-Particle Motion,”* in preparation (2025).
+
+---
+
+## Contact
+For questions, bug reports, or collaboration:
+- **Author:** Heather Jiles  
+- **Advisor:** Dr. Robert Weigel, George Mason University  
+- **Email:** (add if desired)  
+- Or open an issue on the repository.
+
+---
+
+*This README was generated and updated for the 2025 research code release.*
+
