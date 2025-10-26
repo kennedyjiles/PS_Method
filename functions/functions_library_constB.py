@@ -4,13 +4,22 @@ from numba import njit
 
 try:
     npfloat = builtins.npfloat
-except AttributeError:
-    npfloat = np.float64  # fallback if driver didn't set it
+except Exception:
+    npfloat = np.float64  # fallback if not defined globally
+
+has_float128 = getattr(np, "float128", None) is not None
+
+def maybe_njit(func):
+    if has_float128 and npfloat == np.float128:
+        return func
+    else:
+        return njit(func)
 
 
 one = npfloat(1.0)
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+# @((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def PS_constantB_adaptive(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol):
     n_total = 6        # x, y, z, v_x, v_y, v_z
     final_coeff_matrix = np.zeros((n_total, steps + 1), dtype=npfloat)  # array to store everything
@@ -68,7 +77,7 @@ def analytical_constantB(t, d, Bfield, qoverm):
 
     return np.vstack((x_t, y_t, z_t, vx_t, vy_t, vz_t))
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def lorentz_force_constB(t, d, Bfield, qoverm):
     x, y, z, vx, vy, vz = d  
     dvx = qoverm * (vy * Bfield[2] - vz * Bfield[1])
