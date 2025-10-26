@@ -1,14 +1,14 @@
 # Parker–Sochacki Method: Charged-Particle Motion in Magnetic Fields
 
 ## Overview
-This repository contains the full suite of Python codes developed to compare the **Parker–Sochacki (PS) power-series integration method** against several **Runge–Kutta-based solvers** (RK4, RK45, and symplectic RKG) for charged-particle motion in various magnetic-field configurations.
+This repository contains the full suite of Python codes developed to compare the **Parker–Sochacki (PS) power-series integration method** against several **Runge–Kutta-based solvers** (fixed-step fourth order (RK4), adaptive Dormand-Prince (RK45), and the symplectic application of the Gauss-Lagrange Runge-Kutta) for charged-particle motion in various magnetic-field configurations.
 
 The project was developed as part of graduate research at **George Mason University**, focused on energy and magnetic-moment conservation, adaptive truncation, and numerical performance across field geometries representative of magnetospheric environments.
 
 Three benchmark problems are included:
-- **`constB.py`** — Uniform magnetic field (circular gyro-motion benchmark)
-- **`hyperB.py`** — Hyperbolic field \( B_z = B_0 \tanh(\alpha y) \) (current-sheet analog)
-- **`dipoleB.py`** — Earth-like dipole field (non-uniform, curved-field geometry)
+- **`constB.py`** — Uniform magnetic field
+- **`hyperB.py`** — Hyperbolic tangent field $B_z = B_0 \tanh(\alpha y)$ (current-sheet analog)
+- **`dipoleB.py`** — Dipole magnetic field (Earth's dipole representation) 
 
 Each driver can be run in **demo** or **paper** mode, depending on whether a fast diagnostic or full-scale reproduction of published results is desired.
 
@@ -59,13 +59,13 @@ pip install numpy scipy matplotlib pandas h5py numba
 ```
 
 ### Key dependencies
-- Python ≥ 3.9  
-- NumPy ≥ 1.21  
-- SciPy ≥ 1.9  
-- Matplotlib ≥ 3.5  
-- Pandas ≥ 1.4  
-- h5py ≥ 3.7  
-- Numba ≥ 0.56  
+- Python = 3.9.13 
+- NumPy = 1.21.5  
+- SciPy = 1.9.1  
+- Matplotlib = 3.5.2  
+- Pandas = 1.4.4  
+- h5py = 3.7.0  
+- Numba = 0.56.3  
 
 ---
 
@@ -134,7 +134,7 @@ Expected outputs are saved under `dipoleB_outputs_paper/` with trajectory and er
 ## Precision and Truncation Control
 
 ### Floating-point precision
-Precision can be toggled globally using the `npfloat` alias inside the library files:
+Precision can be toggled globally using the `npfloat` alias inside the test particle files:
 - `npfloat = np.float64` (default, fast and sufficient for most demo runs)
 - `npfloat = np.float128` (extended precision for paper-quality energy conservation)
 
@@ -196,7 +196,8 @@ To modify or extend:
 ## Citation
 If you use this code or build upon it in your research, please cite:
 
-> H. Jiles and R. Weigel, *“Comparative Evaluation of the Parker–Sochacki Power-Series Method and Runge–Kutta Integrators for Charged-Particle Motion,”* in preparation (2025).
+> H. Jiles and R. Weigel, *“The Parker-Sochacki Method vs. Runge-Kutta Methods for Particle Motion
+in Static Magnetic Fields,”* in preparation (2026).
 
 ---
 
@@ -208,6 +209,3 @@ For questions, bug reports, or collaboration:
 - Or open an issue on the repository.
 
 ---
-
-*This README was generated and updated for the 2025 research code release.*
-
