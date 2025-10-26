@@ -21,8 +21,8 @@ globals().update(load_params(run))
 
 # === Misc Odds and Ends ===
 mpl.rcParams['agg.path.chunksize'] = 100000  
-run_storage = "/Users/heatherjiles/Documents/Grad School/Parker-Sochacki Method/runs_keep"    # where trajectory files go
-plt_config(scale=1)                         # config file for setting plot sizes and fonts (from Dr. W)
+run_storage = "outputs_rawdata"      # where trajectory files go
+plt_config(scale=1)                   # config file for setting plot sizes and fonts (from Dr. W)
 os.makedirs(run_storage, exist_ok=True)
 plt.ioff()              # Turn off interactive mode for plots
 if USE_FLOAT128: USE_RKG=False

@@ -3,7 +3,7 @@ Parker-Sochacki Method — Particle Simulation Utilities
 
 Summary
 -------
-This repository contains Python code and supporting utilities for simulating charged-particle motion using the Parker–Sochacki Method. It includes example simulation drivers for different magnetic field geometries, a set of reusable function libraries, test particle scripts and plotting helpers.
+This repository contains Python code and supporting utilities for simulating charged-particle motion using the Parker–Sochacki Method vs several Runge-Kutta Methods. It includes example simulation drivers for different magnetic field geometries, a set of reusable function libraries, test particle scripts and plotting helpers.
 
 Repository layout
 -----------------
@@ -20,13 +20,17 @@ Repository layout
 
 Requirements
 ------------
-- Python 3.9+ (project contains .pyc files from CPython 3.9, but newer 3.x versions should work)
-- Typical scientific Python stack (install with pip):
-  - numpy
-  - scipy
-  - matplotlib
-  - pandas
-  - h5py (optional — only if using HDF5 output/inspection)
+A `ps_method.yml` file is provided to create a reproducible conda environment with the exact package versions used for the paper. The main dependencies are:
+
+- python=3.9.13
+- numpy=1.21.5
+- scipy=1.9.1
+- matplotlib=3.5.2
+- pandas=1.4.4
+- h5py=3.7.0
+- numba=0.56.3
+
+To ensure full compatibility with the published results, use the provided `ps_method.yml` file to create your environment.
 
 Install (recommended virtualenv)
 -------------------------------
@@ -43,9 +47,9 @@ Running simulations
 -------------------
 - To run one of the main simulation drivers from the repository root:
 
-  python constB.py
-  python dipoleB.py
-  python hyperB.py
+  python constB.py\
+  python dipoleB.py\
+  python hyperB.py\
 
 - See the top of each driver for configurable parameters (initial conditions, timesteps, output paths).
 
