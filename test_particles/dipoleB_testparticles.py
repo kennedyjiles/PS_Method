@@ -79,7 +79,7 @@ def load_params(run):
         rk4_step = npfloat(12.1)                
         ps_step = rk4_step                      
         rkg_step = rk4_step
-        norm_time = (1e6) * ps_step
+        norm_time = (1e5) * ps_step
 
 
 

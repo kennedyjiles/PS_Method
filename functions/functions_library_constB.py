@@ -1,24 +1,10 @@
 import builtins
 import numpy as np
 from numba import njit
-
-try:
-    npfloat = builtins.npfloat
-except Exception:
-    npfloat = np.float64  # fallback if not defined globally
-
-has_float128 = getattr(np, "float128", None) is not None
-
-def maybe_njit(func):
-    if has_float128 and npfloat == np.float128:
-        return func
-    else:
-        return njit(func)
-
+from functions.functions_library_universal import maybe_njit, npfloat
 
 one = npfloat(1.0)
 
-# @((lambda f: f) if npfloat == np.float128 else njit)
 @maybe_njit
 def PS_constantB_adaptive(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol):
     n_total = 6        # x, y, z, v_x, v_y, v_z
