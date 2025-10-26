@@ -14,13 +14,13 @@ from functions.functions_library_hyper import PS_hyperB, lorentz_force_hyperB
 from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig
 from functions.functions_library_hyper import get_run_params, h5_path_for, save_results_h5, load_results_h5
 
-run = "demo"   # options: "paper" or "demo"
+run = "paper1"   # options: "demo", "paper1", "paper2", "paper3", or "paper4"
 
 globals().update(load_params(run))
 
 # === Misc Odds and Ends ===
 mpl.rcParams['agg.path.chunksize'] = 100000  
-run_storage = "/Users/heatherjiles/Documents/Grad School/Parker-Sochacki Method/run_data"    # where trajectory files go
+run_storage = "outputs_rawdata"      # where trajectory files go
 os.makedirs(run_storage, exist_ok=True)
 plt_config(scale=1)    # Dr. W's Plotting SCrip
 plt.ioff()              # Turn off interactive mode for plots

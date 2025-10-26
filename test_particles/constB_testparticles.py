@@ -49,7 +49,7 @@ norm_time -- this should be some multiple of gyroperiods desired (norm_time/2π 
 def load_params(run):
     if run == "paper":
         print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "constB_outputs_paper"
+        output_folder = "outputs_constB_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True
         USE_RK4 = True
@@ -72,7 +72,7 @@ def load_params(run):
 
     elif run == "demo":
         print("Running DEMO simulation...this should be done in a couple seconds\n")
-        output_folder = "constB_outputs_demo"
+        output_folder = "outputs_constB_demo"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True
         USE_RK4 = True

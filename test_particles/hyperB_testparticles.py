@@ -1,7 +1,7 @@
 import numpy as np
 import os
 
-USE_FLOAT128 = False
+USE_FLOAT128 = True
 
 if USE_FLOAT128: npfloat = np.float128 
 else: npfloat = np.float64
@@ -49,12 +49,12 @@ def load_params(run):
     if run == "paper1":
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "hyperB_outputs_paper"
+        output_folder = "outputs_hyperB_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
         READ_DATA = False      
-        WRITE_DATA = False     
+        WRITE_DATA = True     
         USE_PLOT_TITLES = False
         USE_FULL_PLOT = False 
 
@@ -75,7 +75,7 @@ def load_params(run):
 
     elif run == "demo":
         print("Running DEMO simulation...this should be done in a couple seconds\n")
-        output_folder = "hyperB_outputs_demo"
+        output_folder = "outputs_hyperB_demo"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
@@ -101,7 +101,7 @@ def load_params(run):
 
     elif run == "paper2":
         print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "hyperB_outputs_paper"
+        output_folder = "outputs_hyperB_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
@@ -128,7 +128,7 @@ def load_params(run):
 
     elif run == "paper3":
         print("Running full PAPER3 simulation...this can take a few minutes\n")
-        output_folder = "hyperB_outputs_paper"
+        output_folder = "outputs_hyperB_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
@@ -155,7 +155,7 @@ def load_params(run):
 
     elif run == "paper4":
         print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "hyperB_outputs_paper"
+        output_folder = "outputs_hyperB_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
