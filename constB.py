@@ -16,7 +16,7 @@ run = "demo"   # options: "paper" or "demo"
 globals().update(load_params(run))
 
 # === Misc Odds and Ends ===
-mpl.rcParams['agg.path.chunksize'] = 10000  
+mpl.rcParams['agg.path.chunksize'] = 100  
 plt_config(scale=1) 
 plt.ioff()              # Turns off interactive mode for figures
 
