@@ -1,7 +1,7 @@
 import numpy as np
 import os
 
-USE_FLOAT128 = True  # RKG Will be diabled if this is True
+USE_FLOAT128 = False  # RKG Will be diabled if this is True
 
 if USE_FLOAT128: npfloat = np.float128 
 else: npfloat = np.float64
@@ -58,9 +58,9 @@ def load_params(run):
         else: print("Running full PAPER simulation...this can take a few minutes\n")
         output_folder = "dipoleB_outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = False  
-        USE_RK4 = False 
-        USE_RKG = False  
+        USE_RK45 = True  
+        USE_RK4 = True 
+        USE_RKG = True  
         USE_PLOT_TITLES = True
         READ_DATA = False
         WRITE_DATA = True
@@ -79,7 +79,7 @@ def load_params(run):
         rk4_step = npfloat(12.1)                
         ps_step = rk4_step                      
         rkg_step = rk4_step
-        norm_time = (1e7) * ps_step
+        norm_time = (1e6) * ps_step
 
 
 

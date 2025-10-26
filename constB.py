@@ -11,7 +11,7 @@ from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter
 from functions.functions_library_constB import PS_constantB_adaptive, analytical_constantB, lorentz_force_constB, vector_error
 from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, interp_to_grid, interp_to_grid, data_to_fig
 
-run = "paper"   # options: "paper" or "demo"
+run = "demo"   # options: "paper" or "demo"
 
 globals().update(load_params(run))
 

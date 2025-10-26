@@ -1,7 +1,7 @@
 import numpy as np
 import os
 
-USE_FLOAT128 = True
+USE_FLOAT128 = False
 
 if USE_FLOAT128: npfloat = np.float128 
 else: npfloat = np.float64
