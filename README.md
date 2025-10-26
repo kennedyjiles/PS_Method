@@ -80,11 +80,11 @@ python hyperB.py
 python dipoleB.py
 ```
 
-By default, **all scripts run in `demo` mode** unless otherwise specified. The default settings produce short, lightweight runs suitable for quick verification and visualization.
+By default, **all scripts run in `demo` mode**. The default settings produce short, lightweight runs suitable for quick verification and visualization.
 
 At the top of each main driver file, a small configuration block defines the **run mode**, with a note on available modes. To switch between modes, update this block or supply a command-line argument if supported. The main driver file (e.g., `dipoleB.py`) determines which configuration to execute—`demo` or `paper`—and calls the corresponding setup and integration routines.
 
-Each **test particle file** (e.g., `constB_testparticles.py`, `dipoleB_testparticles.py`) defines the initial particle parameters (position, velocity, charge-to-mass ratio, kinetic, etc.)  and integration settings (time step, number of steps, maximum PS order, tolerances, etc.). These parameters are passed to the solver functions in the corresponding field-specific library. 
+Each **test particle file** (e.g., `constB_testparticles.py`, `dipoleB_testparticles.py`) defines the initial particle parameters (position, velocity, charge-to-mass ratio, kinetic, etc.) and integration settings (time step, number of steps, maximum PS order, tolerances, etc.). These parameters are passed to the solver functions in the corresponding field-specific library. 
 
 ### Run modes
 | Mode | Purpose | Description |
@@ -158,12 +158,12 @@ The Parker–Sochacki expansion is truncated dynamically based on term magnitude
 Each run automatically creates a results folder in the working directory, e.g.:
 
 ```
-constB_outputs_demo/
-dipoleB_outputs_paper/
+outputs_constB_demo/
+outputs_dipoleB_paper/
 ```
 
 These directories typically include:
-- 3-D trajectory plots (`.png`, `.pdf`)
+- 2-D and/or 3-D trajectory plots (`.png`)
 - Time-series diagnostics (kinetic energy, relative error, magnetic moment)
 - Optional `.csv` or `.h5` data archives for post-processing
 - Logs of PS order and truncation metrics (for paper mode)
@@ -174,7 +174,6 @@ Supplementary analysis and comparison figures are stored under **`misc_plots/`**
 
 ## Performance Notes
 
-- **Numba acceleration:** All core PS recurrence loops and Runge–Kutta updates are JIT-compiled with `@njit` for near-C performance.  
 - **Series order:** Typical PS orders range 10–40 depending on field geometry and tolerance.  
 - **Step size:** Usually expressed in units of the gyroperiod; ensuring ~65–100 integration points per gyration yields accurate energy conservation.  
 - **Conservation metrics:** Relative kinetic-energy errors reach \(10^{-11}\)–\(10^{-18}\) depending on precision.
@@ -210,7 +209,5 @@ in Static Magnetic Fields,”* in preparation (2026).
 For questions, bug reports, or collaboration:
 - **Author:** Heather Jiles  
 - **Advisor:** Dr. Robert Weigel, George Mason University  
-- **Email:** (add if desired)  
-- Or open an issue on the repository.
 
 ---
