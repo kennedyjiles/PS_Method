@@ -6,8 +6,17 @@ import matplotlib.pyplot as plt
 
 try:
     npfloat = builtins.npfloat
-except AttributeError:
-    npfloat = np.float64  # fallback if driver didn't set it
+except Exception:
+    npfloat = np.float64  # fallback if not defined globally
+
+has_float128 = getattr(np, "float128", None) is not None
+
+def maybe_njit(func):
+    if has_float128 and npfloat == np.float128:
+        return func
+    else:
+        return njit(func)
+
 
 two = npfloat(2.0)
 six = npfloat(6.0)
@@ -17,23 +26,27 @@ half = npfloat(0.5)
 # ============= KE fo Drift  ============
 # #########################################
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+# @((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def kinetic_energy(vx, vy, vz, m=npfloat(1.0)):
     return half * m * (vx**two + vy**two + vz**two)
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+# @((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def compute_energy_drift(vx, vy, vz):
     KE = kinetic_energy(vx, vy, vz)
     return (KE - KE[0]) / KE[0]
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+# @((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def extract_v(sol):  # assumes PS output has x, y, z, vx, vy, vz as initial entries
     return sol[3], sol[4], sol[5]
 
 # #########################################
 # ============= Cauchy Related ============
 # #########################################
-@((lambda f: f) if npfloat == np.float128 else njit)
+# @((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def cauchy_sum(a, b, n):
     result = 0.0
     for j in range(n + 1):
@@ -44,7 +57,8 @@ def cauchy_sum(a, b, n):
 # =============== Runge Kutta 4th Order Fixed Step ===============
 # ================================================================
 
-@((lambda f: f) if npfloat == np.float128 else njit)
+# @((lambda f: f) if npfloat == np.float128 else njit)
+@maybe_njit
 def rk4_fixed_step(func, d0, t, args=()):
     """
     func will generally be the lorentz force function
