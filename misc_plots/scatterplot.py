@@ -10,13 +10,16 @@ sys.path.append('/Users/heatherjiles/Documents/GitHub/GradSchool')
 from PSMethod.code.definitions.functions_library_universal import plt_config, sparse_labels
 
 # === Load CSV ===
-csv_path = "proton_energy_results.csv"
+csv_path = "electron_summary_results.csv"
 df = pd.read_csv(csv_path)
 plt_config(scale=1)
 
+# === Toggle electron/proton  and mu/E data ===
+USE_ELECTRON = True  # True for electrons, False for protons
+USE_MU = False   # True for Δμ, False for ΔE
+
 
 # === Toggle which error to plot ===
-USE_MU = True   # True for Δμ, False for ΔE
 if USE_MU:
     ERR_COLUMN = "errMu_mean"
     YLABEL = r"$|\Delta \mu|/\mu_0$"
@@ -49,18 +52,20 @@ def energy_to_numeric(label: str) -> float:
 df_energy["energy_numeric_eV"] = df_energy["energy_label"].apply(energy_to_numeric)
 
 # === Fixed bubble sizes for four energies ===
-# energy_size_map = {
-#     1e4: 30,    # 10 keV
-#     1e5: 70,    # 100 keV
-#     1e6: 150,   # 1 MeV
-#     1e7: 270    # 10 MeV
-# }
-energy_size_map = {
-    50e3: 30,    # 50 keV
-    1e6: 70,    # 1 MeV
-    100e6: 150,   # 100 MeV
-    150e6: 270    # 150 MeV
-}
+if USE_ELECTRON:
+    energy_size_map = {
+        50e3: 30,    # 50 keV
+        1e6: 70,    # 1 MeV
+        100e6: 150,   # 100 MeV
+        150e6: 270
+        }
+else:
+    energy_size_map = {
+        1e4: 30,    # 10 keV
+        1e5: 70,    # 100 keV
+        1e6: 150,   # 1 MeV
+        1e7: 270 
+        }
 
 
 df_energy["size"] = df_energy["energy_numeric_eV"].map(energy_size_map)
@@ -86,23 +91,23 @@ for method, df_m in df_energy.groupby("method"):
             df_90["runtime_s"], df_90[ERR_COLUMN],
             s=df_90["size"], alpha=0.8, color=color, label=method
         )
-
-    # # Pitch = 30 (black ring)
-    # df_30 = df_m[df_m["pitch_deg"] == 30]
-    # if not df_30.empty:
-    #     plt.scatter(
-    #         df_30["runtime_s"], df_30[ERR_COLUMN],
-    #         s=df_30["size"], alpha=0.8,
-    #         facecolors=color, edgecolors="black", linewidths=0.8
-    #     )
-    # Pitch = 60 (black ring)
-    df_60 = df_m[df_m["pitch_deg"] == 60]
-    if not df_60.empty:
-        plt.scatter(
-            df_60["runtime_s"], df_60[ERR_COLUMN],
-            s=df_60["size"], alpha=0.8,
-            facecolors=color, edgecolors="black", linewidths=0.8
-        )
+    if USE_ELECTRON:
+        # Pitch = 60 (black ring)
+        df_60 = df_m[df_m["pitch_deg"] == 60]
+        if not df_60.empty:
+            plt.scatter(
+                df_60["runtime_s"], df_60[ERR_COLUMN],
+                s=df_60["size"], alpha=0.8,
+                facecolors=color, edgecolors="black", linewidths=0.8)    
+    else:
+        # Pitch = 30 (black ring)
+        df_30 = df_m[df_m["pitch_deg"] == 30]
+        if not df_30.empty:
+            plt.scatter(
+                df_30["runtime_s"], df_30[ERR_COLUMN],
+                s=df_30["size"], alpha=0.8,
+                facecolors=color, edgecolors="black", linewidths=0.8)
+# === Log-Log Scale ===
 
 
 ax.set_xscale("log")
@@ -127,14 +132,24 @@ method_handles = [
            markersize=10, label=m)
     for m in method_order
 ]
-angle_handles = [
-    Line2D([0], [0], marker="o", linestyle="None",
-           markerfacecolor="white", markeredgecolor="black",
-           markersize=10, label="30° = black ring"),
-    Line2D([0], [0], marker="o", linestyle="None",
-           markerfacecolor="lightgray", markeredgecolor="lightgray",
-           markersize=10, label="90° = plain fill"),
-]
+if USE_ELECTRON:
+    angle_handles = [
+        Line2D([0], [0], marker="o", linestyle="None",
+            markerfacecolor="white", markeredgecolor="black",
+            markersize=10, label="60° = black ring"),
+        Line2D([0], [0], marker="o", linestyle="None",
+            markerfacecolor="lightgray", markeredgecolor="lightgray",
+            markersize=10, label="90° = plain fill"),
+    ]
+else:
+        angle_handles = [
+        Line2D([0], [0], marker="o", linestyle="None",
+            markerfacecolor="white", markeredgecolor="black",
+            markersize=10, label="30° = black ring"),
+        Line2D([0], [0], marker="o", linestyle="None",
+            markerfacecolor="lightgray", markeredgecolor="lightgray",
+            markersize=10, label="90° = plain fill"),
+    ]
 ax.legend(handles=method_handles + angle_handles, loc="upper right")
 
 fig.tight_layout()

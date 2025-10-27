@@ -4,6 +4,7 @@ import test_particles.constB_testparticles as tp
 builtins.npfloat = np.float128 if tp.USE_FLOAT128 else np.float64
 from test_particles.constB_testparticles import *
 import time
+import sys
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -13,10 +14,17 @@ from functions.functions_library_universal import rk4_fixed_step, extract_v, com
 
 run = "demo"   # options: "paper" or "demo"
 
+# Allow command-line override
+if len(sys.argv) > 1:
+    run = sys.argv[1]
+    print(f"Run mode set from command line: {run}\n")
+else:
+    print(f"Using default run mode: {run}\n")
+
 globals().update(load_params(run))
 
 # === Misc Odds and Ends ===
-mpl.rcParams['agg.path.chunksize'] = 10000  
+mpl.rcParams['agg.path.chunksize'] = 100  
 plt_config(scale=1) 
 plt.ioff()              # Turns off interactive mode for figures
 

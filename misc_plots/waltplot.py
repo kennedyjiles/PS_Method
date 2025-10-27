@@ -1,5 +1,3 @@
-# plot_all_times_byL.py
-import argparse
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,9 +5,17 @@ from matplotlib.ticker import LogLocator
 from matplotlib.lines import Line2D
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 import sys
-sys.path.append('/Users/heatherjiles/Documents/GitHub/GradSchool')
-from PSMethod.code.definitions.functions_library_universal import plt_config, sparse_labels
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from functions.functions_library_universal import plt_config
+
 plt_config(scale=1)
+
+# --- Input/output setup ---
+csv_path = "L_energy_table_p.csv"   # <== your input CSV
+csv_basename = os.path.splitext(os.path.basename(csv_path))[0]
+out_file = f"{csv_basename}.png"    # Output will auto-match CSV name
+print(f"Generating plot from {csv_path} → {out_file}")
 
 
 def parse_energy_label(label: str) -> float:
@@ -128,7 +134,7 @@ def main(csv_path: str, out_file: str):
     ax.autoscale(enable=True, axis="both", tight=False)
     ax.margins(x=0.05, y=0.10)  # ~5% x, ~10% y padding
 
-    ax.text(2e6, 1e-1, "Bounce Period", ha="left", va="center", fontsize=14)
+    ax.text(2e6, 4e-2, "Bounce Period", ha="left", va="center", fontsize=14)
     ax.text(2e6, 1e4, "Drift Period", ha="left", va="center", fontsize=14)
 
     fig.tight_layout()
@@ -137,8 +143,4 @@ def main(csv_path: str, out_file: str):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Log-log plot with PS vs Analytical curves")
-    p.add_argument("--csv", default="L_energy_table_p.csv", help="CSV file path")
-    p.add_argument("--out", default="EvsT_allL.png", help="Output image file")
-    args = p.parse_args()
-    main(args.csv, args.out)
+    main(csv_path, out_file)
