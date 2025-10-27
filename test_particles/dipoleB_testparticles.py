@@ -167,6 +167,34 @@ def load_params(run):
         ps_step = npfloat(44.0)
         rkg_step = rk4_step  # doesn't matter since USE_RKG = False but needs a value for naming consistency                    
         norm_time = npfloat(6400/0.0003346) 
+
+    elif run == "tinker": #paper1 simulation at larger ps_step and smaller rk4_step
+        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
+        else: print("Running full PAPER simulation...this can take a few minutes\n")
+        output_folder = "outputs_dipoleB_paper"
+        os.makedirs(output_folder, exist_ok=True)
+        USE_RK45 = True  
+        USE_RK4 = True 
+        USE_RKG = True  
+        USE_PLOT_TITLES = False
+        READ_DATA = True
+        WRITE_DATA = True
+        USE_FULL_PLOT = True
+
+        pitch_deg = npfloat(30.0)              
+        phi_deg = npfloat(90.0)
+        x_initial = npfloat(5)                 
+        y_initial = npfloat(0)
+        z_initial = npfloat(0)
+        KE_particle = npfloat(10e3)              
+        B_0 = npfloat(3.12e-5)  
+        mass_si = m_p   
+        gyro_plot_slice = 500
+                       
+        rk4_step = npfloat(12.1)                
+        ps_step = rk4_step
+        rkg_step = rk4_step                    
+        norm_time = npfloat(1e7) * ps_step
           
 
     else:
