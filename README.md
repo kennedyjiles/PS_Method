@@ -6,7 +6,10 @@ This repository contains a suite of Python codes developed to compare the **Park
 The project was developed as part of graduate research at **George Mason University**, Astronomy and Physics Department. This repository accompanies the research paper  *“The Parker-Sochacki Method vs. Runge-Kutta Methods for Particle Motion in Static Magnetic Fields,”* in preparation (2026) by H. Jiles and R. Weigel, providing simulation codes and analysis scripts used in the study.
 
 Three benchmark problems are included:
-- **`constB.py`** — Uniform magnetic field: $\mathbf{B}=B_0\mathbf{\hat{z}}$
+- **`constB.py`** — Uniform magnetic field: 
+```math 
+$\mathbf{B}=B_0\mathbf{\hat{z}}$
+```
 - **`hyperB.py`** — Hyperbolic tangent field (1-D current-sheet analog): $\mathbf{B}= B_0 \tanh(y/\gamma)\mathbf{\hat{z}}$ 
 - **`dipoleB.py`** — Dipole magnetic field (Earth's dipole analog): $\mathbf{B(r)}$= $(1/r^3)$ $[3(\mathbf{m}$·$\hat{r}$) r̂ − **m**]
 
