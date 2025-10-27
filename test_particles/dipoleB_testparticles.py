@@ -181,7 +181,7 @@ def load_params(run):
         WRITE_DATA = True
         USE_FULL_PLOT = True
 
-        pitch_deg = npfloat(30.0)              
+        pitch_deg = npfloat(90.0)              
         phi_deg = npfloat(90.0)
         x_initial = npfloat(5)                 
         y_initial = npfloat(0)
