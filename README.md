@@ -8,13 +8,16 @@ The project was developed as part of graduate research at **George Mason Univers
 Three benchmark problems are included:
 - **`constB.py`** — Uniform magnetic field: 
 ```math
-\mathbf{B}=B_0\mathbf{\hat{z}}```
+\mathbf{B}=B_0\mathbf{\hat{z}}
+```
 - **`hyperB.py`** — Hyperbolic tangent field (1-D current-sheet analog): 
 ```math
-\mathbf{B}= B_0 \tanh(y/\gamma)\mathbf{\hat{z}}```
+\mathbf{B}= B_0 \tanh(y/\gamma)\mathbf{\hat{z}}
+```
 - **`dipoleB.py`** — Dipole magnetic field (Earth's dipole analog): 
 ```math
-\mathbf{B(r)}=\frac{\mu_0}{4\pi}\left[\frac{3\mathbf{r(m\cdot r)}}{r^5}-\frac{\mathbf{m}}{r^3}\right]```
+\mathbf{B(r)}=\frac{\mu_0}{4\pi}\left[\frac{3\mathbf{r(m\cdot r)}}{r^5}-\frac{\mathbf{m}}{r^3}\right]
+```
 
 Each of these drivers can be run in **demo** or **paper** modes, depending on whether a fast diagnostic or full-scale reproduction of the paper results is desired.
 

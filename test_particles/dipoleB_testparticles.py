@@ -173,7 +173,7 @@ def load_params(run):
         else: print("Running full PAPER simulation...this can take a few minutes\n")
         output_folder = "outputs_dipoleB_paper"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True  
+        USE_RK45 = False  
         USE_RK4 = True 
         USE_RKG = True  
         USE_PLOT_TITLES = False
