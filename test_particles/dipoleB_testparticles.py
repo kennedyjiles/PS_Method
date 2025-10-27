@@ -173,7 +173,7 @@ def load_params(run):
         else: print("Running full PAPER simulation...this can take a few minutes\n")
         output_folder = "outputs_dipoleB_paper"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = False  
+        USE_RK45 = True  
         USE_RK4 = True 
         USE_RKG = True  
         USE_PLOT_TITLES = False
@@ -181,7 +181,7 @@ def load_params(run):
         WRITE_DATA = True
         USE_FULL_PLOT = True
 
-        pitch_deg = npfloat(30.0)              
+        pitch_deg = npfloat(90.0)              
         phi_deg = npfloat(90.0)
         x_initial = npfloat(5)                 
         y_initial = npfloat(0)
