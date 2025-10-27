@@ -3,3 +3,5 @@
 *_demo/*
 *_paper/*
 *.pyc
+master_simulation_log.csv
+*.png

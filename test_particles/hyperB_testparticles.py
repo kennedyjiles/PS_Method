@@ -1,7 +1,7 @@
 import numpy as np
 import os
 
-USE_FLOAT128 = True
+USE_FLOAT128 = False
 
 if USE_FLOAT128: npfloat = np.float128 
 else: npfloat = np.float64
@@ -46,34 +46,7 @@ norm_time -- this should be some multiple of gyroperiods designed (norm_time/2π
 """
 
 def load_params(run):
-    if run == "paper1":
-        if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
-        else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_hyperB_paper"
-        os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True       
-        USE_RK4 = True        
-        READ_DATA = False      
-        WRITE_DATA = True     
-        USE_PLOT_TITLES = False
-        USE_FULL_PLOT = False 
-
-        pitch_deg = npfloat(75.0)
-        phi_deg = npfloat(45.0)
-        delta = 500                             
-        x_initial_si = npfloat(0.0)             
-        y_initial_si = npfloat(0.25 * delta)
-        z_initial_si = npfloat(0.0)
-        KE_particle = npfloat(10e3)             
-        B_0 = npfloat(10e-9)                    
-        mass_si = m_e    
-        gyro_plot_slice = 8
-
-        rk4_step = npfloat(0.063)               
-        ps_step = rk4_step             
-        norm_time = (1e6) * ps_step         
-
-    elif run == "demo":
+    if run == "demo": #paper1 simulation at reduced norm time for quick demo
         print("Running DEMO simulation...this should be done in a couple seconds\n")
         output_folder = "outputs_hyperB_demo"
         os.makedirs(output_folder, exist_ok=True)
@@ -99,14 +72,42 @@ def load_params(run):
         ps_step = rk4_step
         norm_time = 50 * 2 * np.pi
 
-    elif run == "paper2":
-        print("Running full PAPER simulation...this can take a few minutes\n")
+    elif run == "paper1": # 100 keV electron, 75deg pitch, delta=500km, B0=10nT
+        if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
+        else: print("Running full PAPER simulation...this will take a few minutes\n")
+        output_folder = "outputs_hyperB_paper"
+        os.makedirs(output_folder, exist_ok=True)
+        USE_RK45 = True       
+        USE_RK4 = True        
+        READ_DATA = False      
+        WRITE_DATA = False     
+        USE_PLOT_TITLES = False
+        USE_FULL_PLOT = False 
+
+        pitch_deg = npfloat(75.0)
+        phi_deg = npfloat(45.0)
+        delta = 500                             
+        x_initial_si = npfloat(0.0)             
+        y_initial_si = npfloat(0.25 * delta)
+        z_initial_si = npfloat(0.0)
+        KE_particle = npfloat(10e3)             
+        B_0 = npfloat(10e-9)                    
+        mass_si = m_e    
+        gyro_plot_slice = 8
+
+        rk4_step = npfloat(0.063)               
+        ps_step = rk4_step             
+        norm_time = (1e6) * ps_step 
+
+    elif run == "paper2": # 10 keV electron, -15deg pitch, delta=200km, B0=10nT
+        if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
+        else: print("Running full PAPER simulation...this will take a few minutes\n")
         output_folder = "outputs_hyperB_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
-        READ_DATA = True      
-        WRITE_DATA = True      
+        READ_DATA = False      
+        WRITE_DATA = False     
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
 
@@ -126,14 +127,15 @@ def load_params(run):
         norm_time = (1e6) * ps_step     
 
 
-    elif run == "paper3":
-        print("Running full PAPER3 simulation...this can take a few minutes\n")
+    elif run == "paper3": # 100 keV proton, -15deg pitch, delta=200km, B0=10nT
+        if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
+        else: print("Running full PAPER simulation...this will take a few minutes\n")
         output_folder = "outputs_hyperB_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
-        READ_DATA = True      
-        WRITE_DATA = True      
+        READ_DATA = False      
+        WRITE_DATA = False      
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
 
@@ -153,14 +155,15 @@ def load_params(run):
         norm_time = (1e6) * ps_step 
 
 
-    elif run == "paper4":
-        print("Running full PAPER simulation...this can take a few minutes\n")
+    elif run == "paper4": # paper1 simulation at larger ps_step
+        if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
+        else: print("Running full PAPER simulation...this will take a few minutes\n")
         output_folder = "outputs_hyperB_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
-        READ_DATA = True      
-        WRITE_DATA = True     
+        READ_DATA = False      
+        WRITE_DATA = False     
         USE_PLOT_TITLES = False
         USE_FULL_PLOT = False  
 
@@ -180,7 +183,7 @@ def load_params(run):
         norm_time = (1e6) * rk4_step # same norm time as paper 1   
 
     else:
-        raise ValueError("run must be 'paperx' or 'demo'")
+        raise ValueError("run must be 'demo', 'paper1', 'paper2', 'paper3', or 'paper4'")
 
     return locals()    
 

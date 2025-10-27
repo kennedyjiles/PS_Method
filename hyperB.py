@@ -6,6 +6,7 @@ from test_particles.hyperB_testparticles import *
 import numpy as np
 import os
 import time
+import sys
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -14,12 +15,22 @@ from functions.functions_library_hyper import PS_hyperB, lorentz_force_hyperB
 from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig
 from functions.functions_library_hyper import get_run_params, h5_path_for, save_results_h5, load_results_h5
 
-run = "paper1"   # options: "demo", "paper1", "paper2", "paper3", or "paper4"
+run = "demo"   # options: "demo", "paper1", "paper2", "paper3", or "paper4"
+
+
+# Allow command-line override
+if len(sys.argv) > 1:
+    run = sys.argv[1]
+    print(f"Run mode set from command line: {run}\n")
+else:
+    print(f"Using default run mode: {run}\n")
+
+
 
 globals().update(load_params(run))
 
 # === Misc Odds and Ends ===
-mpl.rcParams['agg.path.chunksize'] = 100000  
+mpl.rcParams['agg.path.chunksize'] = 100  
 run_storage = "outputs_rawdata"      # where trajectory files go
 os.makedirs(run_storage, exist_ok=True)
 plt_config(scale=1)    # Dr. W's Plotting SCrip
@@ -112,7 +123,7 @@ if os.path.exists(cache_path) and READ_DATA:
     stem = os.path.splitext(os.path.basename(cache_path))[0]
 
 else:
-    print("No matching file or 'Read Data' skipped. Running solvers...this will take a hot second...\n")
+    print("No matching file or 'Read Data' skipped. Running solvers...\n")
     # ====== Run RK45 ======
     if USE_RK45:
         start_time_rk45 = time.time()

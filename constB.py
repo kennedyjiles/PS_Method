@@ -4,6 +4,7 @@ import test_particles.constB_testparticles as tp
 builtins.npfloat = np.float128 if tp.USE_FLOAT128 else np.float64
 from test_particles.constB_testparticles import *
 import time
+import sys
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -12,6 +13,13 @@ from functions.functions_library_constB import PS_constantB_adaptive, analytical
 from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, interp_to_grid, interp_to_grid, data_to_fig
 
 run = "demo"   # options: "paper" or "demo"
+
+# Allow command-line override
+if len(sys.argv) > 1:
+    run = sys.argv[1]
+    print(f"Run mode set from command line: {run}\n")
+else:
+    print(f"Using default run mode: {run}\n")
 
 globals().update(load_params(run))
 

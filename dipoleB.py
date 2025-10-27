@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime
 import os
 import time
+import sys
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from scipy.integrate import solve_ivp
@@ -15,12 +16,19 @@ from functions.functions_library_universal import rk4_fixed_step, plt_config, sp
 from functions.functions_library_dipole import PS_dipoleB, lorentz_force_dipole, compute_mu_ps, compute_mu_rk, vector_potential_dipole, rkgl4_hamiltonian, hamiltonian_rhs
 from functions.functions_library_dipole import mirror_times_from_PS, bounce_summary, drift_period_from_PS, get_run_params, h5_path_for, save_results_h5, load_results_h5
 
-run = "demo"   # options: "paper" or "demo"
+run = "demo"   # options: "demo", "paper1", "paper2", or "paper3"
+
+# Allow command-line override
+if len(sys.argv) > 1:
+    run = sys.argv[1]
+    print(f"Run mode set from command line: {run}\n")
+else:
+    print(f"Using default run mode: {run}\n")
 
 globals().update(load_params(run))
 
 # === Misc Odds and Ends ===
-mpl.rcParams['agg.path.chunksize'] = 100000  
+mpl.rcParams['agg.path.chunksize'] = 100  
 run_storage = "outputs_rawdata"      # where trajectory files go
 plt_config(scale=1)                   # config file for setting plot sizes and fonts (from Dr. W)
 os.makedirs(run_storage, exist_ok=True)
@@ -126,7 +134,7 @@ if os.path.exists(cache_path) and READ_DATA:
     timing = cached.get("meta", {}).get("timing", {})
     stem = os.path.splitext(os.path.basename(cache_path))[0]
 else:    # if it finds no file, it will proceed with the method calculations here
-    print("No matching file or 'Read Data' skipped. Running solvers...this will take a hot second...\n")
+    print("No matching file or 'Read Data' skipped. Running solvers...\n")
     # ====== Run RK45 ======
     if USE_RK45:
         start_time_rk45 = time.time()
@@ -214,7 +222,7 @@ print(f"Norm Time       : {norm_time:.2e} ")
 print(f"Physical Time   : {physical_time:.2e} s")
 if orders_used is not None:
     print(f"PS Orders       : max={orders_used.max()}, mean={orders_used.mean():.1f}")
-print(f"% of c          : {v_si/spdlight:.4f}")
+print(f"% of c          : {v_si/spdlight:.8f}")
 
 
 # =====================================================
@@ -446,7 +454,7 @@ if USE_RK45:
 if USE_RK4:
     endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lnrk4.get_color()))
 if USE_RKG:
-    endpoints.append((t_eval_rkg[-1], np.abs(rel_drift_rkg[-1]), "RK4", lnrkg.get_color()))
+    endpoints.append((t_eval_rkg[-1], np.abs(rel_drift_rkg[-1]), "RKG", lnrkg.get_color()))
 endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", lnps.get_color()))
 
 
@@ -552,7 +560,7 @@ if USE_RK45:
 if USE_RK4:
     endpoints.append((t_eval_rk4[-1], np.abs(mudrift_rk4[-1]), "RK4", lnrk4.get_color()))
 if USE_RKG:
-    endpoints.append((t_eval_rkg[-1], np.abs(mudrift_rkg[-1]), "RK4", lnrkg.get_color()))
+    endpoints.append((t_eval_rkg[-1], np.abs(mudrift_rkg[-1]), "RKG", lnrkg.get_color()))
 endpoints.append((t_eval_ps[-1], np.abs(mudrift_ps[-1]), f"PS{orders_used.max()}", lnps.get_color()))
 
 # --- collision avoidance block replaces your old for-loop ---
@@ -733,7 +741,7 @@ def make_record(method, e_drift, mu_drift):
     e = summarize(e_drift)
     mu = summarize(mu_drift)
     return {
-        "run_id": run_id,
+        "run_id": stem,
         "particle": particle_type,
         "energy_keV": KE_particle,
         "x": x_0,
@@ -769,7 +777,7 @@ for method, e_drift, mu_drift in methods:
 
 # === Write to master log ===
 df = pd.DataFrame(records)
-csv_path = "master_simulation_log.csv"
+csv_path = f"{output_folder}/master_simulation_log.csv"
 
 if os.path.exists(csv_path):
     df.to_csv(csv_path, mode='a', header=False, index=False)
