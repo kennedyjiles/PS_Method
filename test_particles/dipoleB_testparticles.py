@@ -24,6 +24,9 @@ user_min_gap = npfloat(15)          # Minimum index spacing between successive s
 user_min_phase = npfloat(.1)        # this is the minimum phase it's looking for to be allowed to extrapolate from for drift
 mpl.rcParams['agg.path.chunksize'] = 100   # may have to adjust if matplotlib barfs on large datasets
 
+if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
+else: mpl.rcParams['agg.path.chunksize'] = 100
+
 run_storage = "outputs_rawdata"      # where trajectory files go
 
 # ===================================================================

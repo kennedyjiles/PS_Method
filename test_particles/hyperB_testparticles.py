@@ -18,7 +18,9 @@ PS_order = 40                           # Max Power Series Order, system will tr
 tol = 1.0 * np.finfo(npfloat).eps       # setting tolerance to machine epsilon to drop terms later
 rtol_rk45 = 1e-12                       # RK45 relative tolerance
 atol_rk45 = 1e-14                       # RK45 adapative tolerance
-mpl.rcParams['agg.path.chunksize'] = 100   # may have to adjust if matplotlib barfs on large datasets
+
+if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
+else: mpl.rcParams['agg.path.chunksize'] = 100
 
 run_storage = "outputs_rawdata"      # where trajectory files go
 
