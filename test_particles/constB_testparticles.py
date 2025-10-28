@@ -6,6 +6,7 @@ USE_FLOAT128 = False
 if USE_FLOAT128: npfloat = np.float128 
 else: npfloat = np.float64
 
+
 # ===== Mass and Charge Constants =====
 q_e = npfloat(-1.602176634e-19)        # C
 m_e = npfloat(9.1093837139e-31)        # kg
@@ -50,7 +51,7 @@ norm_time -- this should be some multiple of gyroperiods desired (norm_time/2π 
 def load_params(run):
     if run == "paper": 
         print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_constB_paper"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True
         USE_RK4 = True
@@ -73,7 +74,7 @@ def load_params(run):
 
     elif run == "demo":
         print("Running DEMO simulation...this should be done in a couple seconds\n")
-        output_folder = "outputs_constB_demo"
+        output_folder = "outputs_demo"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True
         USE_RK4 = True

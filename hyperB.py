@@ -50,7 +50,7 @@ pitch_rad = np.radians(pitch_deg)
 phi_rad = np.radians(phi_deg)
 
 v_si = npfloat(np.sqrt(npfloat(2 * KE_particle * evtoj / mass_si)))/1000       # /1000 puts things in km
-tau_time =  mass_si/(abs(q_e)*B_0)             # τ0 from paper, time normalization constant  
+tau_time =  mass_si/(abs(q_e)*B_0)             # tau0 from paper, time normalization constant  
 
 gyro_radius_si=abs(v_si * np.sin(pitch_rad) * mass_si/ (q_e * B_0))
 r_normalization = delta

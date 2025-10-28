@@ -62,7 +62,7 @@ parameters below or by adding new run modes. However, the datapoints and scripts
 def load_params(run):
     if run == "demo": #paper2 simulation at reduced norm time for quick demo
         if USE_FLOAT128: print("Running DEMO simulation in float128...this may take a few minutes\n")
-        else: print("Running DEMO simulation...this takes just few secondsdeactivate\n")
+        else: print("Running DEMO simulation...this takes just few seconds\n")
         output_folder = "outputs_demo"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True  
