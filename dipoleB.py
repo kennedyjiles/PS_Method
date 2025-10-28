@@ -694,7 +694,7 @@ with open(output_filename, "w") as f:
         f.write(f"  rkg steps     = {steps_rkg}\n")
     f.write(f"  ps steps      = {steps_ps}\n\n")
 
-    f.write(f"=== |ΔE|/E0 (relative, last {finalnum} steps)===\n")
+    f.write(f"=== |detla E|/E0 (relative, last {finalnum} steps)===\n")
     if USE_RK45:
         summarize_error("RK45", rel_drift_rk45, f)
     if USE_RK4:
@@ -703,7 +703,7 @@ with open(output_filename, "w") as f:
         summarize_error("RKG",  rel_drift_rkg, f)
     summarize_error("PS",   rel_drift_ps,  f)
 
-    f.write(f"\n=== |Δμ|/μ0(relative, last {finalnum} steps)===\n")
+    f.write(f"\n=== |delta μ|/μ0(relative, last {finalnum} steps)===\n")
     if USE_RK45:
         summarize_error("RK45", mudrift_rk45, f)
     if USE_RK4:
