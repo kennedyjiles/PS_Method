@@ -15,7 +15,7 @@ from functions.functions_library_hyper import PS_hyperB, lorentz_force_hyperB
 from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig
 from functions.functions_library_hyper import get_run_params, h5_path_for, save_results_h5, load_results_h5
 
-run = "demo"   # options: "demo", "paper1", "paper2", "paper3", or "paper4"
+run = "demo"   # options: "demo", "paper1", "paper2", "paper3", or "paper4". Demo mode is a quick test run. Paper modes can take upwards of half or more
 
 
 # Allow command-line override

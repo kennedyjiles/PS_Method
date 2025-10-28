@@ -16,7 +16,7 @@ from functions.functions_library_universal import rk4_fixed_step, plt_config, sp
 from functions.functions_library_dipole import PS_dipoleB, lorentz_force_dipole, compute_mu_ps, compute_mu_rk, vector_potential_dipole, rkgl4_hamiltonian, hamiltonian_rhs
 from functions.functions_library_dipole import mirror_times_from_PS, bounce_summary, drift_period_from_PS, get_run_params, h5_path_for, save_results_h5, load_results_h5
 
-run = "demo"   # options: "demo", "paper1", "paper2", or "paper3"
+run = "demo"   # options: "demo", "paper1", "paper2", or "paper3". Demo mode is a quick test run. Paper modes can take upwards of half an hour. 
 
 # Allow command-line override
 if len(sys.argv) > 1:
