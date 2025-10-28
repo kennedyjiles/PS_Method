@@ -118,14 +118,14 @@ Quick demo:
 ```bash
 python constB.py
 ```
-Simulating the trajectory of a 100 eV electron for about 10 gyroperiods in constant magnetic field. Expected outputs are saved under `outputs_dipoleB_demo/` with trajectory and error summaries.
+Simulating the trajectory of a 100 eV electron for about 10 gyroperiods in constant magnetic field. Expected outputs are saved under `outputs_constB_demo/` with trajectory and error summaries.
 
 ### 2. Hyperbolic Magnetic Field
 Reproduce full paper dataset:
 ```bash
 python hyperB.py paper2
 ```
-Full simulation an 10 keV electron near a 1-D current sheet with a half-thickness of 500km. Expected outputs are saved under `outputs_dipoleB_paper/` with trajectory and error summaries.
+Full simulation an 10 keV electron near a 1-D current sheet with a half-thickness of 500 km. Expected outputs are saved under `outputs_hyperB_paper/` with trajectory and error summaries.
 
 ### 3. Dipole Magnetic Field
 Quick demo:
@@ -153,7 +153,7 @@ When using `float128`, make sure your platform supports it (Linux/macOS only; Wi
 
 ### Adaptive PS-order truncation
 The Parker–Sochacki expansion is truncated dynamically based on term magnitude:
-- The **PS order \(M\)** increases until consecutive term contributions drop below a chosen tolerance.
+- The **PS order** increases until consecutive term contributions drop below a chosen tolerance.
 - Tolerances can be set to machine epsilon (`np.finfo(npfloat).eps`) or a user-defined threshold (e.g., `1e-35`).
 - This adaptive termination ensures efficient convergence without compromising accuracy.
 
