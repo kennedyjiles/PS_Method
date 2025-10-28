@@ -200,7 +200,7 @@ After setting up the environment as described in the **Installation and Environm
 python constB.py paper # wait several seconds
 python hyperB.py paper1 # wait a few minutes
 python hyperB.py paper2 # wait a few minutes
-python hyperB.py paper3 # wait several minutes
+python hyperB.py paper3 # wait 5-10 minutes
 python hyperB.py paper4 # wait a few minutes
 python dipoleB.py paper1 # wait approximately 15-20 minutes
 python dipoleB.py paper2 # wait approximately 15-20 minutes
