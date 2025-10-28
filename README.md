@@ -65,7 +65,7 @@ conda activate ps_method
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install numpy scipy matplotlib pandas h5py numba
+pip install numpy==1.21.5 scipy==1.9.1  matplotlib==3.5.2 pandas==1.4.4 h5py==3.7.0  numba==0.56.3 
 ```
 
 ### Key dependencies

@@ -47,7 +47,7 @@ norm_time -- this should be some multiple of gyroperiods desired (norm_time/2π 
 """
 
 def load_params(run):
-    if run == "paper":
+    if run == "paper": 
         print("Running full PAPER simulation...this can take a few minutes\n")
         output_folder = "outputs_constB_paper"
         os.makedirs(output_folder, exist_ok=True)
