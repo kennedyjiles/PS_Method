@@ -70,7 +70,7 @@ Alternatively, to use the latest available versions:
 ```bash
 pip install numpy scipy matplotlib pandas h5py numba
 ```
-Results may vary slightly between versions and hardware, particularly for plots showing errors near machine precision. 
+Results may vary slightly between versions and hardware, specifically for plots showing errors near machine precision and the use of `float128` or `longdouble`. 
 
 ### Option 2 — Conda
 To exactly replicate the environment used for the paper:
