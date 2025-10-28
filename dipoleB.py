@@ -9,10 +9,9 @@ import os
 import time
 import sys
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 from scipy.integrate import solve_ivp
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
-from functions.functions_library_universal import rk4_fixed_step, plt_config, sparse_labels, data_to_fig
+from functions.functions_library_universal import rk4_fixed_step, plt_config, sparse_labels, data_to_fig, slice_solution
 from functions.functions_library_dipole import PS_dipoleB, lorentz_force_dipole, compute_mu_ps, compute_mu_rk, vector_potential_dipole, rkgl4_hamiltonian, hamiltonian_rhs
 from functions.functions_library_dipole import mirror_times_from_PS, bounce_summary, drift_period_from_PS, get_run_params, h5_path_for, save_results_h5, load_results_h5
 
@@ -27,9 +26,7 @@ else:
 
 globals().update(load_params(run))
 
-# === Misc Odds and Ends ===
-mpl.rcParams['agg.path.chunksize'] = 1000  
-run_storage = "outputs_rawdata"      # where trajectory files go
+# === Misc Odds and Ends ===  
 plt_config(scale=1)                   # config file for setting plot sizes and fonts (from Dr. W)
 os.makedirs(run_storage, exist_ok=True)
 plt.ioff()              # Turn off interactive mode for plots
@@ -96,6 +93,7 @@ if USE_RK45:
 if USE_RKG:
     steps_rkg = int(norm_time / (rkg_step))
     t_eval_rkg = np.linspace(0, norm_time, steps_rkg + 1, dtype=npfloat)
+
 
 
 # === Build parameter tracer & check cache ===
@@ -294,55 +292,48 @@ if USE_FULL_PLOT:
     plt.close(fig) 
 
 
+# ==========================================
+# ================ Slicing  ================
+# ==========================================
+ps_x, ps_y, ps_z = slice_solution(t_eval_ps, solution_ps, window_duration, norm_time, mode=slice_mode)[:3]
+
+if USE_RK45:
+    rk45_x, rk45_y, rk45_z = slice_solution(t_eval_rk45, solution_rk45.y, window_duration, norm_time, mode=slice_mode)[:3]
+if USE_RK4:
+    rk4_x, rk4_y, rk4_z = slice_solution(t_eval_rk4, solution_rk4, window_duration, norm_time, mode=slice_mode)[:3]
+if USE_RKG:
+    rkg_x, rkg_y, rkg_z = slice_solution(t_eval_rkg, solution_rkg, window_duration, norm_time, mode=slice_mode)[:3]
+
 # =====================================================
 # ================ 2D Trajectory Slice ================
 # =====================================================
 
-# === Extract last some number of last steps from the simulation ===
-window_duration = gyro_plot_slice * 2 * np.pi
-start_t_ps   = norm_time - window_duration
-start_idx_ps   = np.searchsorted(t_eval_ps, start_t_ps)
-ps_x, ps_y, ps_z = solution_ps[0][start_idx_ps:], solution_ps[1][start_idx_ps:], solution_ps[2][start_idx_ps:]
+if USE_FULL_PLOT:
+    # === Plot Last Few Cycles ===
+    fig, ax = plt.subplots(figsize=(10, 7))
+    if USE_RK45:
+        ax.plot(rk45_x, rk45_y, label='RK45', color='#E69F00', linestyle='--')
+    if USE_RK4:
+        ax.plot(rk4_x, rk4_y, label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
+    if USE_RKG:
+        ax.plot(rkg_x, rkg_y, label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
+    ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
 
-if USE_RK45:
-    start_t_rk45  = norm_time - window_duration
-    start_idx_rk45  = np.searchsorted(t_eval_rk45, start_t_rk45)
-    rk45_x, rk45_y, rk45_z = solution_rk45.y[0][start_idx_rk45:], solution_rk45.y[1][start_idx_rk45:], solution_rk45.y[2][start_idx_rk45:]
-if USE_RK4:
-    start_t_rk4  = norm_time - window_duration
-    start_idx_rk4  = np.searchsorted(t_eval_rk4, start_t_rk4)
-    rk4_x, rk4_y, rk4_z = solution_rk4[0][start_idx_rk4:], solution_rk4[1][start_idx_rk4:], solution_rk4[2][start_idx_rk4:]
-if USE_RKG:
-    start_t_rkg  = norm_time - window_duration
-    start_idx_rkg  = np.searchsorted(t_eval_rkg, start_t_rkg)
-    rkg_x, rkg_y, rkg_z = solution_rkg[start_idx_rkg:, 0], solution_rkg[start_idx_rkg:, 1], solution_rkg[start_idx_rkg:, 2]
-
-
-# === Plot Last Few Cycles ===
-fig, ax = plt.subplots(figsize=(10, 7))
-if USE_RK45:
-    ax.plot(rk45_x, rk45_y, label='RK45', color='#E69F00', linestyle='--')
-if USE_RK4:
-    ax.plot(rk4_x, rk4_y, label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
-if USE_RKG:
-    ax.plot(rkg_x, rkg_y, label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
-ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
-
-ax.set_xlabel(r"x ($R_E$)")
-ax.set_ylabel(r"y ($R_E$)")
-if USE_PLOT_TITLES: ax.set_title(f"2D Trajectory of Final {particle_type} Orbits in Dipole B Field")
-# ax.set_xlim(-plotbounds, plotbounds)
-# ax.set_ylim(-plotbounds, plotbounds)
-# ax.set_aspect('equal', adjustable='box')
-ax.axis('equal')
-ax.legend(loc="upper right")
-ax.grid(True)
+    ax.set_xlabel(r"x ($R_E$)")
+    ax.set_ylabel(r"y ($R_E$)")
+    if USE_PLOT_TITLES: ax.set_title(f"2D Trajectory of Slice {particle_type} Orbits in Dipole B Field")
+    # ax.set_xlim(-plotbounds, plotbounds)
+    # ax.set_ylim(-plotbounds, plotbounds)
+    # ax.set_aspect('equal', adjustable='box')
+    ax.axis('equal')
+    ax.legend(loc="upper right")
+    ax.grid(True)
 
 
-# === Save and Close ===
-fig.canvas.draw()   
-fig.savefig( f"{output_folder}/{stem}_DipoleB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_2Dslice.png", dpi=600, bbox_inches="tight")
-plt.close(fig) 
+    # === Save and Close ===
+    fig.canvas.draw()   
+    fig.savefig( f"{output_folder}/{stem}_DipoleB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_2Dslice.png", dpi=600, bbox_inches="tight")
+    plt.close(fig) 
 
 
 # =====================================================
@@ -360,9 +351,9 @@ if USE_RKG:
     ax.plot(rkg_x, rkg_y, rkg_z, label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
 ax.plot(ps_x, ps_y, ps_z, label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
 
-# ax.set_xlim(-plotbounds, plotbounds)
-# ax.set_ylim(-plotbounds, plotbounds)
-# ax.set_zlim(-plotbounds, plotbounds)
+ax.set_xlim(-plotbounds, plotbounds)
+ax.set_ylim(-plotbounds, plotbounds)
+ax.set_zlim(-plotbounds, plotbounds)
 ax.legend(loc="upper right")
 ax.grid(True)
 
@@ -370,7 +361,7 @@ ax.grid(True)
 ax.set_xlabel('x ($R_E$)')
 ax.set_ylabel('y ($R_E$)')
 ax.set_zlabel('z ($R_E$)')
-if USE_PLOT_TITLES: ax.set_title(f'3D Trajectory of Final {particle_type} Orbits in Dipole B Field')
+if USE_PLOT_TITLES: ax.set_title(f'3D Trajectory of Slice {particle_type} Orbits in Dipole B Field')
 ax.legend(loc="upper right")
 # plt.tight_layout()
 

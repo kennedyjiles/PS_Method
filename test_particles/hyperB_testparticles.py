@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import matplotlib as mpl
 
 USE_FLOAT128 = False
 
@@ -17,6 +18,9 @@ PS_order = 40                           # Max Power Series Order, system will tr
 tol = 1.0 * np.finfo(npfloat).eps       # setting tolerance to machine epsilon to drop terms later
 rtol_rk45 = 1e-12                       # RK45 relative tolerance
 atol_rk45 = 1e-14                       # RK45 adapative tolerance
+mpl.rcParams['agg.path.chunksize'] = 100   # may have to adjust if matplotlib barfs on large datasets
+
+run_storage = "outputs_rawdata"      # where trajectory files go
 
 # ===================================================================
 # ==============Toggle Parameters for Hyper B Script ================
@@ -48,11 +52,11 @@ norm_time -- this should be some multiple of gyroperiods designed (norm_time/2π
 def load_params(run):
     if run == "demo": #paper1 simulation at reduced norm time for quick demo
         print("Running DEMO simulation...this should be done in a couple seconds\n")
-        output_folder = "outputs_hyperB_demo"
+        output_folder = "outputs_demo"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
-        READ_DATA = False      
+        READ_DATA = True      
         WRITE_DATA = False      
         USE_PLOT_TITLES = True 
         USE_FULL_PLOT = True 
@@ -66,7 +70,9 @@ def load_params(run):
         KE_particle = npfloat(10e3)             
         B_0 = npfloat(10e-9)                    
         mass_si = m_e  
-        gyro_plot_slice = 8        
+
+        window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
+        slice_mode = "last"        
  
         rk4_step = npfloat(0.063)               
         ps_step = rk4_step
@@ -75,11 +81,11 @@ def load_params(run):
     elif run == "paper1": # 100 keV electron, 75deg pitch, delta=500km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_hyperB_paper"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
-        READ_DATA = False      
+        READ_DATA = True      
         WRITE_DATA = False     
         USE_PLOT_TITLES = False
         USE_FULL_PLOT = False 
@@ -93,7 +99,9 @@ def load_params(run):
         KE_particle = npfloat(10e3)             
         B_0 = npfloat(10e-9)                    
         mass_si = m_e    
-        gyro_plot_slice = 8
+
+        window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
+        slice_mode = "last"   
 
         rk4_step = npfloat(0.063)               
         ps_step = rk4_step             
@@ -102,11 +110,11 @@ def load_params(run):
     elif run == "paper2": # 10 keV electron, -15deg pitch, delta=200km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_hyperB_paper"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
-        READ_DATA = False      
+        READ_DATA = True      
         WRITE_DATA = False     
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
@@ -120,7 +128,9 @@ def load_params(run):
         KE_particle = npfloat(10e3)             
         B_0 = npfloat(10e-9)                    
         mass_si = m_e     
-        gyro_plot_slice = 8    
+
+        window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
+        slice_mode = "last"   
 
         rk4_step = npfloat(0.063)               
         ps_step = rk4_step             
@@ -130,11 +140,11 @@ def load_params(run):
     elif run == "paper3": # 100 keV proton, -15deg pitch, delta=200km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_hyperB_paper"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
-        READ_DATA = False      
+        READ_DATA = True      
         WRITE_DATA = False      
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
@@ -148,7 +158,9 @@ def load_params(run):
         KE_particle = npfloat(100e3)             
         B_0 = npfloat(10e-9)                    
         mass_si = m_p   
-        gyro_plot_slice = 8    
+
+        window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
+        slice_mode = "last"   
 
         rk4_step = npfloat(0.063)               
         ps_step = rk4_step
@@ -158,11 +170,11 @@ def load_params(run):
     elif run == "paper4": # paper1 simulation at larger ps_step
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_hyperB_paper"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
-        READ_DATA = False      
+        READ_DATA = True      
         WRITE_DATA = False     
         USE_PLOT_TITLES = False
         USE_FULL_PLOT = False  
@@ -176,8 +188,10 @@ def load_params(run):
         KE_particle = npfloat(10e3)             
         B_0 = npfloat(10e-9)                    
         mass_si = m_e
-        gyro_plot_slice = 8        
-    
+
+        window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
+        slice_mode = "last"   
+
         rk4_step = npfloat(0.063)               
         ps_step = npfloat(0.63)              
         norm_time = (1e6) * rk4_step # same norm time as paper 1   

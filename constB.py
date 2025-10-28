@@ -196,77 +196,77 @@ if USE_FULL_PLOT:
 # ==================KE Error Plot Over time Only =================
 # ================================================================
 
-if USE_RK45:
-    v_rk45 = solution_rk45.y[3:6]  
-    E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-    rel_drift_rk45 = (E_rk45 - E_rk45[0]) / E_rk45[0]
-
-if USE_RK4:
-    v_rk4 = solution_rk4[3:6]      
-    E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
-    rel_drift_rk4 = (E_rk4 - E_rk4[0]) / E_rk4[0]
-
-
 v_ps = solution_ps[3:6]  
 E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
 rel_drift_ps = (E_ps - E_ps[0]) / E_ps[0]
 
-# === Plot ===
-fig, ax = plt.subplots(figsize=(10, 5))
 
-if USE_RK45: line1, = ax.semilogy(t_eval_rk45, np.abs(rel_drift_rk45), color='#E69F00', linestyle='--')
-if USE_RK4: line2, = ax.semilogy(t_eval_rk4, np.abs(rel_drift_rk4), color='#CC79A7', linestyle='-.')
-line3, = ax.semilogy(t_eval_ps,  np.abs(rel_drift_ps),  color='#009E73',  linestyle=':')
+if USE_FULL_PLOT:
+    if USE_RK45:
+        v_rk45 = solution_rk45.y[3:6]  
+        E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
+        rel_drift_rk45 = (E_rk45 - E_rk45[0]) / E_rk45[0]
 
-ax.margins(x=0.01)
-ax.set_yscale('log')
-ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
-ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-ax.yaxis.set_minor_formatter(NullFormatter())
-ax.grid(True, which='major', linestyle='--', linewidth=0.7)
-ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+    if USE_RK4:
+        v_rk4 = solution_rk4[3:6]      
+        E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
+        rel_drift_rk4 = (E_rk4 - E_rk4[0]) / E_rk4[0]
 
-# Remove top and right borders
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
+    # === Plot ===
+    fig, ax = plt.subplots(figsize=(10, 5))
 
-ax.set_xlabel(r"t/$\tau_0$")
-ax.set_ylabel(r"$|\Delta E|/E_0$")
-if USE_PLOT_TITLES: ax.set_title(f'{particle_type} Relative Kinetic Energy Error in Constant B Field')
+    if USE_RK45: line1, = ax.semilogy(t_eval_rk45, np.abs(rel_drift_rk45), color='#E69F00', linestyle='--')
+    if USE_RK4: line2, = ax.semilogy(t_eval_rk4, np.abs(rel_drift_rk4), color='#CC79A7', linestyle='-.')
+    line3, = ax.semilogy(t_eval_ps,  np.abs(rel_drift_ps),  color='#009E73',  linestyle=':')
 
+    ax.margins(x=0.01)
+    ax.set_yscale('log')
+    ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
+    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.grid(True, which='major', linestyle='--', linewidth=0.7)
+    ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
 
-# make room on the right (no tight_layout; it can fight placements)
-fig.subplots_adjust(right=0.9)  # leaves ~10% margin for labels
-fig.canvas.draw()
+    # Remove top and right borders
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
 
-ax_pos = ax.get_position()  # Bbox in figure coords
-x_fig_label = ax_pos.x1 + 0.01  # a small gap to the right of axes
-
-# making method endpoint labels
-endpoints = []
-if USE_RK45:
-    endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", line1.get_color()))
-if USE_RK4:
-    endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", line2.get_color()))
-endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", line3.get_color()))
-
-for x, y, label, color in endpoints:
-    _, fy = data_to_fig(x, y, ax, fig)
-    fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-    fig.text(x_fig_label, fy, label, color=color, va='center', ha='left', fontsize=10)
+    ax.set_xlabel(r"t/$\tau_0$")
+    ax.set_ylabel(r"$|\Delta E|/E_0$")
+    if USE_PLOT_TITLES: ax.set_title(f'{particle_type} Relative Kinetic Energy Error in Constant B Field')
 
 
-# === Save and Close ===
-fig.canvas.draw()   
-plt.savefig( f"{output_folder}/ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{norm_time}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
-plt.close(fig)      
-           
+    # make room on the right (no tight_layout; it can fight placements)
+    fig.subplots_adjust(right=0.9)  # leaves ~10% margin for labels
+    fig.canvas.draw()
+
+    ax_pos = ax.get_position()  # Bbox in figure coords
+    x_fig_label = ax_pos.x1 + 0.01  # a small gap to the right of axes
+
+    # making method endpoint labels
+    endpoints = []
+    if USE_RK45:
+        endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", line1.get_color()))
+    if USE_RK4:
+        endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", line2.get_color()))
+    endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", line3.get_color()))
+
+    for x, y, label, color in endpoints:
+        _, fy = data_to_fig(x, y, ax, fig)
+        fy = min(max(fy, ax_pos.y0), ax_pos.y1)
+        fig.text(x_fig_label, fy, label, color=color, va='center', ha='left', fontsize=10)
+
+
+    # === Save and Close ===
+    fig.canvas.draw()   
+    plt.savefig( f"{output_folder}/ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{norm_time}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
+    plt.close(fig)      
+            
 
 # ======================================
 # ============= Slice of 2D ============
 # ======================================
-
 # === Extract number of last steps from the simulation ===
 window_duration = gyro_plot_slice * 2 * np.pi
 
@@ -289,29 +289,29 @@ start_t_ps   = norm_time - window_duration
 start_idx_ps   = np.searchsorted(t_eval_ps, start_t_ps)
 ps_x, ps_y, ps_z = solution_ps[0][start_idx_ps:], solution_ps[1][start_idx_ps:], solution_ps[2][start_idx_ps:]
 
+if USE_FULL_PLOT:
+    # === Plot Last Few Cycles ===
+    fig, ax = plt.subplots(figsize=(10, 8))
+    if USE_ANALYTICAL:
+        ax.plot(ana_x, ana_y, label=f"Analytical", color='Black', linestyle='-',linewidth=0.4)
+    if USE_RK45:
+        ax.plot(rk45_x, rk45_y, label=f"RK45", color='#E69F00', linestyle='--')
+    if USE_RK4:
+        ax.plot(rk4_x, rk4_y, label=f"RK4", color='#CC79A7', linestyle='-.')
+    ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
 
-# === Plot Last Few Cycles ===
-fig, ax = plt.subplots(figsize=(10, 8))
-if USE_ANALYTICAL:
-    ax.plot(ana_x, ana_y, label=f"Analytical", color='Black', linestyle='-',linewidth=0.4)
-if USE_RK45:
-    ax.plot(rk45_x, rk45_y, label=f"RK45", color='#E69F00', linestyle='--')
-if USE_RK4:
-    ax.plot(rk4_x, rk4_y, label=f"RK4", color='#CC79A7', linestyle='-.')
-ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    if USE_PLOT_TITLES: ax.set_title(f'2D Trajectory of Final {particle_type} Orbits in Constant B Field')
+    ax.legend(loc="upper right")
+    ax.axis('equal')
+    ax.grid(True)
+    plt.tight_layout()
 
-ax.set_xlabel("x (m)")
-ax.set_ylabel("y (m)")
-if USE_PLOT_TITLES: ax.set_title(f'2D Trajectory of Final {particle_type} Orbits in Constant B Field')
-ax.legend(loc="upper right")
-ax.axis('equal')
-ax.grid(True)
-plt.tight_layout()
-
-# === Save and Close ===
-fig.canvas.draw()  
-fig.savefig( f"{output_folder}/ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{norm_time}s_{npfloat.__name__}_2Dslice.png", dpi=600, bbox_inches="tight")
-plt.close(fig)
+    # === Save and Close ===
+    fig.canvas.draw()  
+    fig.savefig( f"{output_folder}/ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{norm_time}s_{npfloat.__name__}_2Dslice.png", dpi=600, bbox_inches="tight")
+    plt.close(fig)
 
 # ======================================
 # ============= Slice of 3D ============
