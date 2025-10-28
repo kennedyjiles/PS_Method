@@ -28,7 +28,7 @@ else:
 globals().update(load_params(run))
 
 # === Misc Odds and Ends ===
-mpl.rcParams['agg.path.chunksize'] = 100  
+mpl.rcParams['agg.path.chunksize'] = 1000  
 run_storage = "outputs_rawdata"      # where trajectory files go
 plt_config(scale=1)                   # config file for setting plot sizes and fonts (from Dr. W)
 os.makedirs(run_storage, exist_ok=True)
