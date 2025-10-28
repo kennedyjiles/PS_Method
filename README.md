@@ -53,8 +53,27 @@ Each of these drivers can be run in **demo** or **paper** modes, depending on wh
 
 ## Installation and Environment Setup
 
-### Option 1 — Conda
-Create the exact environment used for the paper with the provided `ps_method.yml`:
+### Option 1 — Virtual environment with pip
+```bash
+git clone https://github.com/kennedyjiles/PS_Method.git
+cd PS_Method
+
+# Create and activate a local virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install exact versions used for the paper
+pip install numpy==1.21.5 scipy==1.9.1 matplotlib==3.5.2 \
+            pandas==1.4.4 h5py==3.7.0 numba==0.56.3
+```
+Alternatively, to use the latest available versions: 
+```bash
+pip install numpy scipy matplotlib pandas h5py numba
+```
+Results may vary slightly between versions and hardware, particularly for plots showing errors near machine precision. 
+
+### Option 2 — Conda
+To exactly replicate the environment used for the paper:
 
 ```bash
 git clone https://github.com/kennedyjiles/PS_Method.git
@@ -63,24 +82,23 @@ conda env create -f ps_method.yml
 conda activate ps_method
 ```
 
-### Option 2 — Virtual environment with pip
-```bash
-git clone https://github.com/kennedyjiles/PS_Method.git
-cd PS_Method
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install numpy==1.21.5 scipy==1.9.1 matplotlib==3.5.2 \
-            pandas==1.4.4 h5py==3.7.0 numba==0.56.3
-```
+### **Key dependencies**
 
-### Key dependencies
-- Python = 3.9.13 
-- NumPy = 1.21.5  
-- SciPy = 1.9.1  
-- Matplotlib = 3.5.2  
-- Pandas = 1.4.4  
-- h5py = 3.7.0  
-- Numba = 0.56.3  
+| Package | Version used (paper) |
+|----------|----------------------|
+| Python   | 3.9.13 |
+| NumPy    | 1.21.5 |
+| SciPy    | 1.9.1 |
+| Matplotlib | 3.5.2 |
+| Pandas   | 1.4.4 |
+| h5py     | 3.7.0 |
+| Numba    | 0.56.3 |
+
+> **Note:**  
+> The versions listed above reproduce the exact results and figures from the paper.  
+> Later versions of these libraries generally work but may yield small numerical differences in precision- or tolerance-limited plots.
+
+
 
 ---
 
@@ -130,20 +148,20 @@ Reproduce full paper dataset:
 ```bash
 python hyperB.py paper2
 ```
-Full simulation an 10 keV electron near a 1-D current sheet with a half-thickness of 500 km. Expected outputs are saved under `outputs_paper/` with trajectory and error summaries.
+Full simulation an 10 keV electron near a 1-D current sheet with a half-thickness of 500 km. Expected outputs are saved under `outputs_paper/` with trajectory slice and error summaries.
 
 ### 3. Dipole Magnetic Field
 Quick demo:
 ```bash
 python dipoleB.py 
 ```
-Short demo of 100 keV proton in Earth's dipole magnetic field located at a distance of 5 Earth Radii. Expected outputs are saved under `outputs_demo/` with trajectory and error summaries.
+Short demo of 100 keV electron in Earth's dipole magnetic field located at a distance of 5 Earth Radii. Expected outputs are saved under `outputs_demo/` with trajectory and error summaries.
 
 Reproduce full paper dataset:
 ```bash
 python dipoleB.py paper2
 ```
-Full simulation of a 100 keV proton in Earth's dipole magnetic fieldl located at a distance of 5 Earth Radii, exhibiting charactistic bounce and drift motions. Expected outputs are saved under `outputs_paper/` with trajectory and error summaries.
+Full simulation of a 100 keV electron in Earth's dipole magnetic fieldl located at a distance of 5 Earth Radii, exhibiting charactistic bounce and drift motions. Expected outputs are saved under `outputs_paper/` with trajectory slice and error summaries.
 
 ---
 

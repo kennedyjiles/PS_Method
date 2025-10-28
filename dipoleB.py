@@ -48,7 +48,7 @@ KE_joules = KE_particle * evtoj                     # converting KE from eV to J
 gamma = 1.0 + KE_joules / (mass_si * spdlight**2)   # Lorentz factor
 mass = gamma * mass_si                              # Relativistic mass used for magnetic moment calculations
 v_si = spdlight * np.sqrt(1.0 - 1.0 / gamma**2)     # m/s
-tau_time = gamma * mass_si / (abs(q_e) * abs(B_0))  # τ0
+tau_time = gamma * mass_si / (abs(q_e) * abs(B_0))  # this is tau0 from paper 
 v_tau = v_si * tau_time / RE                        # dimensionless velocity
 physical_time = norm_time * abs(tau_time)           # actual physical time, t; normalized time =t/tau_time
 
@@ -619,7 +619,7 @@ direction   = drift_stats["direction"]
 if T_drift_s is None:
     print("Drift period: not enough azimuthal motion to estimate (yet).")
 else:
-    print(f"Drift period ≈ {T_drift_s:.6g} s  (≈ {T_drift_tau:.6g} τ, direction {'east' if direction>0 else 'west'})")
+    print(f"Drift period ≈ {T_drift_s:.6g} s  (≈ {T_drift_tau:.6g} (normalized time), direction {'east' if direction>0 else 'west'})")
 
 
 # ====================================
@@ -649,13 +649,13 @@ with open(output_filename, "w") as f:
     f.write(f"  pitch_deg     = {pitch_deg}°\n")
     f.write(f"  phi_deg       = {phi_deg}°\n")
     f.write(f"  tau           = {tau_time} s\n")
-    f.write(f"  v_tau         = {v_tau} RE/τ\n")
+    f.write(f"  v_tau         = {v_tau} RE/tau0\n")
     f.write(f"  x_initial     = {x_initial} RE\n")
     f.write(f"  y_initial     = {y_initial} RE\n")
     f.write(f"  z_initial     = {z_initial} RE\n")
-    f.write(f"  vx_initial    = {vx_initial} RE/τ\n")
-    f.write(f"  vy_initial    = {vy_initial} RE/τ\n")
-    f.write(f"  vz_initial    = {vz_initial} RE/τ\n")
+    f.write(f"  vx_initial    = {vx_initial} RE/tau0\n")
+    f.write(f"  vy_initial    = {vy_initial} RE/tau0\n")
+    f.write(f"  vz_initial    = {vz_initial} RE/tau0\n")
     f.write(f"  Initial Bfield= {B_0} T\n")
     
     f.write(f"  float type    = {npfloat.__name__}\n\n")
@@ -703,7 +703,7 @@ with open(output_filename, "w") as f:
         summarize_error("RKG",  rel_drift_rkg, f)
     summarize_error("PS",   rel_drift_ps,  f)
 
-    f.write(f"\n=== |delta μ|/μ0(relative, last {finalnum} steps)===\n")
+    f.write(f"\n=== |delta mu|/mu0(relative, last {finalnum} steps)===\n")
     if USE_RK45:
         summarize_error("RK45", mudrift_rk45, f)
     if USE_RK4:

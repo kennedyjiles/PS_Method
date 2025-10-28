@@ -6,6 +6,7 @@ USE_FLOAT128 = False
 if USE_FLOAT128: npfloat = np.float128 
 else: npfloat = np.float64
 
+
 # ===== Mass and Charge Constants =====
 q_e = npfloat(-1.602176634e-19)        # C
 m_e = npfloat(9.1093837139e-31)        # kg
