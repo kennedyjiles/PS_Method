@@ -554,7 +554,6 @@ if USE_RKG:
     endpoints.append((t_eval_rkg[-1], np.abs(mudrift_rkg[-1]), "RKG", lnrkg.get_color()))
 endpoints.append((t_eval_ps[-1], np.abs(mudrift_ps[-1]), f"PS{orders_used.max()}", lnps.get_color()))
 
-# --- collision avoidance block replaces your old for-loop ---
 labels = []
 for x, y, label, color in endpoints:
     _, fy = data_to_fig(x, y, ax, fig)
@@ -562,21 +561,17 @@ for x, y, label, color in endpoints:
     fy = min(max(fy, ax_pos.y0), ax_pos.y1)
     labels.append([fy, label, color])
 
-# Sort by vertical position
 labels.sort(key=lambda v: v[0])
 
-# Minimum vertical spacing in figure coords
 min_gap = 0.02  
 for i in range(1, len(labels)):
     if labels[i][0] - labels[i-1][0] < min_gap:
         labels[i][0] = labels[i-1][0] + min_gap
 
-# Clamp from the top back downward
 for i in range(len(labels)-2, -1, -1):
     if labels[i+1][0] - labels[i][0] < min_gap:
         labels[i][0] = labels[i+1][0] - min_gap
 
-# Draw adjusted labels
 for fy, label, color in labels:
     fig.text(x_fig_label, fy, label, color=color,
              va='center', ha='left', fontsize=10)
