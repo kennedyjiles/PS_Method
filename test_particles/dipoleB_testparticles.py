@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import matplotlib.pyplot as mpl
 
 USE_FLOAT128 = False  # RKG Will be diabled if this is True
 
@@ -21,7 +22,9 @@ rtol_rk45 = 1e-8                    # RK45 relative tolerance
 atol_rk45 = 1e-10                   # RK45 adapative tolerance
 user_min_gap = npfloat(15)          # Minimum index spacing between successive s=0 crossings (mirror points) to suppress false detections from small numerical oscillations
 user_min_phase = npfloat(.1)        # this is the minimum phase it's looking for to be allowed to extrapolate from for drift
+mpl.rcParams['agg.path.chunksize'] = 100   # may have to adjust if matplotlib barfs on large datasets
 
+run_storage = "outputs_rawdata"      # where trajectory files go
 
 # ===================================================================
 # ==============Toggle Parameters for Hyper B Script ================
@@ -33,7 +36,7 @@ USE_RKG --   Set to True to include RKG analysis
 READ_DATA -- Set to True to scan for saved runs and load
 WRITE_DATA -- Set to True to write saved run data to hdf file (what READ_DATA looks for)
 USE_PLOT_TITLES -- Set to True to include plot titles
-USE_FULL_PLOT -- Set to True to plot entire trajectory (only useful for short runs, large runs slice last orbits)
+USE_FULL_PLOT -- Set False for paper plots only, Set to True for all plots
 
 pitch_deg -- (degrees)
 phi_deg  -- (degrees)
@@ -43,7 +46,8 @@ z_initial_si -- (RE)
 KE_particle -- (eV)
 B_0 -- (T)
 mass_si -- m_e or m_p, otherwise manual (kg)
-gyro_plot_slice -- slices last gyroperiods for visual inspection, suggest 500 (note gyroperiod based on B_0)
+window duration -- how much time (in normalized time) you wish to plot for slice visual inspection
+slice_mode -- "last" or "first", slices window from beginning or end of simulation               
 
 rk4_step -- 2π/N where N is ~integration points per gyroperiod               
 ps_step --  set equal to rk4_step for one-to-one comparison, can be anything
@@ -56,71 +60,15 @@ parameters below or by adding new run modes. However, the datapoints and scripts
 """
 
 def load_params(run):
-    if run == "demo": #paper1 simulation at reduced norm time for quick demo
+    if run == "demo": #paper2 simulation at reduced norm time for quick demo
         if USE_FLOAT128: print("Running DEMO simulation in float128...this may take a few minutes\n")
         else: print("Running DEMO simulation...this takes just few secondsdeactivate\n")
-        output_folder = "outputs_dipoleB_demo"
+        output_folder = "outputs_demo"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True  
         USE_RK4 = True 
-        USE_RKG = True  
+        USE_RKG = True # does not work for electrons, see paper  
         USE_PLOT_TITLES = True
-        READ_DATA = False
-        WRITE_DATA = False
-        USE_FULL_PLOT = True
-
-        pitch_deg = npfloat(30.0)              
-        phi_deg = npfloat(90.0)
-        x_initial = npfloat(5)                 
-        y_initial = npfloat(0)
-        z_initial = npfloat(0)
-        KE_particle = npfloat(100e3)              
-        B_0 = npfloat(3.12e-5)  
-        mass_si = m_p   
-        gyro_plot_slice = 500
-                       
-        rk4_step = npfloat(12.1)                
-        ps_step = rk4_step                      
-        rkg_step = rk4_step
-        norm_time = npfloat(1e3) * ps_step
-
-    elif run == "paper1": #100 keV proton, 30deg pitch, 5RE, B0 at Earth surface
-        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
-        else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_dipoleB_paper"
-        os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True  
-        USE_RK4 = True 
-        USE_RKG = True  
-        USE_PLOT_TITLES = False
-        READ_DATA = False
-        WRITE_DATA = False
-        USE_FULL_PLOT = True
-
-        pitch_deg = npfloat(30.0)              
-        phi_deg = npfloat(90.0)
-        x_initial = npfloat(5)                 
-        y_initial = npfloat(0)
-        z_initial = npfloat(0)
-        KE_particle = npfloat(100e3)              
-        B_0 = npfloat(3.12e-5)  
-        mass_si = m_p   
-        gyro_plot_slice = 500
-                       
-        rk4_step = npfloat(12.1)                
-        ps_step = rk4_step                      
-        rkg_step = rk4_step
-        norm_time = npfloat(1e7) * ps_step
-
-    elif run == "paper2": #100 MeV electron, 60 degree pitch, 5RE, B0 at Earth surface
-        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
-        else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_dipoleB_paper"
-        os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True  
-        USE_RK4 = True 
-        USE_RKG = True  
-        USE_PLOT_TITLES = False
         READ_DATA = False
         WRITE_DATA = False
         USE_FULL_PLOT = True
@@ -132,26 +80,28 @@ def load_params(run):
         z_initial = npfloat(0)
         KE_particle = npfloat(100e6)              
         B_0 = npfloat(3.12e-5)  
-        mass_si = m_e   
-        gyro_plot_slice = 500
-                       
+        mass_si = m_e  
+    
+        window_duration = 6000
+        slice_mode = "last"   
+
         rk4_step = npfloat(12.1)                
         ps_step = rk4_step                      
         rkg_step = rk4_step
-        norm_time = npfloat(1e7) * ps_step
+        norm_time = npfloat(1e4) * ps_step
 
-    elif run == "paper3": #paper1 simulation at larger ps_step and smaller rk4_step
+    elif run == "paper1": #100 keV proton, 30deg pitch, 5RE, B0 at Earth surface
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_dipoleB_paper"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = False  
+        USE_RK45 = True  
         USE_RK4 = True 
-        USE_RKG = False  
+        USE_RKG = True  
         USE_PLOT_TITLES = False
-        READ_DATA = False
+        READ_DATA = True
         WRITE_DATA = False
-        USE_FULL_PLOT = True
+        USE_FULL_PLOT = False
 
         pitch_deg = npfloat(30.0)              
         phi_deg = npfloat(90.0)
@@ -161,12 +111,74 @@ def load_params(run):
         KE_particle = npfloat(100e3)              
         B_0 = npfloat(3.12e-5)  
         mass_si = m_p   
-        gyro_plot_slice = 500
-                       
+
+        window_duration = npfloat(6220.0/0.0003346) # only interested in one drift period so same as slice
+        slice_mode = "first"   
+
+        rk4_step = npfloat(12.1)                
+        ps_step = rk4_step                      
+        rkg_step = rk4_step
+        norm_time = npfloat(1e7) * ps_step
+
+    elif run == "paper2": #100 MeV electron, 60 degree pitch, 5RE, B0 at Earth surface
+        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
+        else: print("Running full PAPER simulation...this can take a few minutes\n")
+        output_folder = "outputs_paper"
+        os.makedirs(output_folder, exist_ok=True)
+        USE_RK45 = True  
+        USE_RK4 = True 
+        USE_RKG = True  
+        USE_PLOT_TITLES = False
+        READ_DATA = True
+        WRITE_DATA = False
+        USE_FULL_PLOT = False
+
+        pitch_deg = npfloat(60.0)              
+        phi_deg = npfloat(90.0)
+        x_initial = npfloat(5)                 
+        y_initial = npfloat(0)
+        z_initial = npfloat(0)
+        KE_particle = npfloat(100e6)              
+        B_0 = npfloat(3.12e-5)  
+        mass_si = m_e   
+
+        window_duration = npfloat(12/0.00003584) # only interested in one drift period 
+        slice_mode = "first"                          
+
+        rk4_step = npfloat(12.1)                
+        ps_step = rk4_step                      
+        rkg_step = rk4_step
+        norm_time = npfloat(1e7) * ps_step
+
+    elif run == "paper3": #paper1 simulation at larger ps_step and smaller rk4_step
+        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
+        else: print("Running full PAPER simulation...this can take a few minutes\n")
+        output_folder = "outputs_paper"
+        os.makedirs(output_folder, exist_ok=True)
+        USE_RK45 = False  
+        USE_RK4 = True 
+        USE_RKG = False  
+        USE_PLOT_TITLES = False
+        READ_DATA = True
+        WRITE_DATA = False
+        USE_FULL_PLOT = False
+
+        pitch_deg = npfloat(30.0)              
+        phi_deg = npfloat(90.0)
+        x_initial = npfloat(5)                 
+        y_initial = npfloat(0)
+        z_initial = npfloat(0)
+        KE_particle = npfloat(100e3)              
+        B_0 = npfloat(3.12e-5)  
+        mass_si = m_p   
+
+        window_duration = npfloat(6300.0/0.0003346) # only interested in one drift period so same as slice
+        slice_mode = "first"                         
+
         rk4_step = npfloat(.5)                
         ps_step = npfloat(44.0)
         rkg_step = rk4_step  # doesn't matter since USE_RKG = False but needs a value for naming consistency                    
-        norm_time = npfloat(6400/0.0003346) 
+        norm_time = npfloat(6400.0/0.0003346) # only interested in one drift period so same as slice
 
     elif run == "tinker": # using this one to play with parameters 
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
@@ -188,8 +200,10 @@ def load_params(run):
         z_initial = npfloat(0)
         KE_particle = npfloat(150e6)              
         B_0 = npfloat(3.12e-5)  
-        mass_si = m_e   
-        gyro_plot_slice = 500
+        mass_si = m_e  
+
+        window_duration = npfloat(100/0.0003346) 
+        slice_mode = "last"                         
                        
         rk4_step = npfloat(12.1)                
         ps_step = rk4_step
@@ -217,8 +231,10 @@ def load_params(run):
         KE_particle = npfloat(1e1)              
         B_0 = npfloat(3.12e-5)  
         mass_si = m_p   
-        gyro_plot_slice = 500
-                       
+
+        window_duration = npfloat(0.0) # only interested in one drift period so same as slice
+        slice_mode = "last"   
+
         rk4_step = 1  # not getting used, but needs a value for naming consistency                
         ps_step = npfloat(20.1)                
         rkg_step = rk4_step  # not getting used, but needs a value for naming consistency                  

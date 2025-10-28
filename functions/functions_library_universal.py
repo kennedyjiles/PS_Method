@@ -198,3 +198,26 @@ def data_to_fig(x, y, ax, fig):
     # display -> figure
     fx, fy = fig.transFigure.inverted().transform([[px, py]])[0]
     return fx, fy
+
+def slice_solution(t_eval, sol, window_duration, norm_time, mode="last"):
+    t_eval = np.asarray(t_eval)
+    if mode == "first":
+        # Slice from start up to first N gyroperiods
+        end_t = min(t_eval[-1], window_duration)
+        end_idx = np.searchsorted(t_eval, end_t, side="right")
+        if sol.shape[0] <= sol.shape[1]:  # (nvars, npts)
+            return [s[:end_idx] for s in sol]
+        else:  # (npts, nvars)
+            return [sol[:end_idx, i] for i in range(sol.shape[1])]
+
+    elif mode == "last":
+        # Slice last N gyroperiods
+        start_t = max(t_eval[0], norm_time - window_duration)
+        start_idx = np.searchsorted(t_eval, start_t, side="left")
+        if sol.shape[0] <= sol.shape[1]:
+            return [s[start_idx:] for s in sol]
+        else:
+            return [sol[start_idx:, i] for i in range(sol.shape[1])]
+
+    else:
+        raise ValueError("mode must be 'first' or 'last'")

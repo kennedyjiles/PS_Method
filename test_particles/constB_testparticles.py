@@ -28,7 +28,8 @@ USE_RK4 --   Set to True to include RK4 analysis
 USE_Analytical -- Set to True to include RK4 analysis if using anything other than B_z, set USE_ANALYTICAL=False in constB.py, it was only
 set up for B_z. All other methods fine.
 USE_PLOT_TITLES -- Set to True to include plot titles
-USE_FULL_PLOT -- Set to True to plot entire trajectory (only useful for short runs, large runs slice last orbits)
+USE_FULL_PLOT -- Set to False for paper plots only, Set to True to enable all plots (not all are useful)
+
 
 pitch_deg -- (degrees)
 phi_deg  -- (degrees)

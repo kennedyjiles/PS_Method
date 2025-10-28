@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from functions.functions_library_hyper import PS_hyperB, lorentz_force_hyperB
-from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig
+from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig, slice_solution
 from functions.functions_library_hyper import get_run_params, h5_path_for, save_results_h5, load_results_h5
 
 run = "demo"   # options: "demo", "paper1", "paper2", "paper3", or "paper4". Demo mode is a quick test run. Paper modes can take upwards of half or more
@@ -30,8 +30,6 @@ else:
 globals().update(load_params(run))
 
 # === Misc Odds and Ends ===
-mpl.rcParams['agg.path.chunksize'] = 100  
-run_storage = "outputs_rawdata"      # where trajectory files go
 os.makedirs(run_storage, exist_ok=True)
 plt_config(scale=1)    # Dr. W's Plotting SCrip
 plt.ioff()              # Turn off interactive mode for plots
@@ -269,98 +267,102 @@ v_ps = solution_ps[3:6]
 E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
 rel_drift_ps = np.abs(E_ps - E_ps[0]) / E_ps[0]
 
-if USE_RK4:
-    v_rk4 = solution_rk4[3:6]  
-    E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
-    rel_drift_rk4 = np.abs(E_rk4 - E_rk4[0]) / E_rk4[0]
+if USE_FULL_PLOT:
+    if USE_RK4:
+        v_rk4 = solution_rk4[3:6]  
+        E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
+        rel_drift_rk4 = np.abs(E_rk4 - E_rk4[0]) / E_rk4[0]
+
+    if USE_RK45:
+        v_rk45 = solution_rk45.y[3:6]
+        E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
+        rel_drift_rk45 = np.abs(E_rk45 - E_rk45[0]) / E_rk45[0]
+
+    # === Plot =====
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    if USE_RK45: line1, = ax.semilogy(t_eval_rk45, np.abs(rel_drift_rk45), color='#E69F00', linestyle='--')
+    if USE_RK4: line2, = ax.semilogy(t_eval_rk4, np.abs(rel_drift_rk4), color='#CC79A7', linestyle='-.')
+    line3, = ax.semilogy(t_eval_ps,  np.abs(rel_drift_ps),  color='#009E73',  linestyle=':')
+
+    # === Formats ===
+    ax.margins(x=0.01)
+    ax.set_yscale('log') 
+    ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  # or LogFormatterMathtext()
+    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.grid(False, which='both')
+    ax.grid(True, which='major', linestyle='--', linewidth=0.7)
+    ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+
+    # Remove top and right borders
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    # === Labels and Legend ===
+    ax.set_xlabel(r"$t/\tau_0$")
+    ax.set_ylabel(r"$|\Delta E|/E_0$")
+    if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Relative Kinetic Energy Error in Hyperbolic B Field")
+
+    # building out labels for methods at endpoints
+    fig.subplots_adjust(right=0.9)
+    fig.canvas.draw()
+    ax_pos = ax.get_position()  # Bbox in figure coords
+    x_fig_label = ax_pos.x1 + 0.01  # a small gap to the right of axes
+
+    endpoints = []
+    if USE_RK45:
+        endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", line1.get_color()))
+    if USE_RK4:
+        endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", line2.get_color()))
+    endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", line3.get_color()))
+
+    # --- collision avoidance block replaces your old for-loop ---
+    labels = []
+    for x, y, label, color in endpoints:
+        _, fy = data_to_fig(x, y, ax, fig)
+        # Clamp to axis bounds
+        fy = min(max(fy, ax_pos.y0), ax_pos.y1)
+        labels.append([fy, label, color])
+
+    # Sort by vertical position
+    labels.sort(key=lambda v: v[0])
+
+    # Minimum vertical spacing in figure coords
+    min_gap = 0.02  
+    for i in range(1, len(labels)):
+        if labels[i][0] - labels[i-1][0] < min_gap:
+            labels[i][0] = labels[i-1][0] + min_gap
+
+    # Clamp from the top back downward
+    for i in range(len(labels)-2, -1, -1):
+        if labels[i+1][0] - labels[i][0] < min_gap:
+            labels[i][0] = labels[i+1][0] - min_gap
+
+    # Draw adjusted labels
+    for fy, label, color in labels:
+        fig.text(x_fig_label, fy, label, color=color,
+                va='center', ha='left', fontsize=10)
+
+    # === Save and Close ===
+    fig.canvas.draw()   
+    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
+    plt.close(fig)  
+
+# ==========================================
+# ================ Slicing  ================
+# ==========================================
+ps_x, ps_y, ps_z = slice_solution(t_eval_ps, solution_ps, window_duration, norm_time, mode=slice_mode)[:3]
 
 if USE_RK45:
-    v_rk45 = solution_rk45.y[3:6]
-    E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-    rel_drift_rk45 = np.abs(E_rk45 - E_rk45[0]) / E_rk45[0]
-
-# === Plot =====
-fig, ax = plt.subplots(figsize=(10, 5))
-
-if USE_RK45: line1, = ax.semilogy(t_eval_rk45, np.abs(rel_drift_rk45), color='#E69F00', linestyle='--')
-if USE_RK4: line2, = ax.semilogy(t_eval_rk4, np.abs(rel_drift_rk4), color='#CC79A7', linestyle='-.')
-line3, = ax.semilogy(t_eval_ps,  np.abs(rel_drift_ps),  color='#009E73',  linestyle=':')
-
-# === Formats ===
-ax.margins(x=0.01)
-ax.set_yscale('log') 
-ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  # or LogFormatterMathtext()
-ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-ax.yaxis.set_minor_formatter(NullFormatter())
-ax.grid(False, which='both')
-ax.grid(True, which='major', linestyle='--', linewidth=0.7)
-ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
-
-# Remove top and right borders
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-
-# === Labels and Legend ===
-ax.set_xlabel(r"$t/\tau_0$")
-ax.set_ylabel(r"$|\Delta E|/E_0$")
-if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Relative Kinetic Energy Error in Hyperbolic B Field")
-
-# building out labels for methods at endpoints
-fig.subplots_adjust(right=0.9)
-fig.canvas.draw()
-ax_pos = ax.get_position()  # Bbox in figure coords
-x_fig_label = ax_pos.x1 + 0.01  # a small gap to the right of axes
-
-endpoints = []
-if USE_RK45:
-    endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", line1.get_color()))
+    rk45_x, rk45_y, rk45_z = slice_solution(t_eval_rk45, solution_rk45.y, window_duration, norm_time, mode=slice_mode)[:3]
 if USE_RK4:
-    endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", line2.get_color()))
-endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", line3.get_color()))
-
-# --- collision avoidance block replaces your old for-loop ---
-labels = []
-for x, y, label, color in endpoints:
-    _, fy = data_to_fig(x, y, ax, fig)
-    # Clamp to axis bounds
-    fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-    labels.append([fy, label, color])
-
-# Sort by vertical position
-labels.sort(key=lambda v: v[0])
-
-# Minimum vertical spacing in figure coords
-min_gap = 0.02  
-for i in range(1, len(labels)):
-    if labels[i][0] - labels[i-1][0] < min_gap:
-        labels[i][0] = labels[i-1][0] + min_gap
-
-# Clamp from the top back downward
-for i in range(len(labels)-2, -1, -1):
-    if labels[i+1][0] - labels[i][0] < min_gap:
-        labels[i][0] = labels[i+1][0] - min_gap
-
-# Draw adjusted labels
-for fy, label, color in labels:
-    fig.text(x_fig_label, fy, label, color=color,
-             va='center', ha='left', fontsize=10)
-
-# === Save and Close ===
-fig.canvas.draw()   
-fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
-plt.close(fig)  
+    rk4_x, rk4_y, rk4_z = slice_solution(t_eval_rk4, solution_rk4, window_duration, norm_time, mode=slice_mode)[:3]
 
 # =====================================================
 # ================ 2D Trajectory Slice ================
 # =====================================================
-
-# === Extract last some number of last steps from the simulation ===
-window_duration = gyro_plot_slice * 2 * np.pi
-start_t_ps   = norm_time - window_duration
-start_idx_ps   = np.searchsorted(t_eval_ps, start_t_ps) # Find corresponding indices
-ps_x, ps_y, ps_z = solution_ps[0][start_idx_ps:], solution_ps[1][start_idx_ps:], solution_ps[2][start_idx_ps:] # Slice solutions
-
 
 if USE_RK4:
     start_t_rk4  = norm_time - window_duration
@@ -401,26 +403,28 @@ plt.close(fig)
 # ======================================
 # ============= Slice of 3D ============
 # ======================================
-fig = plt.figure(figsize=(10, 8))
-ax = fig.add_subplot(111, projection='3d')
 
-# Plot each trajectory segment
-if USE_RK45:
-    ax.plot(rk45_x, rk45_y, rk45_z, label=f"RK45", color='#E69F00', linestyle='--')
-if USE_RK4:
-    ax.plot(rk4_x, rk4_y, rk4_z, label=f"RK4", color='#CC79A7', linestyle='-.')
-ax.plot(ps_x, ps_y, ps_z, label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
+if USE_FULL_PLOT:
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
 
-ax.set_xlabel(r"$x/\delta$")
-ax.set_ylabel(r"$y/\delta$")
-ax.set_zlabel(r"$z/\delta$")
-if USE_PLOT_TITLES: ax.set_title(f'3D Trajectory of Final {particle_type} Orbits in Hyperbolic B Field')
-ax.legend(loc="upper right")
+    # Plot each trajectory segment
+    if USE_RK45:
+        ax.plot(rk45_x, rk45_y, rk45_z, label=f"RK45", color='#E69F00', linestyle='--')
+    if USE_RK4:
+        ax.plot(rk4_x, rk4_y, rk4_z, label=f"RK4", color='#CC79A7', linestyle='-.')
+    ax.plot(ps_x, ps_y, ps_z, label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
 
-# === Save and Close ===
-fig.canvas.draw()  
-fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_3Dslice.png", dpi=600, bbox_inches="tight")
-plt.close(fig)
+    ax.set_xlabel(r"$x/\delta$")
+    ax.set_ylabel(r"$y/\delta$")
+    ax.set_zlabel(r"$z/\delta$")
+    if USE_PLOT_TITLES: ax.set_title(f'3D Trajectory of Final {particle_type} Orbits in Hyperbolic B Field')
+    ax.legend(loc="upper right")
+
+    # === Save and Close ===
+    fig.canvas.draw()  
+    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_3Dslice.png", dpi=600, bbox_inches="tight")
+    plt.close(fig)
 
 
 
