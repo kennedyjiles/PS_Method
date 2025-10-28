@@ -602,7 +602,7 @@ with open(output_filename, "w") as f:
         f.write(f"  rk4 steps     = {steps_rk4}\n")
     f.write(f"  ps steps      = {steps_ps}\n\n")
 
-    f.write(f"=== |ΔE|/E0 (relative, last {finalnum} steps)===\n")
+    f.write(f"=== |delta E|/E0 (relative, last {finalnum} steps)===\n")
     if USE_RK45:
         summarize_error("RK45", rel_drift_rk45, f)
     if USE_RK4:
