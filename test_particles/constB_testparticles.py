@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import matplotlib.pyplot as mpl
 
 USE_FLOAT128 = False
 
@@ -19,6 +20,8 @@ tol = 1.0 * np.finfo(npfloat).eps      # setting tolerance to machine epsilon to
 rtol_rk45 = 1e-8                       # RK45 relative tolerance
 atol_rk45 = 1e-10                      # RK45 adapative tolerance
 
+if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 1000  
+else: mpl.rcParams['agg.path.chunksize'] = 100 
 
 # ===================================================================
 # ==============Toggle Parameters for Const B Script ================
