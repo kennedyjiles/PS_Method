@@ -44,7 +44,6 @@ Each of these drivers can be run in **demo** or **paper** modes, depending on wh
 │   └── dipoleB_testparticles.py
 │
 ├── misc_plots/                 # Additional plotting and post-processing scripts
-├── master_simulation_log.csv   # Optional CSV record of dipole parameter sets
 ├── ps_method.yml               # Conda environment specification
 └── README.md
 ```
