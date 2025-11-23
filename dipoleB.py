@@ -374,6 +374,9 @@ plt.close(fig)
 # ============== KE Relative Error Plot ===============
 # =====================================================
 
+time_factor = 1.0 / (2.0 * np.pi)  # to convert to gyroperiods if desired
+
+
 # === If using Hamiltonian in RKG ==
 if USE_RKG:
     r_rkg = solution_rkg[:, 0:3]
@@ -406,29 +409,35 @@ rel_drift_ps = np.abs(E_ps - E_ps[0]) / E_ps[0]
 # === Plot =====
 fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
-    lnrk45, = ax.semilogy(t_eval_rk4
-    [1:], np.abs(rel_drift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
+    lnrk45, = ax.semilogy(t_eval_rk45
+    [1:]*time_factor, np.abs(rel_drift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
 if USE_RK4:
-    lnrk4, = ax.semilogy(t_eval_rk4[1:], np.abs(rel_drift_rk4[1:]), label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
+    lnrk4, = ax.semilogy(t_eval_rk4[1:]*time_factor, np.abs(rel_drift_rk4[1:]), label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
 if USE_RKG:
-    lnrkg, = ax.semilogy(t_eval_rkg[1:], np.abs(rel_drift_rkg[1:]), label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
-lnps, = ax.semilogy(t_eval_ps[1:], np.abs(rel_drift_ps[1:]), label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
+    lnrkg, = ax.semilogy(t_eval_rkg[1:]*time_factor, np.abs(rel_drift_rkg[1:]), label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
+lnps, = ax.semilogy(t_eval_ps[1:]*time_factor, np.abs(rel_drift_ps[1:]), label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
 
 # Getting log lines to work, mess with at your own risk
 ax.margins(x=0.01)
 ax.set_yscale('log') 
+ax.set_xscale('log') 
 ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  # or LogFormatterMathtext()
+ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
-ax.grid(False, which='both')
+ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
+ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+ax.xaxis.set_minor_formatter(NullFormatter())
 ax.grid(True, which='major', linestyle='--', linewidth=0.7)
 ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
+ax.set_aspect('equal', adjustable='box')
 
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 
-ax.set_xlabel(r"t/$\tau_0$")
+ax.set_xlabel(r"t/T")
 ax.set_ylabel(r"$|\Delta E|/E_0$")
 
 if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Relative Kinetic Energy Error in Dipole B Field")
@@ -514,7 +523,7 @@ mudrift_ps   = np.abs(mu_ps   - mu0_ps)/mu0_ps
 
 fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
-    lnrk45, = ax.semilogy(t_eval_rk4[1:], np.abs(mudrift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
+    lnrk45, = ax.semilogy(t_eval_rk45[1:], np.abs(mudrift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
 if USE_RK4:
     lnrk4, = ax.semilogy(t_eval_rk4[1:], np.abs(mudrift_rk4[1:]), label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
 if USE_RKG:
@@ -770,3 +779,4 @@ if os.path.exists(csv_path):
 else:
     df.to_csv(csv_path, index=False)
 
+print(f"\nRun Complete → {stem}")

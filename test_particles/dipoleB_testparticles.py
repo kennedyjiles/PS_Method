@@ -190,7 +190,7 @@ def load_params(run):
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True  
         USE_RK4 = True 
-        USE_RKG = True  
+        USE_RKG = False  
         USE_PLOT_TITLES = False
         READ_DATA = True
         WRITE_DATA = True
@@ -247,4 +247,3 @@ def load_params(run):
         raise ValueError("run must be 'demo', 'paper1', 'paper2', or 'paper3'")
 
     return locals()    
-
