@@ -431,8 +431,8 @@ ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.xaxis.set_minor_formatter(NullFormatter())
 ax.grid(True, which='major', linestyle='--', linewidth=0.7)
 ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
-ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
-ax.set_aspect('equal', adjustable='box')
+# ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
+# ax.set_aspect('equal', adjustable='box')
 
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
@@ -523,27 +523,34 @@ mudrift_ps   = np.abs(mu_ps   - mu0_ps)/mu0_ps
 
 fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
-    lnrk45, = ax.semilogy(t_eval_rk45[1:], np.abs(mudrift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
+    lnrk45, = ax.semilogy(t_eval_rk45[1:]*time_factor, np.abs(mudrift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
 if USE_RK4:
-    lnrk4, = ax.semilogy(t_eval_rk4[1:], np.abs(mudrift_rk4[1:]), label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
+    lnrk4, = ax.semilogy(t_eval_rk4[1:]*time_factor, np.abs(mudrift_rk4[1:]), label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
 if USE_RKG:
-    lnrkg, = ax.semilogy(t_eval_rkg[1:], np.abs(mudrift_rkg[1:]), label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
-lnps, = ax.semilogy(t_eval_ps[1:], np.abs(mudrift_ps[1:]), label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
+    lnrkg, = ax.semilogy(t_eval_rkg[1:]*time_factor, np.abs(mudrift_rkg[1:]), label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
+lnps, = ax.semilogy(t_eval_ps[1:]*time_factor, np.abs(mudrift_ps[1:]), label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
 
+# Getting log lines to work, mess with at your own risk
 ax.margins(x=0.01)
 ax.set_yscale('log') 
+ax.set_xscale('log') 
 ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  # or LogFormatterMathtext()
+ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
-ax.grid(False, which='both')
+ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
+ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+ax.xaxis.set_minor_formatter(NullFormatter())
 ax.grid(True, which='major', linestyle='--', linewidth=0.7)
-ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+# ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+# ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
+# ax.set_aspect('equal', adjustable='box')
 
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 
-ax.set_xlabel(r"$t/\tau_0$")
+ax.set_xlabel(r"t/T")
 ax.set_ylabel(r"$|\Delta \mu|/\mu_0$")
 
 if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Magnetic Moment Deviations in Dipole B Field")
@@ -779,4 +786,4 @@ if os.path.exists(csv_path):
 else:
     df.to_csv(csv_path, index=False)
 
-print(f"\nRun Complete → {stem}")
+print(f"\nRun Complete → {output_folder}/{stem}")

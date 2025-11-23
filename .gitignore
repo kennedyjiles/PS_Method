@@ -8,3 +8,4 @@ master_simulation_log.csv
 timestep.py
 test.py
 *.txt
+Archive/ 

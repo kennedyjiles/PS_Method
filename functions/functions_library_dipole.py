@@ -710,7 +710,6 @@ def drift_period_from_PS(final_coeff_matrix, dt_tau,
 # ========================
 # === Write Functions ===
 # ========================
-
 def _to_serializable(x):
     if isinstance(x, (np.floating, np.float32, np.float64)):
         return float(x)

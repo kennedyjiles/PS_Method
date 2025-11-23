@@ -25,7 +25,7 @@ user_min_phase = npfloat(.1)        # this is the minimum phase it's looking for
 mpl.rcParams['agg.path.chunksize'] = 100   # may have to adjust if matplotlib barfs on large datasets
 
 if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
-else: mpl.rcParams['agg.path.chunksize'] = 100
+else: mpl.rcParams['agg.path.chunksize'] = 1000
 
 run_storage = "outputs_rawdata"      # where trajectory files go
 
@@ -211,7 +211,7 @@ def load_params(run):
         rk4_step = npfloat(12.1)                
         ps_step = rk4_step
         rkg_step = rk4_step                    
-        norm_time = npfloat(1e7) * ps_step
+        norm_time = npfloat(1e5) * ps_step
 
     elif run == "bounce": # stepping through bounce and drift calculations
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
