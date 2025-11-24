@@ -1,5 +1,6 @@
 import numpy as np
 from numba import njit
+import json, hashlib, os, h5py
 from functions.functions_library_universal import maybe_njit, npfloat
 
 one = npfloat(1.0)
@@ -71,18 +72,117 @@ def lorentz_force_constB(t, d, Bfield, qoverm):
 
     return np.array([vx, vy, vz, dvx, dvy, dvz])
 
-def vector_error(num_sol, ana_sol, is_rk45=False):
-    # extract numerical trajectory
-    eps = 1e-15
-    if is_rk45:
-        x, y, z = num_sol.y[0], num_sol.y[1], num_sol.y[2]
-    else:
-        x, y, z = num_sol[0], num_sol[1], num_sol[2]
-    # analytical trajectory
-    xa, ya, za = ana_sol[0], ana_sol[1], ana_sol[2]
+# ====================================
+# === Read/Write Functions for hdf ===
+# ====================================
 
-    abs_err = np.sqrt((x - xa)**2 + (y - ya)**2 + (z - za)**2)
+def _to_serializable(x):
+    """Make numpy / custom scalars json-serializable."""
+    import numpy as _np
+    if isinstance(x, (_np.floating, _np.float32, _np.float64)):
+        return float(x)
+    if isinstance(x, (_np.integer,)):
+        return int(x)
+    if isinstance(x, (_np.ndarray,)):
+        return x.tolist()
+    return x
 
-    r_ana = np.sqrt(xa**2 + ya**2 + za**2)
-    rel_err = abs_err / np.maximum(r_ana, eps)
-    return abs_err, rel_err
+def get_run_params(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
+                   mass_si, q_e, B_0,
+                   x_initial, y_initial, z_initial,
+                   pitch_deg, phi_deg,
+                   norm_time, ps_step, rk4_step,
+                   PS_order, tol, qoverm):
+    """Collect all knobs that define a 'unique' run."""
+    return {
+        # toggles
+        "USE_RK45": bool(USE_RK45),
+        "USE_RK4":  bool(USE_RK4),
+
+
+        # physics & normalization
+        "KE_particle": _to_serializable(KE_particle),
+        "mass_si": _to_serializable(mass_si),
+        "q_e": _to_serializable(q_e),
+        "B_0": _to_serializable(B_0),
+
+        # initial conditions 
+        "x_initial": _to_serializable(x_initial),
+        "y_initial": _to_serializable(y_initial),
+        "z_initial": _to_serializable(z_initial),
+        "pitch_deg": _to_serializable(pitch_deg),
+        "phi_deg": _to_serializable(phi_deg),
+
+        # times / steps
+        "norm_time": _to_serializable(norm_time),
+        "ps_step": _to_serializable(ps_step),
+        "rk4_step": _to_serializable(rk4_step),
+
+        # PS & solver knobs
+        "PS_order": int(PS_order),
+        "tol": _to_serializable(tol),
+        "rtol_rk45": _to_serializable(rtol_rk45),
+        "atol_rk45": _to_serializable(atol_rk45),
+
+        # charge/mass normalization used in RHS
+        "qoverm": _to_serializable(qoverm),
+    }
+
+def run_hash(params: dict) -> str:
+    j = json.dumps(params, sort_keys=True, default=_to_serializable, separators=(",",":"))
+    return hashlib.sha1(j.encode("utf-8")).hexdigest()[:16]
+
+def h5_path_for(params, output_folder):
+    return os.path.join(output_folder, f"run_{run_hash(params)}.h5")
+
+def save_results_h5(h5_path, params, results):
+    with h5py.File(h5_path, "w") as f:
+        # store params as a single JSON attribute on root
+        f.attrs["params_json"] = json.dumps(params, sort_keys=True, default=_to_serializable)
+
+        for k in ("ps","rk4","rk45"):
+            if k in results and results[k] is not None:
+                grp = f.create_group(k)
+                for name, arr in results[k].items():
+                    if arr is None: 
+                        continue
+                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=2)
+
+        # meta info
+        meta = results.get("meta", {})
+        gmeta = f.create_group("meta")
+        # store timing dict as attrs
+        for mk, mv in meta.get("timing", {}).items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+        # scalar attrs
+        for sk in ("physical_time","norm_time","percent_c","particle_label"):
+            if sk in meta:
+                gmeta.attrs[sk] = meta[sk]
+
+def load_results_h5(h5_path):
+    with h5py.File(h5_path, "r") as f:
+        loaded = {"meta": {"timing": {}}}
+        # params
+        loaded["params"] = json.loads(f.attrs["params_json"])
+
+        # helper to pull groups
+        def _read_grp(name):
+            if name not in f: return None
+            g = f[name]
+            out = {}
+            for ds in g:
+                out[ds] = g[ds][...]
+            return out
+
+        for k in ("ps","rk4","rk45"):
+            loaded[k] = _read_grp(k)
+
+        # meta attrs
+        gmeta = f["meta"]
+        for a in gmeta.attrs:
+            if a.startswith("timing_"):
+                loaded["meta"]["timing"][a.replace("timing_","")] = gmeta.attrs[a]
+            else:
+                loaded["meta"][a] = gmeta.attrs[a]
+
+        return loaded

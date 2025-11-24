@@ -375,7 +375,7 @@ if USE_RK45:
     rk45_x, rk45_y, rk45_z = solution_rk45.y[0][start_idx_rk45:], solution_rk45.y[1][start_idx_rk45:], solution_rk45.y[2][start_idx_rk45:]
 
 # === Plot Last Few Orbits ===
-fig, ax = plt.subplots(figsize=(10, 7))
+fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
     ax.plot(rk45_x, rk45_y, label=f"RK45", color='#E69F00', linestyle='--')
 if USE_RK4:
