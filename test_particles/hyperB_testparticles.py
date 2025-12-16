@@ -80,17 +80,17 @@ def load_params(run):
         ps_step = rk4_step
         norm_time = 50 * 2 * np.pi
 
-    elif run == "paper1": # 100 keV electron, 75deg pitch, delta=500km, B0=10nT
+    elif run == "paper1": # 10 keV electron, 75deg pitch, delta=500km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs_paper_HYPER"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
         READ_DATA = True      
-        WRITE_DATA = False     
+        WRITE_DATA = True     
         USE_PLOT_TITLES = False
-        USE_FULL_PLOT = False 
+        USE_FULL_PLOT = True 
 
         pitch_deg = npfloat(75.0)
         phi_deg = npfloat(45.0)
@@ -107,47 +107,48 @@ def load_params(run):
 
         rk4_step = npfloat(0.063)               
         ps_step = rk4_step             
-        norm_time = (1e6) * ps_step 
+        gyroperiods = 1e5                 
+        norm_time = (gyroperiods) * 2 * np.pi   
 
-    elif run == "paper2": # 10 keV electron, -15deg pitch, delta=200km, B0=10nT
+    elif run == "paper2": # 10 keV electron, 75deg pitch, delta=50km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs_paper_HYPER"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
-        USE_RK4 = True         
+        USE_RK4 = True        
         READ_DATA = True      
-        WRITE_DATA = False     
+        WRITE_DATA = True     
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
 
-        pitch_deg = npfloat(-15.0)
-        phi_deg = npfloat(45.0)
-        delta = 200                             
+        pitch_deg = npfloat(75.0)
+        phi_deg = npfloat(10.0)
+        delta = 50                             
         x_initial_si = npfloat(0.0)             
-        y_initial_si = npfloat(0.25 * delta)
+        y_initial_si = npfloat(.1 * delta)
         z_initial_si = npfloat(0.0)
         KE_particle = npfloat(10e3)             
         B_0 = npfloat(10e-9)                    
-        mass_si = m_e     
+        mass_si = m_e    
 
         window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
         slice_mode = "last"   
 
-        rk4_step = npfloat(0.063)               
-        ps_step = rk4_step             
-        norm_time = (1e6) * ps_step     
-
+        rk4_step = npfloat(0.0315)               
+        ps_step = rk4_step     
+        gyroperiods = 1e5               
+        norm_time = (gyroperiods) * 2 * np.pi     
 
     elif run == "paper3": # 100 keV proton, -15deg pitch, delta=200km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs_paper_HYPER"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
         READ_DATA = True      
-        WRITE_DATA = False      
+        WRITE_DATA = True      
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
 
@@ -166,18 +167,19 @@ def load_params(run):
 
         rk4_step = npfloat(0.063)               
         ps_step = rk4_step
-        norm_time = (1e6) * ps_step 
+        gyroperiods = 1e5               
+        norm_time = (gyroperiods) * 2 * np.pi   
 
 
     elif run == "paper4": # paper1 simulation at larger ps_step
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs_paper_HYPER"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
         READ_DATA = True      
-        WRITE_DATA = False     
+        WRITE_DATA = True     
         USE_PLOT_TITLES = False
         USE_FULL_PLOT = False  
 
@@ -195,8 +197,39 @@ def load_params(run):
         slice_mode = "last"   
 
         rk4_step = npfloat(0.063)               
-        ps_step = npfloat(0.63)              
-        norm_time = (1e6) * rk4_step # same norm time as paper 1   
+        ps_step = npfloat(0.63)
+        gyroperiods = 1e5               
+        norm_time = (gyroperiods) * 2 * np.pi                
+
+    elif run == "tinker": # tinkering with things
+            if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
+            else: print("Running full PAPER simulation...this will take a few minutes\n")
+            output_folder = "outputs_paper_hyperB"
+            os.makedirs(output_folder, exist_ok=True)
+            USE_RK45 = True       
+            USE_RK4 = True        
+            READ_DATA = True      
+            WRITE_DATA = False     
+            USE_PLOT_TITLES = False
+            USE_FULL_PLOT = True  
+
+            pitch_deg = npfloat(85.0)
+            phi_deg = npfloat(1.0)
+            delta = 1                             
+            x_initial_si = npfloat(0.0)             
+            y_initial_si = npfloat(0.1 * delta)
+            z_initial_si = npfloat(0.0)
+            KE_particle = npfloat(10e3)             
+            B_0 = npfloat(10e-9)                    
+            mass_si = m_e
+
+            window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
+            slice_mode = "last"   
+
+            rk4_step = npfloat(0.01)               
+            ps_step = rk4_step
+            gyroperiods = 1e4          
+            norm_time = (gyroperiods) * 2 * np.pi 
 
     else:
         raise ValueError("run must be 'demo', 'paper1', 'paper2', 'paper3', or 'paper4'")

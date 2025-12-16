@@ -2,7 +2,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as mpl
 
-USE_FLOAT128 = False
+USE_FLOAT128 = True
 
 if USE_FLOAT128: npfloat = np.float128 
 else: npfloat = np.float64

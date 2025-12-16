@@ -331,7 +331,7 @@ if USE_FULL_PLOT:
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
 
-    ax.set_xlabel(r"t/T")
+    ax.set_xlabel(r"$\tau/T$")
     ax.set_ylabel(r"$|\Delta E|/E_0$")
     if USE_PLOT_TITLES: ax.set_title(f'{particle_type} Relative Kinetic Energy Error in Constant B Field')
 
@@ -516,7 +516,7 @@ ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 
-ax.set_xlabel(r"t/T")
+ax.set_xlabel(r"$\tau/T$")
 ax.set_ylabel(r"$|\Delta E|/E_0$")
 if USE_PLOT_TITLES: ax.set_title(f'{particle_type} Relative Kinetic Energy Error in Constant B Field')
 
@@ -530,11 +530,11 @@ x_fig_label = ax_pos.x1  # a small gap to the right of axes
 endpoints = []
 if USE_RK45:
     endpoints.append(
-        (t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), f"RK45 ({order_mag_rk45})", lnrk45.get_color())
+        (t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", lnrk45.get_color())
     )
 if USE_RK4:
     endpoints.append(
-        (t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), f"RK4 ({order_mag_rk4})", lnrk4.get_color())
+        (t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lnrk4.get_color())
     )
 
 ps_endpoints = [
@@ -643,7 +643,7 @@ if USE_ANALYTICAL:
 
 
     if USE_FULL_PLOT: 
-        ax.set_xlabel(r't/T')
+        ax.set_xlabel(r'$\tau/T$')
         ax.tick_params(axis='x', which='both', labelbottom=True)
 
     
@@ -660,9 +660,9 @@ if USE_ANALYTICAL:
     endpoints = []
 
     if USE_RK45:
-        endpoints.append((t_eval_rk45[-1], np.abs(rel_err_rk45[-1]), f"RK45 ({order_mag_rk45})", linerk45.get_color()))
+        endpoints.append((t_eval_rk45[-1], np.abs(rel_err_rk45[-1]), "RK45", linerk45.get_color()))
     if USE_RK4:
-        endpoints.append((t_eval_rk4[-1],  np.abs(rel_err_rk4[-1]),  f"RK4 ({order_mag_rk4})",  linerk4.get_color()))
+        endpoints.append((t_eval_rk4[-1],  np.abs(rel_err_rk4[-1]),  "RK4",  linerk4.get_color()))
 
     endpoints.append((t_eval_ps[-1], np.abs(rel_err_ps[-1]),
                       f"PS{orders_used.max()}", lineps.get_color()))

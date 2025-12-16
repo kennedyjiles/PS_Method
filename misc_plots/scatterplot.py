@@ -16,7 +16,7 @@ plt_config(scale=1)
 
 # === Toggle electron/proton  and mu/E data ===
 USE_ELECTRON = True  # True for electrons, False for protons
-USE_MU = False   # True for Δμ, False for ΔE
+USE_MU = True   # True for Δμ, False for ΔE
 
 
 # === Toggle which error to plot ===
@@ -114,10 +114,12 @@ ax.set_xscale("log")
 ax.set_yscale('log') 
 
 ax.set_xlabel("Runtime (s)")
+# ax.tick_params(labelbottom=False)
+
 ax.set_ylabel(YLABEL)
 
 ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  # or LogFormatterMathtext()
+ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
 ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))

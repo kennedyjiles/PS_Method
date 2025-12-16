@@ -827,3 +827,154 @@ def load_results_h5(h5_path):
                 loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
+
+# STREAM AND DECIMATION
+
+def run_ps_streaming_with_decimation(
+    initial_pos_vel_ps,
+    steps_ps,
+    ps_step,
+    PS_order,
+    tol,
+    qoverm,
+    cache_path,
+    write_data=True,
+    chunk_steps=10**6,
+    decimate=1,
+):
+    """
+    Streaming PS driver:
+    - advances PS in chunks using PS_dipoleB
+    - optionally decimates output for storage/plotting
+    - writes chunked data to HDF5
+    - returns decimated in-memory arrays (t, y, orders)
+    - returns runtime for timing
+    """
+
+    import time
+    start_time_ps = time.time()
+
+    # PS_dipoleB always returns 17-component rows
+    n_state = 17
+
+    # cur_state must ALWAYS be the 6 physical variables only
+    cur_state = initial_pos_vel_ps.copy()   # shape (6,)
+    remaining = steps_ps
+    global_index = 0
+
+    # In-memory decimated storage
+    t_list = []
+    y_list = []
+    orders_list = []
+
+    # Create the HDF5 file (or overwrite)
+    if write_data:
+        f = h5py.File(cache_path, "w")
+
+        # meta group
+        meta_grp = f.create_group("meta")
+
+        # ps group
+        ps_grp = f.create_group("ps")
+
+        dset_t = ps_grp.create_dataset(
+            "t",
+            shape=(0,),
+            maxshape=(None,),
+            dtype=npfloat,
+        )
+        dset_y = ps_grp.create_dataset(
+            "y",
+            shape=(n_state, 0),
+            maxshape=(n_state, None),
+            dtype=npfloat,
+            chunks=(n_state, min(chunk_steps, steps_ps + 1)),
+        )
+        dset_orders = ps_grp.create_dataset(
+            "orders",
+            shape=(0,),
+            maxshape=(None,),
+            dtype=np.int16,
+        )
+    else:
+        f = None
+        dset_t = dset_y = dset_orders = None
+
+    try:
+        while remaining > 0:
+            this_chunk = min(chunk_steps, remaining)
+
+            # 🔹 Compute chunk
+            sol_chunk, orders_chunk = PS_dipoleB(
+                PS_order, this_chunk, cur_state, tol, qoverm, ps_step
+            )
+            # sol_chunk: (17, this_chunk+1)
+            # orders_chunk: (this_chunk+1,)
+
+            # Global indices for this chunk
+            idx_chunk = np.arange(global_index, global_index + this_chunk + 1, dtype=np.int64)
+
+            # 🔹 Avoid duplicating boundary between chunks
+            if global_index == 0:
+                sol_eff = sol_chunk
+                orders_eff = orders_chunk
+                idx_eff = idx_chunk
+            else:
+                sol_eff = sol_chunk[:, 1:]
+                orders_eff = orders_chunk[1:]
+                idx_eff = idx_chunk[1:]
+
+            # 🔹 Decimation
+            if decimate <= 1:
+                keep = np.ones_like(idx_eff, dtype=bool)
+            else:
+                keep = (idx_eff % decimate == 0) | (idx_eff == steps_ps)
+
+            idx_keep = idx_eff[keep]
+            sol_keep = sol_eff[:, keep]         # KEEP ALL 17 ROWS
+            orders_keep = orders_eff[keep]
+
+            # 🔹 Append to in-memory lists
+            if idx_keep.size > 0:
+                t_list.append(idx_keep.astype(npfloat) * npfloat(ps_step))
+                y_list.append(sol_keep)
+                orders_list.append(orders_keep.astype(np.int16))
+
+                # 🔹 Stream to HDF5
+                if write_data:
+                    old_len = dset_t.shape[0]
+                    new_len = old_len + idx_keep.size
+
+                    dset_t.resize((new_len,))
+                    dset_y.resize((n_state, new_len))
+                    dset_orders.resize((new_len,))
+
+                    dset_t[old_len:new_len] = idx_keep.astype(npfloat) * npfloat(ps_step)
+                    dset_y[:, old_len:new_len] = sol_keep
+                    dset_orders[old_len:new_len] = orders_keep.astype(np.int16)
+
+            # 🔹 Prepare next-chunk initial state
+            cur_state = sol_chunk[0:6, -1].copy()   # ONLY pass (x,y,z,vx,vy,vz)
+
+            # Step forward
+            global_index += this_chunk
+            remaining -= this_chunk
+
+        # Concatenate decimated arrays
+        if t_list:
+            t_dec = np.concatenate(t_list)
+            y_dec = np.hstack(y_list)
+            orders_dec = np.concatenate(orders_list)
+        else:
+            t_dec = np.zeros(1, dtype=npfloat)
+            y_dec = initial_pos_vel_ps.reshape(n_state, 1)
+            orders_dec = np.zeros(1, dtype=np.int16)
+
+        end_time_ps = time.time()
+        elapsed_ps = end_time_ps - start_time_ps
+
+        return t_dec, y_dec, orders_dec, elapsed_ps
+
+    finally:
+        if f is not None:
+            f.close()

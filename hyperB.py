@@ -79,9 +79,9 @@ initial_pos_vel_ps = np.array([x_initial, y_initial, z_initial, vx_initial, vy_i
 
 
 # === Ensures that Total Time Elapsed is the Same ===
-steps_ps = int(norm_time / ps_step) # PS is normalized
+steps_ps = int(round(norm_time / ps_step))
+norm_time = steps_ps * ps_step           # <-- adjust total time to be exact multiple
 t_eval_ps = np.linspace(0, norm_time, steps_ps + 1, dtype=npfloat)
-
 
 if USE_RK4: 
     steps_rk4 = int(norm_time / rk4_step)
@@ -226,7 +226,7 @@ if USE_FULL_PLOT:
 
     # === Save and Close ===
     fig.canvas.draw()   
-    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_2D.png", dpi=600, bbox_inches="tight")
+    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_2D.png", dpi=600, bbox_inches="tight")
     plt.close(fig)  
 
 # =====================================================
@@ -256,52 +256,65 @@ if USE_FULL_PLOT:
 
     # === Save and Close ===
     fig.canvas.draw()   
-    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_3D.png", dpi=600, bbox_inches="tight")
+    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_3D.png", dpi=600, bbox_inches="tight")
     plt.close(fig)  
 
 # =====================================================
 # ============== KE Relative Error Plot ===============
 # =====================================================
+time_factor = 1.0 / (2.0 * np.pi)  # to convert to gyroperiods if desired
 
 v_ps = solution_ps[3:6]        
 E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
 rel_drift_ps = np.abs(E_ps - E_ps[0]) / E_ps[0]
+final_ps = rel_drift_ps[-1]
 
 if USE_FULL_PLOT:
     if USE_RK4:
         v_rk4 = solution_rk4[3:6]  
         E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
         rel_drift_rk4 = np.abs(E_rk4 - E_rk4[0]) / E_rk4[0]
+        ratio_rk4_ps = rel_drift_rk4[-1]/final_ps
+        order_mag_rk4 = int(np.floor(np.log10(abs(ratio_rk4_ps))))
 
     if USE_RK45:
         v_rk45 = solution_rk45.y[3:6]
         E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
         rel_drift_rk45 = np.abs(E_rk45 - E_rk45[0]) / E_rk45[0]
+        ratio_rk45_ps = rel_drift_rk45[-1]/final_ps
+        order_mag_rk45 = int(np.floor(np.log10(abs(ratio_rk45_ps))))
 
     # === Plot =====
     fig, ax = plt.subplots(figsize=(10, 5))
 
-    if USE_RK45: line1, = ax.semilogy(t_eval_rk45, np.abs(rel_drift_rk45), color='#E69F00', linestyle='--')
-    if USE_RK4: line2, = ax.semilogy(t_eval_rk4, np.abs(rel_drift_rk4), color='#CC79A7', linestyle='-.')
-    line3, = ax.semilogy(t_eval_ps,  np.abs(rel_drift_ps),  color='#009E73',  linestyle=':')
+    if USE_RK45: line1, = ax.semilogy(t_eval_rk45 * time_factor, np.abs(rel_drift_rk45), color='#E69F00', linestyle='--')
+    if USE_RK4: line2, = ax.semilogy(t_eval_rk4 * time_factor, np.abs(rel_drift_rk4), color='#CC79A7', linestyle='-.')
+    line3, = ax.semilogy(t_eval_ps * time_factor,  np.abs(rel_drift_ps),  color='#009E73',  linestyle=':')
 
-    # === Formats ===
+    # Getting log lines to work, mess with at your own risk
     ax.margins(x=0.01)
     ax.set_yscale('log') 
+    ax.set_xscale('log') 
     ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  # or LogFormatterMathtext()
+    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
     ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
     ax.yaxis.set_minor_formatter(NullFormatter())
-    ax.grid(False, which='both')
+    ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+    ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
+    ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+    ax.xaxis.set_minor_formatter(NullFormatter())
     ax.grid(True, which='major', linestyle='--', linewidth=0.7)
     ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+    
+    # ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
+    # ax.set_aspect('equal', adjustable='box')
 
     # Remove top and right borders
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
 
     # === Labels and Legend ===
-    ax.set_xlabel(r"$t/\tau_0$")
+    ax.set_xlabel(r"$\tau/T$")
     ax.set_ylabel(r"$|\Delta E|/E_0$")
     if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Relative Kinetic Energy Error in Hyperbolic B Field")
 
@@ -309,16 +322,15 @@ if USE_FULL_PLOT:
     fig.subplots_adjust(right=0.9)
     fig.canvas.draw()
     ax_pos = ax.get_position()  # Bbox in figure coords
-    x_fig_label = ax_pos.x1 + 0.01  # a small gap to the right of axes
+    x_fig_label = ax_pos.x1
 
     endpoints = []
     if USE_RK45:
-        endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", line1.get_color()))
+        endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), f"RK45", line1.get_color()))
     if USE_RK4:
-        endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", line2.get_color()))
+        endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), f"RK4", line2.get_color()))
     endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", line3.get_color()))
 
-    # --- collision avoidance block replaces your old for-loop ---
     labels = []
     for x, y, label, color in endpoints:
         _, fy = data_to_fig(x, y, ax, fig)
@@ -347,7 +359,7 @@ if USE_FULL_PLOT:
 
     # === Save and Close ===
     fig.canvas.draw()   
-    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
+    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
     plt.close(fig)  
 
 # ==========================================
@@ -362,7 +374,7 @@ if USE_RK4:
 
 # =====================================================
 # ================ 2D Trajectory Slice ================
-# =====================================================
+# # =====================================================
 
 if USE_RK4:
     start_t_rk4  = norm_time - window_duration
@@ -378,14 +390,14 @@ if USE_RK45:
 fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
     ax.plot(rk45_x, rk45_y, label=f"RK45", color='#E69F00', linestyle='--')
-if USE_RK4:
+if USE_RK4 and not run== "paper3":
     ax.plot(rk4_x, rk4_y, label=f"RK4", color='#CC79A7', linestyle='-.')
 
 ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
 
 # === Labels and Legend ===
-ax.set_xlabel(r"$x/\delta$")
-ax.set_ylabel(r"$y/\delta$")
+ax.set_xlabel(r"$x$")
+ax.set_ylabel(r"$y$")
 if USE_PLOT_TITLES: ax.set_title(f"2D Trajectory of Final {particle_type} Orbits in Hyperbolic B Field")
 
 # ===  Axis Limits for Paper ===
@@ -397,7 +409,7 @@ ax.grid(True)
 
 # ===  Save and Close ===
 fig.canvas.draw()   
-fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_2Dslice.png", dpi=600, bbox_inches="tight")
+fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_2Dslice.png", dpi=600, bbox_inches="tight")
 plt.close(fig)  
 
 # ======================================
@@ -423,7 +435,7 @@ if USE_FULL_PLOT:
 
     # === Save and Close ===
     fig.canvas.draw()  
-    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_3Dslice.png", dpi=600, bbox_inches="tight")
+    fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_3Dslice.png", dpi=600, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -457,45 +469,58 @@ if USE_RK4:
     vy_rk4 = np.array(solution_rk4[4], dtype=npfloat)
     vz_rk4 = np.array(solution_rk4[5], dtype=npfloat)
     rel_drift_rk4  = compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
+    ratio_rk4_ps = rel_drift_rk4[-1]/final_ps
+    order_mag_rk4 = int(np.floor(np.log10(abs(ratio_rk4_ps))))
 
 if USE_RK45:
     vx_rk45 = np.array(solution_rk45.y[3], dtype=npfloat)
     vy_rk45 = np.array(solution_rk45.y[4], dtype=npfloat)
     vz_rk45 = np.array(solution_rk45.y[5], dtype=npfloat)
     rel_drift_rk45 = compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
+    ratio_rk45_ps = rel_drift_rk45[-1]/final_ps
+    order_mag_rk45 = int(np.floor(np.log10(abs(ratio_rk45_ps))))
 
 # === Plot energy drift ===
 def f64(x): return np.array(x, dtype=np.float64)
 
 fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
-    lnrk45, = ax.semilogy(f64(t_eval_rk45[1:]), np.abs(f64(rel_drift_rk45[1:])), label="RK45", linestyle='-',  color='#E69F00')   # orange
+    lnrk45, = ax.semilogy(f64(t_eval_rk45[1:])*time_factor, np.abs(f64(rel_drift_rk45[1:])), label=f"RK45 ({order_mag_rk45})", linestyle='-',  color='#E69F00')   # orange
 if USE_RK4:
-    lnrk4, = ax.semilogy(f64(t_eval_rk4[1:]),  np.abs(f64(rel_drift_rk4[1:])),  label="RK4", linestyle='-.', color='#CC79A7')   # reddish purple
+    lnrk4, = ax.semilogy(f64(t_eval_rk4[1:])*time_factor,  np.abs(f64(rel_drift_rk4[1:])),  label=f"RK4 ({order_mag_rk4})", linestyle='-.', color='#CC79A7')   # reddish purple
 
-lnps5, = ax.semilogy(f64(t_eval_ps[1:]), np.abs(f64(rel_drift_ps_5[1:])),  label="PS5", linestyle='--', color='#0072B2')   # blue
-lnps6, = ax.semilogy(f64(t_eval_ps[1:]), np.abs(f64(rel_drift_ps_6[1:])),  label="PS6", linestyle=':',  color='#56B4E9')   # sky blue
-lnps7, = ax.semilogy(f64(t_eval_ps[1:]), np.abs(f64(rel_drift_ps_7[1:])),  label="PS7", linestyle='-.', color='#D55E00')   # vermillion
-lnps10, = ax.semilogy(f64(t_eval_ps[1:]), np.abs(f64(rel_drift_ps_10[1:])), label="PS10", linestyle='--', color='#000000')   # black
-lnps15, = ax.semilogy(f64(t_eval_ps[1:]), np.abs(f64(rel_drift_ps_15[1:])), label="PS15", linestyle='-',  color='#999999')   # gray
-lnps, = ax.semilogy(t_eval_ps[1:], np.abs(rel_drift_ps[1:]), label=f"PS{orders_used.max()}", linestyle=':', color='#009E73')    # bluish green
+lnps5, = ax.semilogy(f64(t_eval_ps[1:])*time_factor, np.abs(f64(rel_drift_ps_5[1:])),  label="PS5", linestyle='--', color='#0072B2')   # blue
+lnps6, = ax.semilogy(f64(t_eval_ps[1:])*time_factor, np.abs(f64(rel_drift_ps_6[1:])),  label="PS6", linestyle=':',  color='#56B4E9')   # sky blue
+lnps7, = ax.semilogy(f64(t_eval_ps[1:])*time_factor, np.abs(f64(rel_drift_ps_7[1:])),  label="PS7", linestyle='-.', color='#D55E00')   # vermillion
+lnps10, = ax.semilogy(f64(t_eval_ps[1:])*time_factor, np.abs(f64(rel_drift_ps_10[1:])), label="PS10", linestyle='--', color='#000000')   # black
+lnps15, = ax.semilogy(f64(t_eval_ps[1:])*time_factor, np.abs(f64(rel_drift_ps_15[1:])), label="PS15", linestyle='-',  color='#999999')   # gray
+lnps, = ax.semilogy(t_eval_ps[1:]*time_factor, np.abs(rel_drift_ps[1:]), label=f"PS{orders_used.max()}", linestyle=':', color='#009E73')    # bluish green
 
+# Getting log lines to work, mess with at your own risk
 ax.margins(x=0.01)
 ax.set_yscale('log') 
+ax.set_xscale('log') 
+if run== "paper4": 
+    ax.set_xlim(left=1e-1) # for the paper4 plots
 ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  # or LogFormatterMathtext()
+ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
-ax.grid(False, which='both')
+ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
+ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+ax.xaxis.set_minor_formatter(NullFormatter())
 ax.grid(True, which='major', linestyle='--', linewidth=0.7)
 ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+# ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
+# ax.set_aspect('equal', adjustable='box')
 
 # Remove top and right borders
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 
 # === Labels and Legend ===
-ax.set_xlabel(r"$t/\tau_0$")
+ax.set_xlabel(r"$\tau/T$")
 ax.set_ylabel(r"$|\Delta E|/E_0$")
 if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Relative Kinetic Energy Error in Hyperbolic B Field")
 
@@ -503,7 +528,7 @@ if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Relative Kinetic Energy Error
 fig.subplots_adjust(right=0.9)
 fig.canvas.draw()
 ax_pos = ax.get_position()  # Bbox in figure coords
-x_fig_label = ax_pos.x1 + 0.01  # a small gap to the right of axes
+x_fig_label = ax_pos.x1 
 
 endpoints = []
 if USE_RK45:
@@ -547,7 +572,7 @@ for fy, label, color in labels:
 
 
 # ===  Save and Close ===
-fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_KEerror_many.png", dpi=600, bbox_inches="tight")
+fig.savefig( f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_KEerror_many.png", dpi=600, bbox_inches="tight")
 plt.close(fig)  
 
 # ====================================
@@ -562,7 +587,7 @@ def summarize_error(label, err, f):
     rms_val  = np.sqrt(np.mean(err[-finalnum:]**2))
     f.write(f"  {label:<8}: mean = {mean_val:.2e}, max = {max_val:.2e}, rms = {rms_val:.2e}\n")
 
-output_filename = f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{norm_time:.1f}s_{npfloat.__name__}_simulation_summary.txt"
+output_filename = f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_simulation_summary.txt"
 
 with open(output_filename, "w") as f:
     if WRITE_DATA or READ_DATA: f.write(f"Run Data: {stem}.hd5\n\n")
@@ -575,9 +600,9 @@ with open(output_filename, "w") as f:
     f.write(f"  phi_deg       = {phi_deg}\n")
     f.write(f"  tau           = {tau_time} s\n")
     f.write(f"  v_tau         = {v_tau}\n")
-    f.write(f"  x_initial     = {x_initial} km\n")
-    f.write(f"  y_initial     = {y_initial} km\n")
-    f.write(f"  z_initial     = {z_initial} km\n")
+    f.write(f"  x_initial     = {x_initial_si} km\n")
+    f.write(f"  y_initial     = {y_initial_si} km\n")
+    f.write(f"  z_initial     = {z_initial_si} km\n")
     f.write(f"  vx_initial    = {vx_initial}\n")
     f.write(f"  vy_initial    = {vy_initial}\n")
     f.write(f"  vz_initial    = {vz_initial}\n")
@@ -609,4 +634,5 @@ with open(output_filename, "w") as f:
         summarize_error("RK4",  rel_drift_rk4, f)
     summarize_error("PS",   rel_drift_ps,  f)
 
+print(f"\nRun Complete → {output_folder}/{stem}")
 
