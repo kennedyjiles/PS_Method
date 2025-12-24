@@ -16,7 +16,7 @@ plt_config(scale=1)
 
 # === Toggle electron/proton  and mu/E data ===
 USE_ELECTRON = True  # True for electrons, False for protons
-USE_MU = True   # True for Δμ, False for ΔE
+USE_MU = False   # True for Δμ, False for ΔE
 
 
 # === Toggle which error to plot ===
@@ -138,19 +138,19 @@ if USE_ELECTRON:
     angle_handles = [
         Line2D([0], [0], marker="o", linestyle="None",
             markerfacecolor="white", markeredgecolor="black",
-            markersize=10, label="60° = black ring"),
+            markersize=10, label="60° (black ring)"),
         Line2D([0], [0], marker="o", linestyle="None",
             markerfacecolor="lightgray", markeredgecolor="lightgray",
-            markersize=10, label="90° = plain fill"),
+            markersize=10, label="90° (plain fill)"),
     ]
 else:
         angle_handles = [
         Line2D([0], [0], marker="o", linestyle="None",
             markerfacecolor="white", markeredgecolor="black",
-            markersize=10, label="30° = black ring"),
+            markersize=10, label="30° (black ring)"),
         Line2D([0], [0], marker="o", linestyle="None",
             markerfacecolor="lightgray", markeredgecolor="lightgray",
-            markersize=10, label="90° = plain fill"),
+            markersize=10, label="90° (plain fill)"),
     ]
 ax.legend(handles=method_handles + angle_handles, loc="upper right")
 

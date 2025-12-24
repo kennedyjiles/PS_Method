@@ -100,7 +100,8 @@ if phase_warning:
 if USE_ANALYTICAL: 
     start_time_analytical = time.time()
     solution_analytical = analytical_constantB(
-        t_eval_ps, initial_pos_vel, Bfield, qoverm)
+        t_eval_ps,
+        initial_pos_vel, qoverm)
     end_time_analytical = time.time()
 
 # === Build parameter signature & check cache ===
@@ -428,9 +429,9 @@ if USE_FULL_PLOT:
         ax.plot(rk4_x, rk4_y, rk4_z, label=f"RK4", color='#CC79A7', linestyle='-.')
     ax.plot(ps_x, ps_y, ps_z, label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
 
-    ax.set_xlabel("x (m)", labelpad = 15)
-    ax.set_ylabel("y (m)", labelpad = 15)
-    ax.set_zlabel("z (m)", labelpad = 20)
+    ax.set_xlabel("x", labelpad = 15)
+    ax.set_ylabel("y", labelpad = 15)
+    ax.set_zlabel("z", labelpad = 20)
     ax.tick_params(axis='z', pad = 10)
     if USE_PLOT_TITLES: ax.set_title(f'3D Trajectory of Final {particle_type} Orbits in Constant B Field')
     ax.legend(loc="upper right")
@@ -440,144 +441,184 @@ if USE_FULL_PLOT:
     plt.savefig( f"{output_folder}/{stem}_ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_3Dslice.png", dpi=600, bbox_inches="tight")
     plt.close(fig)
 
-# # ===============================================================
-# # =====This plots KE Error over time for many different PS Orders
-# # ===============================================================
-err_last= rel_drift_ps[-1]
+# ===============================================================
+# =====This plots KE Error over time for many different PS Orders
+# ===============================================================
+if not USE_FLOAT128:
+    if USE_EXTERNAL_H5:
+        external = load_results_h5(external_h5)
+        # Pull PS solution from that file
+        ext_ps = external["ps"]
+        t_ext  = ext_ps["t"]          
+        y_ext  = ext_ps["y"]          
+        PS_order_ext = external["params"]["PS_order"]
+        PS_order_ext = "19"
 
-# === Recompute PS solutions at various orders ===
-solution_ps_4, _ = PS_constantB_adaptive(4, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
-solution_ps_5, _ = PS_constantB_adaptive(5, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
-solution_ps_6, _ = PS_constantB_adaptive(6, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
-solution_ps_7, _ = PS_constantB_adaptive(7, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
-solution_ps_10, _ = PS_constantB_adaptive(10, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
+        vxe = y_ext[3].astype(np.float128)
+        vye = y_ext[4].astype(np.float128)
+        vze = y_ext[5].astype(np.float128)
+        E_ext = 0.5 * (vxe**2 + vye**2 + vze**2)
+        rel_drift_ext = (E_ext - E_ext[0]) / E_ext[0]
 
-# === Compute drifts ===
-vx4, vy4, vz4 = extract_v(solution_ps_4)
-vx5, vy5, vz5 = extract_v(solution_ps_5)
-vx6, vy6, vz6 = extract_v(solution_ps_6)
-vx7, vy7, vz7 = extract_v(solution_ps_7)
-vx10, vy10, vz10 = extract_v(solution_ps_10)
+    if USE_EXTERNAL_H5b:
+        externalb = load_results_h5(external_h5b)
+        # Pull PS solution from that file
+        ext_psb = externalb["ps"]
+        t_extb  = ext_psb["t"]          
+        y_extb  = ext_psb["y"]          
+        PS_order_extb = externalb["params"]["PS_order"]
 
-rel_drift_ps_4  = compute_energy_drift(vx4, vy4, vz4)
-rel_drift_ps_5  = compute_energy_drift(vx5, vy5, vz5)
-rel_drift_ps_6  = compute_energy_drift(vx6, vy6, vz6)
-rel_drift_ps_7  = compute_energy_drift(vx7, vy7, vz7)
-rel_drift_ps_10 = compute_energy_drift(vx10, vy10, vz10)
+        vxeb = y_extb[3].astype(np.float128)
+        vyeb = y_extb[4].astype(np.float128)
+        vzeb = y_extb[5].astype(np.float128)
+        E_extb = 0.5 * (vxeb**2 + vyeb**2 + vzeb**2)
+        rel_drift_extb = (E_extb - E_extb[0]) / E_extb[0]
 
-# === RK4 and RK45 velocities (use already computed) ===
-if USE_RK4:
-    vx_rk4 = np.array(solution_rk4[3], dtype=npfloat)
-    vy_rk4 = np.array(solution_rk4[4], dtype=npfloat)
-    vz_rk4 = np.array(solution_rk4[5], dtype=npfloat)
-    rel_drift_rk4  = compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
-    err_comp = rel_drift_rk4[-1]/err_last
-    order_mag_rk4 = int(np.floor(np.log10(abs(err_comp))))
-if USE_RK45:
-    vx_rk45 = np.array(solution_rk45.y[3], dtype=npfloat)
-    vy_rk45 = np.array(solution_rk45.y[4], dtype=npfloat)
-    vz_rk45 = np.array(solution_rk45.y[5], dtype=npfloat)
-    rel_drift_rk45 = compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
-    err_comp = rel_drift_rk45[-1]/err_last
-    order_mag_rk45 = int(np.floor(np.log10(abs(err_comp))))
 
-# plot
-f64 = lambda a: np.asarray(a, dtype=np.float64)
-fig, ax = plt.subplots(figsize=(10, 5))
-if USE_RK45:
-    lnrk45, = ax.semilogy(f64(t_eval_rk45[1:])*time_factor, np.abs(f64(rel_drift_rk45[1:])), linestyle='--', color='#E69F00')
-if USE_RK4:
-    lnrk4,  = ax.semilogy(f64(t_eval_rk4[1:])*time_factor,  np.abs(f64(rel_drift_rk4[1:])),  linestyle='-.', color='#CC79A7')
-lnps4,  = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_4[1:])),  linestyle=':',  color='crimson')
-lnps5,  = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_5[1:])),  linestyle='-.', color='#0072B2')
-lnps6,  = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_6[1:])),  linestyle=':',  color='#56B4E9')
-lnps7,  = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_7[1:])),  linestyle='--', color='#D55E00')
-lnps10, = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_10[1:])), linestyle='-.', color='#999999')
-lnps,   = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps[1:])),     linestyle=':',  color='#009E73')
 
-# Getting log lines to work, mess with at your own risk
-ax.margins(x=0.01)
-ax.set_yscale('log') 
-ax.set_xscale('log') 
-ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
-ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-ax.yaxis.set_minor_formatter(NullFormatter())
-ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
-ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-ax.xaxis.set_minor_formatter(NullFormatter())
-ax.grid(True, which='major', linestyle='--', linewidth=0.7)
-ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
-# ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
-# ax.set_aspect('equal', adjustable='box')
+    # === Recompute PS solutions at various orders ===
+    solution_ps_4, _ = PS_constantB_adaptive(4, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
+    solution_ps_5, _ = PS_constantB_adaptive(5, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
+    solution_ps_6, _ = PS_constantB_adaptive(6, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
+    solution_ps_7, _ = PS_constantB_adaptive(7, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
+    solution_ps_10, _ = PS_constantB_adaptive(10, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
 
-# Remove top and right borders
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
+    # === Compute drifts ===
+    vx4, vy4, vz4 = extract_v(solution_ps_4)
+    vx5, vy5, vz5 = extract_v(solution_ps_5)
+    vx6, vy6, vz6 = extract_v(solution_ps_6)
+    vx7, vy7, vz7 = extract_v(solution_ps_7)
+    vx10, vy10, vz10 = extract_v(solution_ps_10)
 
-ax.set_xlabel(r"$\tau/T$")
-ax.set_ylabel(r"$|\Delta E|/E_0$")
-if USE_PLOT_TITLES: ax.set_title(f'{particle_type} Relative Kinetic Energy Error in Constant B Field')
+    rel_drift_ps_4  = compute_energy_drift(vx4, vy4, vz4)
+    rel_drift_ps_5  = compute_energy_drift(vx5, vy5, vz5)
+    rel_drift_ps_6  = compute_energy_drift(vx6, vy6, vz6)
+    rel_drift_ps_7  = compute_energy_drift(vx7, vy7, vz7)
+    rel_drift_ps_10 = compute_energy_drift(vx10, vy10, vz10)
 
-# room for labels + apply collision-free labels (no legend)
-fig.subplots_adjust(right=0.9)
-fig.canvas.draw()
-ax_pos = ax.get_position()  # Bbox in figure coords
+    # === RK4 and RK45 velocities (use already computed) ===
+    if USE_RK4:
+        vx_rk4 = np.array(solution_rk4[3], dtype=npfloat)
+        vy_rk4 = np.array(solution_rk4[4], dtype=npfloat)
+        vz_rk4 = np.array(solution_rk4[5], dtype=npfloat)
+        rel_drift_rk4  = compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
+    if USE_RK45:
+        vx_rk45 = np.array(solution_rk45.y[3], dtype=npfloat)
+        vy_rk45 = np.array(solution_rk45.y[4], dtype=npfloat)
+        vz_rk45 = np.array(solution_rk45.y[5], dtype=npfloat)
+        rel_drift_rk45 = compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
 
-# method labels at end points
-x_fig_label = ax_pos.x1  # a small gap to the right of axes
-endpoints = []
-if USE_RK45:
-    endpoints.append(
-        (t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", lnrk45.get_color())
+    # plot
+    f64 = lambda a: np.asarray(a, dtype=np.float64)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    if USE_RK45:
+        lnrk45, = ax.semilogy(f64(t_eval_rk45[1:])*time_factor, np.abs(f64(rel_drift_rk45[1:])), linestyle='--', color='#E69F00')
+    if USE_RK4:
+        lnrk4,  = ax.semilogy(f64(t_eval_rk4[1:])*time_factor,  np.abs(f64(rel_drift_rk4[1:])),  linestyle='-.', color='#CC79A7')
+    lnps4,  = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_4[1:])),  linestyle=':',  color='crimson')
+    lnps5,  = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_5[1:])),  linestyle='-.', color='#0072B2')
+    lnps6,  = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_6[1:])),  linestyle=':',  color='#56B4E9')
+    lnps7,  = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_7[1:])),  linestyle='--', color='#D55E00')
+    lnps10, = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps_10[1:])), linestyle='-.', color='#999999')
+    lnps,   = ax.semilogy(f64(t_eval_ps[1:])*time_factor,  np.abs(f64(rel_drift_ps[1:])),     linestyle=':',  color='#009E73')
+    if USE_EXTERNAL_H5:
+        ln_ext, = ax.semilogy(f64(t_ext[1:]) * time_factor, np.abs(f64(rel_drift_ext[1:])), linestyle='-.', linewidth=1.2, color='black')
+    if USE_EXTERNAL_H5b:
+        ln_extb, = ax.semilogy(f64(t_extb[1:]) * time_factor, np.abs(f64(rel_drift_extb[1:])), linestyle='-', linewidth=1.2, color='#6A3D9A')
+
+
+    # Getting log lines to work, mess with at your own risk
+    ax.margins(x=0.01)
+    ax.set_yscale('log') 
+    ax.set_xscale('log') 
+    ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
+    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+    ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
+    ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.grid(True, which='major', linestyle='--', linewidth=0.7)
+    ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+    # ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
+    # ax.set_aspect('equal', adjustable='box')
+
+    # Remove top and right borders
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    ax.set_xlabel(r"$\tau/T$")
+    ax.set_ylabel(r"$|\Delta E|/E_0$")
+    if USE_PLOT_TITLES: ax.set_title(f'{particle_type} Relative Kinetic Energy Error in Constant B Field')
+
+    # room for labels + apply collision-free labels (no legend)
+    fig.subplots_adjust(right=0.9)
+    fig.canvas.draw()
+    ax_pos = ax.get_position()  # Bbox in figure coords
+
+    # method labels at end points
+    x_fig_label = ax_pos.x1  # a small gap to the right of axes
+    endpoints = []
+    if USE_RK45:
+        endpoints.append(
+            (t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", lnrk45.get_color())
+        )
+    if USE_RK4:
+        endpoints.append(
+            (t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lnrk4.get_color())
+        )
+
+    ps_endpoints = [
+        (t_eval_ps[-1], np.abs(rel_drift_ps_4[-1]),  "PS4",  lnps4.get_color()),
+        (t_eval_ps[-1], np.abs(rel_drift_ps_5[-1]),  "PS5",  lnps5.get_color()),
+        (t_eval_ps[-1], np.abs(rel_drift_ps_6[-1]),  "PS6",  lnps6.get_color()),
+        (t_eval_ps[-1], np.abs(rel_drift_ps_7[-1]),  "PS7",  lnps7.get_color()),
+        (t_eval_ps[-1], np.abs(rel_drift_ps_10[-1]), "PS10", lnps10.get_color()),
+        (t_eval_ps[-1], np.abs(rel_drift_ps[-1]),    f"PS{orders_used.max()}", lnps.get_color()),
+    ]
+    endpoints.extend(ps_endpoints)
+
+    if USE_EXTERNAL_H5:
+        endpoints.append(
+        (t_ext[-1], np.abs(rel_drift_ext[-1]), f"PS{PS_order_ext}*", ln_ext.get_color())
     )
-if USE_RK4:
-    endpoints.append(
-        (t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lnrk4.get_color())
-    )
+    if USE_EXTERNAL_H5b:
+        endpoints.append(
+        (t_extb[-1], np.abs(rel_drift_extb[-1]), f"PS{PS_order_extb}*", ln_extb.get_color())
+    )    
 
-ps_endpoints = [
-    (t_eval_ps[-1], np.abs(rel_drift_ps_4[-1]),  "PS4",  lnps4.get_color()),
-    (t_eval_ps[-1], np.abs(rel_drift_ps_5[-1]),  "PS5",  lnps5.get_color()),
-    (t_eval_ps[-1], np.abs(rel_drift_ps_6[-1]),  "PS6",  lnps6.get_color()),
-    (t_eval_ps[-1], np.abs(rel_drift_ps_7[-1]),  "PS7",  lnps7.get_color()),
-    (t_eval_ps[-1], np.abs(rel_drift_ps_10[-1]), "PS10", lnps10.get_color()),
-    (t_eval_ps[-1], np.abs(rel_drift_ps[-1]),    f"PS{orders_used.max()}", lnps.get_color()),
-]
-endpoints.extend(ps_endpoints)
+    labels = []
+    for x, y, label, color in endpoints:
+        _, fy = data_to_fig(x, y, ax, fig)
+        # Clamp to axis bounds
+        fy = min(max(fy, ax_pos.y0), ax_pos.y1)
+        labels.append([fy, label, color])
 
-labels = []
-for x, y, label, color in endpoints:
-    _, fy = data_to_fig(x, y, ax, fig)
-    # Clamp to axis bounds
-    fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-    labels.append([fy, label, color])
+    # Sort by vertical position
+    labels.sort(key=lambda v: v[0])
 
-# Sort by vertical position
-labels.sort(key=lambda v: v[0])
+    # Minimum vertical spacing in figure coords
+    min_gap = 0.025  
+    for i in range(1, len(labels)):
+        if labels[i][0] - labels[i-1][0] < min_gap:
+            labels[i][0] = labels[i-1][0] + min_gap
 
-# Minimum vertical spacing in figure coords
-min_gap = 0.02  
-for i in range(1, len(labels)):
-    if labels[i][0] - labels[i-1][0] < min_gap:
-        labels[i][0] = labels[i-1][0] + min_gap
+    # Clamp from the top back downward
+    for i in range(len(labels)-2, -1, -1):
+        if labels[i+1][0] - labels[i][0] < min_gap:
+            labels[i][0] = labels[i+1][0] - min_gap
 
-# Clamp from the top back downward
-for i in range(len(labels)-2, -1, -1):
-    if labels[i+1][0] - labels[i][0] < min_gap:
-        labels[i][0] = labels[i+1][0] - min_gap
-
-# Draw adjusted labels
-for fy, label, color in labels:
-    fig.text(x_fig_label, fy, label, color=color,
-             va='center', ha='left', fontsize=10)
+    # Draw adjusted labels
+    for fy, label, color in labels:
+        fig.text(x_fig_label, fy, label, color=color,
+                va='center', ha='left', fontsize=11)
 
 
-# === Save and Close ===
-fig.canvas.draw()  
-fig.savefig( f"{output_folder}/{stem}_ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_KEerror_manyPS.png", dpi=600, bbox_inches="tight")
-plt.close(fig)
+    # === Save and Close ===
+    fig.canvas.draw()  
+    fig.savefig( f"{output_folder}/{stem}_ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_KEerror_manyPS.png", dpi=600, bbox_inches="tight")
+    plt.close(fig)
 
 
 # =================================================================
@@ -596,6 +637,7 @@ if USE_ANALYTICAL:
     rel_err_ps = np.sqrt((x_ps - x_ana)**2 + (y_ps - y_ana)**2)/gyro_radius_si
     err_last = rel_err_ps[-1]
 
+
     if USE_RK4:
 
         x_rk4 = solution_rk4[0]
@@ -609,8 +651,20 @@ if USE_ANALYTICAL:
         x_rk45 = solution_rk45.y[0]
         y_rk45 = solution_rk45.y[1]
         rel_err_rk45 = np.sqrt((x_rk45 - x_ana)**2 + (y_rk45- y_ana)**2)/gyro_radius_si
-        err_comp = rel_err_rk45[-1]/err_last
-        order_mag_rk45 = int(np.floor(np.log10(abs(err_comp))))
+        
+
+    if USE_EXTERNAL_H5:
+        external = load_results_h5(external_h5)
+
+        ext_ps = external["ps"]
+        t_ext  = ext_ps["t"]
+        y_ext  = ext_ps["y"]
+        PS_order_ext = "19"
+        x_ps_ext = y_ext[0]
+        y_ps_ext = y_ext[1]
+        rel_err_ps_ext = np.sqrt((x_ps_ext - x_ana)**2 + (y_ps_ext - y_ana)**2) / gyro_radius_si
+
+ 
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -619,10 +673,12 @@ if USE_ANALYTICAL:
                                 label='RK45', linestyle='--', color='#E69F00')
     if USE_RK4:
         linerk4, = ax.semilogy(t_eval_rk4 *time_factor, np.abs(rel_err_rk4),
-                               label='RK4', linestyle='-.', color='#CC79A7')
+                               label='RK4', linestyle='-.', color='#CC79A7')    
     lineps, = ax.semilogy(t_eval_ps*time_factor, np.abs(rel_err_ps),
                            label=f"PS{orders_used.max()}", linestyle=':', color='#009E73')
-
+    # if USE_EXTERNAL_H5:
+    #     lineps_ext, = ax.semilogy(t_ext*time_factor, np.abs(rel_err_ps_ext),
+    #                              label=f"PS{PS_order_ext}*", linestyle='-.', color='black')
 
     ax.margins(x=0.01)
     ax.set_yscale('log')
@@ -646,7 +702,6 @@ if USE_ANALYTICAL:
         ax.set_xlabel(r'$\tau/T$')
         ax.tick_params(axis='x', which='both', labelbottom=True)
 
-    
     ax.set_ylabel(r'$\Delta \mathbf {r}_\perp/\rho_L $')
     if USE_PLOT_TITLES:
         ax.set_title(f'{particle_type} Gyro-Radius Error in a Constant Magnetic Field')
@@ -663,14 +718,17 @@ if USE_ANALYTICAL:
         endpoints.append((t_eval_rk45[-1], np.abs(rel_err_rk45[-1]), "RK45", linerk45.get_color()))
     if USE_RK4:
         endpoints.append((t_eval_rk4[-1],  np.abs(rel_err_rk4[-1]),  "RK4",  linerk4.get_color()))
+    # if USE_EXTERNAL_H5:
+    #     endpoints.append((t_ext[-1], np.abs(rel_err_ps_ext[-1]),
+    #                       f"PS{PS_order_ext}*", lineps_ext.get_color()))
 
     endpoints.append((t_eval_ps[-1], np.abs(rel_err_ps[-1]),
                       f"PS{orders_used.max()}", lineps.get_color()))
 
-    for x, y, label, color in endpoints:
-        _, fy = data_to_fig(x, y, ax, fig)
-        fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-        fig.text(x_fig_label, fy, label, color=color, va='center', ha='left', fontsize=10)
+    # for x, y, label, color in endpoints:
+    #     _, fy = data_to_fig(x, y, ax, fig)
+    #     fy = min(max(fy, ax_pos.y0), ax_pos.y1)
+    #     fig.text(x_fig_label, fy, label, color=color, va='center', ha='left', fontsize=10)
 
 
     labels = []
@@ -681,7 +739,7 @@ if USE_ANALYTICAL:
 
     labels.sort(key=lambda v: v[0])
 
-    min_gap = 0.02
+    min_gap = 0.025
     for i in range(1, len(labels)):
         if labels[i][0] - labels[i-1][0] < min_gap:
             labels[i][0] = labels[i-1][0] + min_gap
@@ -692,7 +750,7 @@ if USE_ANALYTICAL:
 
     for fy, label, color in labels:
         fig.text(x_fig_label, fy, label, color=color,
-                 va='center', ha='left', fontsize=10)
+                 va='center', ha='left', fontsize=11)
 
     fig.canvas.draw()
     fig.savefig(f"{output_folder}/{stem}_ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_TrajError.png",

@@ -88,7 +88,8 @@ if USE_RK4:
     steps_rk4 = int(norm_time / (rk4_step))
     t_eval_rk4 = np.linspace(0, norm_time, steps_rk4 + 1, dtype=npfloat)
 if USE_RK45:
-    t_eval_rk45 = t_eval_ps   # no steps so we just set equal to ps
+    steps_rk45 = int(norm_time / (ps_step)) # no steps so we just set equal to ps for plotting
+    t_eval_rk45 = np.linspace(0, norm_time, steps_rk45 + 1, dtype=npfloat)   
 if USE_RKG:
     steps_rkg = int(norm_time / (rkg_step))
     t_eval_rkg = np.linspace(0, norm_time, steps_rkg + 1, dtype=npfloat)
@@ -253,6 +254,7 @@ if USE_FULL_PLOT:
     # === Formatting ===
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
+    ax.ticklabel_format(style='plain', useOffset=False, axis='both')
     if USE_PLOT_TITLES: ax.set_title(f"2D {particle_type} Trajectory in Dipole B Field")
 
     ax.legend(loc="upper right")
@@ -399,7 +401,38 @@ plt.close(fig)
 # ============== KE Relative Error Plot ===============
 # =====================================================
 
-equatorial_r3=x_initial**3
+if USE_EXTERNAL_H5:
+    external = load_results_h5(external_h5)
+    ext_ps = external["ps"]
+    t_ext  = ext_ps["t"]          
+    y_ext  = ext_ps["y"]          
+
+    vxe = y_ext[3].astype(np.float64)
+    vye = y_ext[4].astype(np.float64)
+    vze = y_ext[5].astype(np.float64)
+    E_ext = 0.5 * (vxe**2 + vye**2 + vze**2)
+    rel_drift_ext = (E_ext - E_ext[0]) / E_ext[0]
+
+if USE_EXTERNAL_H5b:
+    externalb = load_results_h5(external_h5b)
+
+    # Pull RK45 solution from that file
+    ext_rk45 = externalb["rk45"]
+    t_extb = ext_rk45["t"]
+    y_extb = ext_rk45["y"]
+
+    # If you want it in the same shape as solve_ivp output:
+    class _Obj: 
+        pass
+    solution_rk45 = _Obj()
+    solution_rk45.t = t_extb
+    solution_rk45.y = y_extb
+    v_rk45 = solution_rk45.y[3:6]
+    E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
+    rel_drift_extb = np.abs(E_rk45 - E_rk45[0]) / E_rk45[0]
+
+
+equatorial_r3 = x_initial**3
 time_factor = 1.0 / (2.0 * np.pi * equatorial_r3)  # to convert to gyroperiods if desired
 
 if USE_PS:
@@ -447,6 +480,12 @@ if USE_RKG:
     lnrkg, = ax.semilogy(t_eval_rkg[1:]*time_factor, np.abs(rel_drift_rkg[1:]), label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
 if USE_PS:
     lnps, = ax.semilogy(t_eval_ps[1:]*time_factor, np.abs(rel_drift_ps[1:]), label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
+if USE_EXTERNAL_H5:
+    ln_ext, = ax.semilogy((t_ext[1:]) * time_factor, np.abs(rel_drift_ext[1:]), alpha=0.8, color='#009E73', linestyle=':')
+if USE_EXTERNAL_H5b:
+    ln_extb, = ax.semilogy((t_extb[1:]) * time_factor, np.abs(rel_drift_extb[1:]), alpha=0.8, color='#E69F00', linestyle='--')
+
+
 
 # Getting log lines to work, mess with at your own risk
 ax.margins(x=0.01)
@@ -481,40 +520,76 @@ x_fig_label = ax_pos.x1   # a small gap to the right of axes
 
 endpoints = []
 if USE_RK45:
-    endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", lnrk45.get_color()))
+    endpoints.append((t_eval_rk45[-1]*time_factor, np.abs(rel_drift_rk45[-1]), "RK45", lnrk45.get_color()))
 if USE_RK4:
-    endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lnrk4.get_color()))
-    # endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), f"RK4", lnrk4.get_color()))
+    endpoints.append((t_eval_rk4[-1]*time_factor, np.abs(rel_drift_rk4[-1]), "RK4", lnrk4.get_color()))
 if USE_RKG:
-    endpoints.append((t_eval_rkg[-1], np.abs(rel_drift_rkg[-1]), f"RKG", lnrkg.get_color()))
+    endpoints.append((t_eval_rkg[-1]*time_factor, np.abs(rel_drift_rkg[-1]), f"RKG", lnrkg.get_color()))
 if USE_PS:
-    endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", lnps.get_color()))
+    endpoints.append((t_eval_ps[-1]*time_factor, np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", lnps.get_color()))
+if USE_EXTERNAL_H5:
+    endpoints.append((t_ext[-1]*time_factor, np.abs(rel_drift_ext[-1]), f"PS{PS_order_ext}", ln_ext.get_color()))
+if USE_EXTERNAL_H5b:
+    endpoints.append((t_extb[-1]*time_factor, np.abs(rel_drift_extb[-1]), f"RK45", ln_extb.get_color()))    
 
 
-labels = []
-for x, y, label, color in endpoints:
-    _, fy = data_to_fig(x, y, ax, fig)
-    fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-    labels.append([fy, label, color])
 
-# Sort by vertical position
-labels.sort(key=lambda v: v[0])
+# labels = []
+# for x, y, label, color in endpoints:
+#     _, fy = data_to_fig(x, y, ax, fig)
+#     fy = min(max(fy, ax_pos.y0), ax_pos.y1)
+#     labels.append([fy, label, color])
 
-# Minimum vertical spacing in figure coords
-min_gap = 0.02  
-for i in range(1, len(labels)):
-    if labels[i][0] - labels[i-1][0] < min_gap:
-        labels[i][0] = labels[i-1][0] + min_gap
+# # Sort by vertical position
+# labels.sort(key=lambda v: v[0])
 
-# Clamp from the top back downward
-for i in range(len(labels)-2, -1, -1):
-    if labels[i+1][0] - labels[i][0] < min_gap:
-        labels[i][0] = labels[i+1][0] - min_gap
+# # Minimum vertical spacing in figure coords
+# min_gap = 0.025  
+# for i in range(1, len(labels)):
+#     if labels[i][0] - labels[i-1][0] < min_gap:
+#         labels[i][0] = labels[i-1][0] + min_gap
 
-# Draw adjusted labels
-for fy, label, color in labels:
-    fig.text(x_fig_label, fy, label, color=color,
-             va='center', ha='left', fontsize=10)
+# # Clamp from the top back downward
+# for i in range(len(labels)-2, -1, -1):
+#     if labels[i+1][0] - labels[i][0] < min_gap:
+#         labels[i][0] = labels[i+1][0] - min_gap
+
+# # Draw adjusted labels
+# for fy, label, color in labels:
+#     fig.text(x_fig_label, fy, label, color=color,
+#              va='center', ha='left', fontsize=11)
+
+
+# Give room on the right for labels (log-safe)
+xmin, xmax = ax.get_xlim()
+ax.set_xlim(xmin, xmax * 1.1)
+
+# Optional: sort by y so labels stack nicely
+# endpoints = sorted(endpoints, key=lambda v: v[1])
+endpoints = sorted(endpoints, key=lambda v: np.log10(v[1]))
+
+
+# Draw labels
+for i, (x, y, label, color) in enumerate(endpoints):
+    # Safety for log y
+    if ax.get_yscale() == "log" and y <= 0:
+        continue
+
+    ax.annotate(
+        label,
+        xy=(x, y),                 # exact curve endpoint
+        xytext=(6, i * 8),         # stagger vertically (manual but reliable)
+        textcoords="offset points",
+        ha="left",
+        va="center",
+        fontsize=11,
+        color=color,
+        clip_on=False,
+        zorder=10,
+    )
+
+
+
 
 
 # === Save and Close ===
@@ -587,6 +662,8 @@ ax.grid(True, which='major', linestyle='--', linewidth=0.7)
 # ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
 # ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
 # ax.set_aspect('equal', adjustable='box')
+ax.get_xaxis().get_major_formatter().set_useOffset(False)
+
 
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
@@ -621,7 +698,7 @@ for x, y, label, color in endpoints:
 
 labels.sort(key=lambda v: v[0])
 
-min_gap = 0.02  
+min_gap = 0.025  
 for i in range(1, len(labels)):
     if labels[i][0] - labels[i-1][0] < min_gap:
         labels[i][0] = labels[i-1][0] + min_gap
@@ -632,7 +709,7 @@ for i in range(len(labels)-2, -1, -1):
 
 for fy, label, color in labels:
     fig.text(x_fig_label, fy, label, color=color,
-             va='center', ha='left', fontsize=10)
+             va='center', ha='left', fontsize=11)
 
 # === Save and Close ===
 if USE_PS:
@@ -685,8 +762,12 @@ if USE_PS:
 
 if USE_PS:
     finalnum = max(1, int(steps_ps * 0.01))  # Number of steps to average over, last 1%
-else:
+elif USE_RKG:
     finalnum = max(1, int(len(t_eval_rkg) * 0.01))  # Number of steps to average over, last 1%
+elif USE_RK45:
+    finalnum = max(1, int(len(t_eval_rk45) * 0.01))  # Number of steps to average over, last 1%
+elif USE_RK4:
+    finalnum = max(1, int(len(t_eval_rk4) * 0.01))  # Number of steps to average over, last 1%
 
 def summarize_error(label, err, f):
     mean_val = np.mean(err[-finalnum:])
@@ -719,6 +800,7 @@ with open(output_filename, "w") as f:
     f.write(f"  vy_initial    = {vy_initial} RE/tau0\n")
     f.write(f"  vz_initial    = {vz_initial} RE/tau0\n")
     f.write(f"  Initial Bfield= {B_0} T\n")
+    # f.write(f"  gyroperiods    = {gyroperiods} \n")
     
     f.write(f"  float type    = {npfloat.__name__}\n\n")
     
@@ -784,8 +866,13 @@ run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 x_0, y_0, z_0 = x_initial, y_initial, z_initial
 if USE_PS:
     steps = steps_ps
-else:
+elif USE_RK4:
+    steps = len(t_eval_rk4)
+elif USE_RKG:
     steps = len(t_eval_rkg)
+elif USE_RK45:
+    steps = len(t_eval_rk45)
+
 dt = ps_step
 last_n = max(1, int(0.01 * steps))
 

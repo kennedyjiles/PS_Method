@@ -91,6 +91,14 @@ def load_params(run):
         WRITE_DATA = True     
         USE_PLOT_TITLES = False
         USE_FULL_PLOT = True 
+        USE_EXTERNAL_H5 = True
+        USE_EXTERNAL_H5b = True
+
+        external_h5 = "outputs_rawdata/run_8d05c562f1137db2.h5" 
+        PS_order_ext = "25"
+        external_h5b = "outputs_rawdata/run_2e64db24ec88cb7e.h5" 
+        PS_order_ext = "10"
+
 
         pitch_deg = npfloat(75.0)
         phi_deg = npfloat(45.0)
@@ -121,6 +129,14 @@ def load_params(run):
         WRITE_DATA = True     
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
+        USE_EXTERNAL_H5 = True
+        USE_EXTERNAL_H5b = True
+
+    
+        external_h5 = "outputs_rawdata/run_6fc9daec43008056.h5"
+        PS_order_ext = "40"
+        external_h5b = "outputs_rawdata/run_73287ee231150e97.h5" 
+        PS_order_extb = "10" 
 
         pitch_deg = npfloat(75.0)
         phi_deg = npfloat(10.0)
@@ -151,6 +167,16 @@ def load_params(run):
         WRITE_DATA = True      
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
+        USE_EXTERNAL_H5 = True
+        USE_EXTERNAL_H5b = True
+
+
+        external_h5 = "outputs_rawdata/run_d72c9d579dd24595.h5" 
+        PS_order_ext = "40"
+        external_h5b = "outputs_rawdata/run_bbb58e0c8a29e72f.h5"
+        PS_order_extb = "15"
+
+
 
         pitch_deg = npfloat(-15.0)
         phi_deg = npfloat(45.0)
@@ -176,12 +202,18 @@ def load_params(run):
         else: print("Running full PAPER simulation...this will take a few minutes\n")
         output_folder = "outputs_paper_HYPER"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True       
+        USE_RK45 = False       
         USE_RK4 = True        
         READ_DATA = True      
         WRITE_DATA = True     
         USE_PLOT_TITLES = False
-        USE_FULL_PLOT = False  
+        USE_FULL_PLOT = True  
+        USE_EXTERNAL_H5 = False
+        USE_EXTERNAL_H5b = False
+
+        external_h5 = "outputs_rawdata/" 
+        external_h5b = "outputs_rawdata/" 
+
 
         pitch_deg = npfloat(75.0)
         phi_deg = npfloat(45.0)
@@ -196,9 +228,9 @@ def load_params(run):
         window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
         slice_mode = "last"   
 
-        rk4_step = npfloat(0.063)               
-        ps_step = npfloat(0.63)
-        gyroperiods = 1e5               
+        rk4_step = npfloat(0.03)               
+        ps_step = npfloat(1.00)
+        gyroperiods = 1e6               
         norm_time = (gyroperiods) * 2 * np.pi                
 
     elif run == "tinker": # tinkering with things

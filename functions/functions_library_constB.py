@@ -46,20 +46,22 @@ def PS_constantB_adaptive(order_max, steps, initial_pos_vel, timedelta, Bfield, 
 
     return final_coeff_matrix, orders_used
 
-def analytical_constantB(t, d, Bfield, qoverm):
+@maybe_njit
+def analytical_constantB(tau, d, qoverm):
     x0, y0, z0, vx0, vy0, vz0 = d
-    omega = qoverm * Bfield[2]  # Cyclotron frequency
-    
-    sin_ot = np.sin(omega * t)
-    cos_ot = np.cos(omega * t)
-    
-    x_t = x0 + (vy0 / omega) * (1 - cos_ot) + (vx0 / omega) * sin_ot
-    y_t = y0 - (vx0 / omega) * (1 - cos_ot) + (vy0 / omega) * sin_ot
-    z_t = z0 + vz0 * t
 
-    vx_t = vx0 * cos_ot - vy0 * sin_ot
-    vy_t = vy0 * cos_ot + vx0 * sin_ot
-    vz_t = vz0 * np.ones_like(t)
+    s = np.sign(qoverm)  # sign(qB)
+
+    sin_t = np.sin(s * tau)
+    cos_t = np.cos(s * tau)
+
+    x_t = x0 + s * (vy0 * (1 - cos_t) + vx0 * sin_t)
+    y_t = y0 + s * (-vx0 * (1 - cos_t) + vy0 * sin_t)
+    z_t = z0 + vz0 * tau
+
+    vx_t = vx0 * cos_t - vy0 * sin_t
+    vy_t = vy0 * cos_t + vx0 * sin_t
+    vz_t = vz0 * np.ones_like(tau)
 
     return np.vstack((x_t, y_t, z_t, vx_t, vy_t, vz_t))
 
