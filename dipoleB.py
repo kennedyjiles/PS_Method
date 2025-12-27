@@ -41,6 +41,7 @@ else:
     particle_type = "Particle"
 
 qoverm = npfloat(-1) if mass_si == m_e else npfloat(1)
+
 # === Misc Conversions  ===
 KE_joules = KE_particle * evtoj                     # converting KE from eV to Joules
 gamma = 1.0 + KE_joules / (mass_si * spdlight**2)   # Lorentz factor
@@ -83,7 +84,6 @@ if USE_RKG:
 if USE_PS:
     steps_ps = int(norm_time / (ps_step)) 
     t_eval_ps = np.linspace(0, norm_time, steps_ps + 1, dtype=npfloat)
-
 if USE_RK4:
     steps_rk4 = int(norm_time / (rk4_step))
     t_eval_rk4 = np.linspace(0, norm_time, steps_rk4 + 1, dtype=npfloat)
@@ -121,11 +121,14 @@ if os.path.exists(cache_path) and READ_DATA:
     if USE_RK4 and cached["rk4"]:
         solution_rk4 = cached["rk4"]["y"]
         t_eval_rk4 = cached["rk4"]["t"]
+        
     if USE_RK45 and cached["rk45"]:
         class _Obj: pass
         solution_rk45 = _Obj()
         solution_rk45.t = cached["rk45"]["t"]
         solution_rk45.y = cached["rk45"]["y"]
+        t_eval_rk45 = cached["rk45"]["t"]
+
     if USE_RKG and cached["rkg"]:
         solution_rkg = cached["rkg"]["y"]
         t_eval_rkg = cached["rkg"]["t"]
@@ -216,6 +219,7 @@ else:    # if it finds no file, it will proceed with the method calculations her
 if run == "paper1": USE_RK4 = False
 if run == "paper2": USE_RKG = False
 
+
 print(f"Particle        : {KE_particle:.1e} eV {particle_type}")
 if USE_RK45 and "rk45" in timing:
     print(f"Run Time RK45   : {timing['rk45']:.2f} s")
@@ -300,7 +304,6 @@ if USE_FULL_PLOT:
     ax.set_zlabel(r'z')
     if USE_PLOT_TITLES: ax.set_title(f"3D {particle_type} Trajectory in Dipole B Field")
     ax.legend(loc="upper right")
-    # plt.tight_layout()
 
     # === Save and Close ===
     fig.canvas.draw()   
@@ -385,9 +388,8 @@ ax.grid(True)
 ax.set_xlabel(r'$x$')
 ax.set_ylabel(r'$y$')
 ax.set_zlabel(r'$z$')
-if USE_PLOT_TITLES: ax.set_title(f'3D Trajectory of Slice {particle_type} Orbits in Dipole B Field')
+if USE_PLOT_TITLES: ax.set_title(f'3D Trajectory Slice of {particle_type} Orbits in Dipole B Field')
 ax.legend(loc="upper right")
-# plt.tight_layout()
 
 # === Save and Close ===
 fig.canvas.draw()   
@@ -401,8 +403,8 @@ plt.close(fig)
 # ============== KE Relative Error Plot ===============
 # =====================================================
 
-if USE_EXTERNAL_H5:
-    external = load_results_h5(external_h5)
+if USE_EXTERNAL_H5_ps:
+    external = load_results_h5(external_h5_ps)
     ext_ps = external["ps"]
     t_ext  = ext_ps["t"]          
     y_ext  = ext_ps["y"]          
@@ -413,23 +415,68 @@ if USE_EXTERNAL_H5:
     E_ext = 0.5 * (vxe**2 + vye**2 + vze**2)
     rel_drift_ext = (E_ext - E_ext[0]) / E_ext[0]
 
-if USE_EXTERNAL_H5b:
-    externalb = load_results_h5(external_h5b)
+if USE_EXTERNAL_H5_rk4:
+    external_rk4 = load_results_h5(external_h5_rk4)
 
-    # Pull RK45 solution from that file
+    # ---- pull RK4 solution from file ----
+    ext_rk4 = external_rk4["rk4"]
+    t_eval_rk4_ext = ext_rk4["t"]
+    y_rk4_ext = ext_rk4["y"]   # expected shape: (6, N)
+
+    # ---- ensure shape consistency ----
+    if y_rk4_ext.shape[0] != 6:
+        y_rk4_ext = y_rk4_ext.T
+
+    # ---- velocity, energy, drift ----
+    v_rk4_ext = y_rk4_ext[3:6]
+    E_rk4_ext = 0.5 * np.sum(v_rk4_ext**2, axis=0)
+    rel_drift_rk4_ext = np.abs(E_rk4_ext - E_rk4_ext[0]) / E_rk4_ext[0]
+
+
+if USE_EXTERNAL_H5_rk45:
+    externalb = load_results_h5(external_h5_rk45)
     ext_rk45 = externalb["rk45"]
-    t_extb = ext_rk45["t"]
-    y_extb = ext_rk45["y"]
+    t_eval_rk45_ext = ext_rk45["t"]
+    y_rk45_ext = ext_rk45["y"]   
 
-    # If you want it in the same shape as solve_ivp output:
-    class _Obj: 
-        pass
-    solution_rk45 = _Obj()
-    solution_rk45.t = t_extb
-    solution_rk45.y = y_extb
-    v_rk45 = solution_rk45.y[3:6]
-    E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-    rel_drift_extb = np.abs(E_rk45 - E_rk45[0]) / E_rk45[0]
+    if y_rk45_ext.shape[0] != 6:
+        y_rk45_ext = y_rk45_ext.T
+
+    v_rk45_ext = y_rk45_ext[3:6]
+    E_rk45_ext = 0.5 * np.sum(v_rk45_ext**2, axis=0)
+    rel_drift_rk45_ext = np.abs(E_rk45_ext - E_rk45_ext[0]) / E_rk45_ext[0]
+
+
+if USE_EXTERNAL_H5_rkg:
+    external_rkg = load_results_h5(external_h5_rkg)
+
+    # Pull RKG solution from file
+    ext_rkg = external_rkg["rkg"]
+    t_ext_rkg = ext_rkg["t"]
+    y_ext_rkg = ext_rkg["y"]   # shape: (N, 6) or (6, N) depending on save
+
+    # Enforce shape: (N, 6)
+    if y_ext_rkg.shape[0] == 6:
+        y_ext_rkg = y_ext_rkg.T
+
+    # Split canonical variables
+    r_rkg_ext = y_ext_rkg[:, 0:3]
+    p_rkg_ext = y_ext_rkg[:, 3:6]
+
+    # Recompute vector potential A(r)
+    A_rkg_ext = np.zeros_like(r_rkg_ext)
+    for i in range(len(r_rkg_ext)):
+        A_rkg_ext[i] = vector_potential_dipole(r_rkg_ext[i])
+
+    # Physical velocity
+    v_rkg_ext = p_rkg_ext - A_rkg_ext
+
+    # Energy + drift
+    E_rkg_ext = npfloat(0.5) * np.sum(v_rkg_ext**2, axis=1, dtype=npfloat)
+    rel_drift_ext_rkg = np.abs(E_rkg_ext - E_rkg_ext[0]) / E_rkg_ext[0]
+
+
+
 
 
 equatorial_r3 = x_initial**3
@@ -439,7 +486,6 @@ if USE_PS:
     v_ps = solution_ps[3:6]   
     E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
     rel_drift_ps = np.abs(E_ps - E_ps[0]) / E_ps[0]
-
 
 # === If using Hamiltonian in RKG ==
 if USE_RKG:
@@ -452,11 +498,9 @@ if USE_RKG:
     E_rkg = npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=npfloat)
     rel_drift_rkg = np.abs(E_rkg - E_rkg[0]) / E_rkg[0]
 
-
-# === If using Lorentz force in RKG ==
+# === If using Lorentz force in RKG (not part of paper) ==
 # r_rkg = solution_rkg[:, 0:3]
 # v_rkg = solution_rkg[:, 3:6]  
-
 
 if USE_RK45:
     v_rk45 = solution_rk45.y[3:6]
@@ -472,20 +516,21 @@ if USE_RK4:
 # === Plot =====
 fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
-    lnrk45, = ax.semilogy(t_eval_rk45
-    [1:]*time_factor, np.abs(rel_drift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
+    lnrk45, = ax.semilogy(t_eval_rk45[1:]*time_factor, np.abs(rel_drift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
 if USE_RK4:
     lnrk4, = ax.semilogy(t_eval_rk4[1:]*time_factor, np.abs(rel_drift_rk4[1:]), label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
 if USE_RKG:
     lnrkg, = ax.semilogy(t_eval_rkg[1:]*time_factor, np.abs(rel_drift_rkg[1:]), label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
 if USE_PS:
     lnps, = ax.semilogy(t_eval_ps[1:]*time_factor, np.abs(rel_drift_ps[1:]), label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
-if USE_EXTERNAL_H5:
+if USE_EXTERNAL_H5_ps:
     ln_ext, = ax.semilogy((t_ext[1:]) * time_factor, np.abs(rel_drift_ext[1:]), alpha=0.8, color='#009E73', linestyle=':')
-if USE_EXTERNAL_H5b:
-    ln_extb, = ax.semilogy((t_extb[1:]) * time_factor, np.abs(rel_drift_extb[1:]), alpha=0.8, color='#E69F00', linestyle='--')
-
-
+if USE_EXTERNAL_H5_rk4:
+    ln_extrk4, = ax.semilogy((t_eval_rk4_ext[1:]) * time_factor, np.abs(rel_drift_rk4_ext[1:]), alpha=0.8, color='#CC79A7', linestyle='-.')
+if USE_EXTERNAL_H5_rk45:
+    ln_extb, = ax.semilogy((t_eval_rk45_ext[1:]) * time_factor, np.abs(rel_drift_rk45_ext[1:]), alpha=0.8, color='#E69F00', linestyle='--')
+if USE_EXTERNAL_H5_rkg:
+    ln_extc, = ax.semilogy((t_ext_rkg[1:]) * time_factor, np.abs(rel_drift_ext_rkg[1:]), alpha=0.8, color='#CC0000', linestyle='-.')
 
 # Getting log lines to work, mess with at your own risk
 ax.margins(x=0.01)
@@ -511,7 +556,6 @@ ax.set_xlabel(r"$\tau/T$")
 ax.set_ylabel(r"$|\Delta E|/E_0$")
 
 if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Relative Kinetic Energy Error in Dipole B Field")
-# fig.tight_layout()
 
 fig.subplots_adjust(right=0.9)
 fig.canvas.draw()
@@ -527,58 +571,41 @@ if USE_RKG:
     endpoints.append((t_eval_rkg[-1]*time_factor, np.abs(rel_drift_rkg[-1]), f"RKG", lnrkg.get_color()))
 if USE_PS:
     endpoints.append((t_eval_ps[-1]*time_factor, np.abs(rel_drift_ps[-1]), f"PS{orders_used.max()}", lnps.get_color()))
-if USE_EXTERNAL_H5:
+if USE_EXTERNAL_H5_ps:
     endpoints.append((t_ext[-1]*time_factor, np.abs(rel_drift_ext[-1]), f"PS{PS_order_ext}", ln_ext.get_color()))
-if USE_EXTERNAL_H5b:
-    endpoints.append((t_extb[-1]*time_factor, np.abs(rel_drift_extb[-1]), f"RK45", ln_extb.get_color()))    
+if USE_EXTERNAL_H5_rk4:
+    endpoints.append((t_eval_rk4_ext[-1]*time_factor, np.abs(rel_drift_rk4_ext[-1]), f"RK4", ln_extrk4.get_color()))
+if USE_EXTERNAL_H5_rk45:
+    endpoints.append((t_eval_rk45_ext[-1]*time_factor, np.abs(rel_drift_rk45_ext[-1]), f"RK45", ln_extb.get_color()))    
+if USE_EXTERNAL_H5_rkg:
+    endpoints.append((t_ext_rkg[-1]*time_factor, np.abs(rel_drift_ext_rkg[-1]), f"RKG", ln_extc.get_color()))
 
-
-
-# labels = []
-# for x, y, label, color in endpoints:
-#     _, fy = data_to_fig(x, y, ax, fig)
-#     fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-#     labels.append([fy, label, color])
-
-# # Sort by vertical position
-# labels.sort(key=lambda v: v[0])
-
-# # Minimum vertical spacing in figure coords
-# min_gap = 0.025  
-# for i in range(1, len(labels)):
-#     if labels[i][0] - labels[i-1][0] < min_gap:
-#         labels[i][0] = labels[i-1][0] + min_gap
-
-# # Clamp from the top back downward
-# for i in range(len(labels)-2, -1, -1):
-#     if labels[i+1][0] - labels[i][0] < min_gap:
-#         labels[i][0] = labels[i+1][0] - min_gap
-
-# # Draw adjusted labels
-# for fy, label, color in labels:
-#     fig.text(x_fig_label, fy, label, color=color,
-#              va='center', ha='left', fontsize=11)
-
-
-# Give room on the right for labels (log-safe)
 xmin, xmax = ax.get_xlim()
-ax.set_xlim(xmin, xmax * 1.1)
+ax.set_xlim(xmin, xmax * 1.05)
 
-# Optional: sort by y so labels stack nicely
-# endpoints = sorted(endpoints, key=lambda v: v[1])
-endpoints = sorted(endpoints, key=lambda v: np.log10(v[1]))
+last_fy = None
+min_gap = 0.025  # fraction of axes height
 
+endpoints_sorted = sorted(endpoints, key=lambda e: e[1])
 
-# Draw labels
-for i, (x, y, label, color) in enumerate(endpoints):
-    # Safety for log y
+for x, y, label, color in endpoints_sorted:
     if ax.get_yscale() == "log" and y <= 0:
         continue
 
+    # Convert data -> figure y
+    _, fy = data_to_fig(x, y, ax, fig)
+
+    fy_adj = fy
+    if last_fy is not None and fy_adj - last_fy < min_gap:
+        fy_adj = last_fy + min_gap
+
+    # Convert figure y-shift to point offset
+    dy_pts = (fy_adj - fy) * fig.get_figheight() * 72
+
     ax.annotate(
         label,
-        xy=(x, y),                 # exact curve endpoint
-        xytext=(6, i * 8),         # stagger vertically (manual but reliable)
+        xy=(x, y),
+        xytext=(5, dy_pts),   # <-- vertical padding happens here
         textcoords="offset points",
         ha="left",
         va="center",
@@ -588,8 +615,7 @@ for i, (x, y, label, color) in enumerate(endpoints):
         zorder=10,
     )
 
-
-
+    last_fy = fy_adj
 
 
 # === Save and Close ===
@@ -603,10 +629,33 @@ plt.close(fig)
 # ============================================================
 # ================ Magnetic Moment Deviations ================
 # ============================================================
-finalnum = 1
-if USE_PS:
-    if run== "paper2": finalnum = max(1, int(steps_ps * (.9995))) # electron paper
-    if run== "paper1": finalnum = max(1, int(steps_ps * (.999))) # proton paper
+
+t_ref = None
+
+if USE_PS and 't_eval_ps' in globals() and t_eval_ps is not None:
+    t_ref = t_eval_ps
+elif USE_RK4 and 't_eval_rk4' in globals() and t_eval_rk4 is not None:
+    t_ref = t_eval_rk4
+elif USE_RKG and 't_eval_rkg' in globals() and t_eval_rkg is not None:
+    t_ref = t_eval_rkg
+elif USE_RK45 and 't_eval_rk45' in globals() and t_eval_rk45 is not None:
+    t_ref = t_eval_rk45
+else:
+    raise ValueError("No valid t_eval_* found for setting t_ref.")
+
+if gyro_window == "last":
+    t_start = max(t_ref[-1] - N_GYRO * T_gyro, t_ref[0])
+
+elif gyro_window == "first":
+    t_end = min(t_ref[0] + N_GYRO * T_gyro, t_ref[-1])
+
+elif gyro_window == "all":
+    t_start = t_ref[0]
+    t_end   = t_ref[-1]
+
+else:
+    raise ValueError("gyro_window must be 'first', 'last', or 'all'")
+
 
 if USE_RKG:
     r_rkg = solution_rkg[:, 0:3]
@@ -636,32 +685,76 @@ if USE_PS:
     mu0_ps   = mu_ps[0]
     mudrift_ps   = np.abs(mu_ps   - mu0_ps)/mu0_ps
 
-fig, ax = plt.subplots(figsize=(10, 5))
-if USE_RK45:
-    lnrk45, = ax.semilogy(t_eval_rk45[finalnum:]*time_factor, np.abs(mudrift_rk45[finalnum:]), label='RK45', color='#E69F00', linestyle='--')
-if USE_RK4:
-    lnrk4, = ax.semilogy(t_eval_rk4[finalnum:]*time_factor, np.abs(mudrift_rk4[finalnum:]), label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
-if USE_RKG:
-    lnrkg, = ax.semilogy(t_eval_rkg[finalnum:]*time_factor, np.abs(mudrift_rkg[finalnum:]), label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
-if USE_PS:
-    lnps, = ax.semilogy(t_eval_ps[finalnum:]*time_factor, np.abs(mudrift_ps[finalnum:]), label=f"PS{orders_used.max()}", alpha=0.8, color='#009E73', linestyle=':')
 
-# Getting log lines to work, mess with at your own risk
+# indexing for gyro window
+if USE_RK45:
+    idx_rk45 = (
+        np.searchsorted(t_eval_rk45, t_start, side="left")
+        if gyro_window != "first"
+        else np.searchsorted(t_eval_rk45, t_end, side="right")
+    )
+
+if USE_RK4:
+    idx_rk4 = (
+        np.searchsorted(t_eval_rk4, t_start, side="left")
+        if gyro_window != "first"
+        else np.searchsorted(t_eval_rk4, t_end, side="right")
+    )
+
+if USE_RKG:
+    idx_rkg = (
+        np.searchsorted(t_eval_rkg, t_start, side="left")
+        if gyro_window != "first"
+        else np.searchsorted(t_eval_rkg, t_end, side="right")
+    )
+
+if USE_PS:
+    idx_ps = (
+        np.searchsorted(t_eval_ps, t_start, side="left")
+        if gyro_window != "first"
+        else np.searchsorted(t_eval_ps, t_end, side="right")
+    )
+
+# plotting info
+fig, ax = plt.subplots(figsize=(10, 5))
+
+if USE_RK45:
+    lnrk45, = ax.semilogy(
+        t_eval_rk45[idx_rk45:] * time_factor if gyro_window != "first" else t_eval_rk45[:idx_rk45] * time_factor,
+        np.abs(mudrift_rk45[idx_rk45:])      if gyro_window != "first" else np.abs(mudrift_rk45[:idx_rk45]),
+        label='RK45', color='#E69F00', linestyle='--'
+    )
+
+if USE_RK4:
+    lnrk4, = ax.semilogy(
+        t_eval_rk4[idx_rk4:] * time_factor if gyro_window != "first" else t_eval_rk4[:idx_rk4] * time_factor,
+        np.abs(mudrift_rk4[idx_rk4:])      if gyro_window != "first" else np.abs(mudrift_rk4[:idx_rk4]),
+        label='RK4', alpha=0.3, color='#CC79A7', linestyle='-.'
+    )
+
+if USE_RKG:
+    lnrkg, = ax.semilogy(
+        t_eval_rkg[idx_rkg:] * time_factor if gyro_window != "first" else t_eval_rkg[:idx_rkg] * time_factor,
+        np.abs(mudrift_rkg[idx_rkg:])      if gyro_window != "first" else np.abs(mudrift_rkg[:idx_rkg]),
+        label='RKG', alpha=0.3, color='#CC0000', linestyle='-.'
+    )
+
+if USE_PS:
+    lnps, = ax.semilogy(
+        t_eval_ps[idx_ps:] * time_factor if gyro_window != "first" else t_eval_ps[:idx_ps] * time_factor,
+        np.abs(mudrift_ps[idx_ps:])      if gyro_window != "first" else np.abs(mudrift_ps[:idx_ps]),
+        label=f"PS{orders_used.max()}",
+        alpha=0.7, color='#009E73', linestyle=':'
+    )
+
+
 ax.margins(x=0.01)
 ax.set_yscale('log') 
-# ax.set_xscale('log') 
 ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
 ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
-# ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-# ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
-# ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-# ax.xaxis.set_minor_formatter(NullFormatter())
 ax.grid(True, which='major', linestyle='--', linewidth=0.7)
-# ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
-# ax.xaxis.set_major_formatter(FuncFormatter(sparse_labels))
-# ax.set_aspect('equal', adjustable='box')
 ax.get_xaxis().get_major_formatter().set_useOffset(False)
 
 
@@ -669,15 +762,14 @@ ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 
 ax.set_xlabel(r"$\tau/T$")
-ax.set_ylabel(r"$|\Delta \mu|/\mu_0$")
+ax.set_ylabel(r"$|\Delta \mu|/\mu_\emptyset$")
 
-if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Magnetic Moment Deviations in Dipole B Field")
-# fig.tight_layout()
+if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Magnetic Moment Variations in Dipole B Field")
 
 fig.subplots_adjust(right=0.9)
 fig.canvas.draw()
 ax_pos = ax.get_position()  # Bbox in figure coords
-x_fig_label = ax_pos.x1   # a small gap to the right of axes
+x_fig_label = ax_pos.x1   # a small gap to the right of axes for label things
 
 endpoints = []
 if USE_RK45:
@@ -800,6 +892,7 @@ with open(output_filename, "w") as f:
     f.write(f"  vy_initial    = {vy_initial} RE/tau0\n")
     f.write(f"  vz_initial    = {vz_initial} RE/tau0\n")
     f.write(f"  Initial Bfield= {B_0} T\n")
+    f.write(f"  gyroperiod    = {T_gyro} normalized time units\n")
     # f.write(f"  gyroperiods    = {gyroperiods} \n")
     
     f.write(f"  float type    = {npfloat.__name__}\n\n")
@@ -931,5 +1024,6 @@ if os.path.exists(csv_path):
     df.to_csv(csv_path, mode='a', header=False, index=False)
 else:
     df.to_csv(csv_path, index=False)
+
 
 print(f"\nRun Complete → {output_folder}/{stem}")

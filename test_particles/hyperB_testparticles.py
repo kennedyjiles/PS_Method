@@ -22,7 +22,7 @@ atol_rk45 = 1e-14                       # RK45 adapative tolerance
 if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
 else: mpl.rcParams['agg.path.chunksize'] = 100
 
-run_storage = "outputs_rawdata"      # where trajectory files go
+run_storage = "outputs_rawdata"        # where raw trajectory files go when USE_WRITE_DATA = True
 
 # ===================================================================
 # ==============Toggle Parameters for Hyper B Script ================
@@ -195,7 +195,6 @@ def load_params(run):
         ps_step = rk4_step
         gyroperiods = 1e5               
         norm_time = (gyroperiods) * 2 * np.pi   
-
 
     elif run == "paper4": # paper1 simulation at larger ps_step
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")

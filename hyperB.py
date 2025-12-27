@@ -116,7 +116,9 @@ if os.path.exists(cache_path) and READ_DATA:
         class _Obj: pass
         solution_rk45 = _Obj()
         solution_rk45.t = cached["rk45"]["t"]
-        solution_rk45.y = cached["rk45"]["y"]    
+        solution_rk45.y = cached["rk45"]["y"] 
+        t_eval_rk45 = cached["rk45"]["t"]
+   
     timing = cached.get("meta", {}).get("timing", {})
     stem = os.path.splitext(os.path.basename(cache_path))[0]
 

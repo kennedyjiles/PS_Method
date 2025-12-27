@@ -385,8 +385,6 @@ def vector_potential_dipole(r):
 
     return np.array([Ax, Ay, Az], dtype=npfloat)
 
-
-# @((lambda f: f) if npfloat == np.float128 else njit)
 @maybe_njit
 def hamiltonian_rhs(t, y, qoverm):
     x, y_, z = y[0], y[1], y[2]
@@ -446,7 +444,6 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
     K[1] = K[0].copy()
 
     for n in range(max_iter):
-        # stage values
         Y1 = y0 + dt * (a11 * K[0] + a12 * K[1])
         Y2 = y0 + dt * (a21 * K[0] + a22 * K[1])
 
@@ -459,7 +456,6 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
         if normF < tol:
             break
 
-        # finite-difference Jacobian J (block 2x2)
         J = np.zeros((2 * dim, 2 * dim), dtype=npfloat)
         for i in range(2):
             for j in range(dim):
@@ -803,10 +799,8 @@ def save_results_h5(h5_path, params, results):
 def load_results_h5(h5_path):
     with h5py.File(h5_path, "r") as f:
         loaded = {"meta": {"timing": {}}}
-        # params
         loaded["params"] = json.loads(f.attrs["params_json"])
 
-        # helper to pull groups
         def _read_grp(name):
             if name not in f: return None
             g = f[name]
@@ -818,7 +812,6 @@ def load_results_h5(h5_path):
         for k in ("ps","rk4","rk45","rkg"):
             loaded[k] = _read_grp(k)
 
-        # meta attrs
         gmeta = f["meta"]
         for a in gmeta.attrs:
             if a.startswith("timing_"):
@@ -827,8 +820,10 @@ def load_results_h5(h5_path):
                 loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
-
-# STREAM AND DECIMATION
+# ==========================
+# === Decimate Functions ===
+# ==========================
+# currently only for PS and not part of diboleb.py
 
 def run_ps_streaming_with_decimation(
     initial_pos_vel_ps,
@@ -842,15 +837,6 @@ def run_ps_streaming_with_decimation(
     chunk_steps=10**6,
     decimate=1,
 ):
-    """
-    Streaming PS driver:
-    - advances PS in chunks using PS_dipoleB
-    - optionally decimates output for storage/plotting
-    - writes chunked data to HDF5
-    - returns decimated in-memory arrays (t, y, orders)
-    - returns runtime for timing
-    """
-
     import time
     start_time_ps = time.time()
 
@@ -871,10 +857,8 @@ def run_ps_streaming_with_decimation(
     if write_data:
         f = h5py.File(cache_path, "w")
 
-        # meta group
         meta_grp = f.create_group("meta")
 
-        # ps group
         ps_grp = f.create_group("ps")
 
         dset_t = ps_grp.create_dataset(
