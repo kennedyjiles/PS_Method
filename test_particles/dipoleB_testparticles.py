@@ -17,11 +17,11 @@ RE = npfloat(6378137.0)                # m, Radius of Earth
 
 # ===== Tolerances/Truncations =====
 PS_order = 40                       # Max Power Series Order, system will truncate
-tol = 1.0e-35
+tol = 1.0 * np.finfo(npfloat).eps   # setting tolerance to machine epsilon to drop terms later, will be scaled by tau_0
 rtol_rk45 = 1e-8                    # RK45 relative tolerance
 atol_rk45 = 1e-10                   # RK45 adapative tolerance
 user_min_gap = npfloat(15)          # Minimum index spacing between successive s=0 crossings (mirror points) to suppress false detections from small numerical oscillations
-user_min_phase = npfloat(.1)        # this is the minimum phase it's looking for to be allowed to extrapolate from for drift
+user_min_phase = npfloat(.001)     # Minimum radians to extrapolate drift from   
 mpl.rcParams['agg.path.chunksize'] = 100   # may have to adjust if matplotlib barfs on large datasets
 
 if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
@@ -42,6 +42,10 @@ WRITE_DATA -- Set to True to write saved run data to hdf file (what READ_DATA lo
 USE_PLOT_TITLES -- Set to True to include plot titles
 USE_FULL_PLOT -- Set False for paper plots only, Set to True for all plots
 
+USE_EXTERNAL_H5_* -- Set to True to load from external h5 file specifically to compare against current run for energy, this is 
+                        useful for large runs where multiple parameter sets are being compared and timescales differ
+external_h5_* -- path to external h5 file to load from, for PS also need to set PS_order_ext to match order used in that run
+                        
 pitch_deg -- (degrees)
 phi_deg  -- (degrees)
 x_initial_si -- (Earth Radius: RE)
@@ -84,7 +88,7 @@ def load_params(run):
         USE_PLOT_TITLES = True
         READ_DATA = True
         WRITE_DATA = True
-        USE_FULL_PLOT = True
+        USE_FULL_PLOT = False
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -187,12 +191,12 @@ def load_params(run):
 
         external_h5_ps = "outputs_rawdata/run_5f2698f4194712e0.h5" #big PS run
         PS_order_ext = 15    # pull from text file 
-        external_h5_rk4 = "outputs_rawdata/" #RK4 run
-        external_h5_rk45 = "outputs_rawdata/" #RK45 run
+        external_h5_rk4 = "outputs_rawdata/" 
+        external_h5_rk45 = "outputs_rawdata/" 
         external_h5_rkg = "outputs_rawdata/" 
 
 
-        pitch_deg = npfloat(60.0)              
+        pitch_deg = npfloat(90.0)              
         phi_deg = npfloat(90.0)
         x_initial = npfloat(5)                 
         y_initial = npfloat(0)
@@ -261,25 +265,25 @@ def load_params(run):
     elif run == "tinker": # using this one to play with parameters 
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_dipoleB_Electron"
+        output_folder = "outputs_tinker"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True  
-        USE_RK4 = True
-        USE_RKG = True  
+        USE_RK45 = False  
+        USE_RK4 = False
+        USE_RKG = False  
         USE_PS = True
         USE_PLOT_TITLES = False
-        READ_DATA = True
-        WRITE_DATA = True
-        USE_FULL_PLOT = False
+        READ_DATA = False
+        WRITE_DATA = False
+        USE_FULL_PLOT = True
 
-        pitch_deg = npfloat(90.0)              
+        pitch_deg = npfloat(65.0)              
         phi_deg = npfloat(90.0)
         x_initial = npfloat(5)                 
         y_initial = npfloat(0)
         z_initial = npfloat(0)
-        KE_particle = npfloat(1e6) 
+        KE_particle = npfloat(1e7) 
         B_0 = npfloat(3.12e-5)  
-        mass_si = m_p   
+        mass_si = m_e   
         T_gyro = 2.0 * np.pi * (x_initial**3)  
 
         USE_EXTERNAL_H5_ps = False
@@ -288,13 +292,14 @@ def load_params(run):
         USE_EXTERNAL_H5_rkg = False
 
         external_h5_ps = "outputs_rawdata/" 
-        PS_order_ext = 15    
+        PS_order_ext = 1
         external_h5_rk4 = "outputs_rawdata/"
         external_h5_rk45 = "outputs_rawdata/" 
         external_h5_rkg = "outputs_rawdata/" 
 
 
-        window_duration = npfloat(10/0.00003584) 
+        window_duration = npfloat(105/0.00003584) 
+        # window_duration = npfloat(6220.0/0.0003346) # only interested in one drift period so same as slice
         slice_mode = "last"  
         N_GYRO = 10
         gyro_window = "last"            
@@ -303,7 +308,7 @@ def load_params(run):
         rk4_step = npfloat(round(T_gyro/integration_steps,1))               
         ps_step = npfloat(round(T_gyro/integration_steps,1))                                  
         rkg_step = rk4_step
-        gyroperiods = 1e3
+        gyroperiods = 1e5
         norm_time = npfloat(gyroperiods) * T_gyro
 
     else:

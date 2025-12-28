@@ -2,7 +2,7 @@ import h5py
 import sys
 
 
-# to use python inspect_hdf5.py dipole_outputs/run_xxxxxxxx.h5
+# to use: python inspect_hdf5.py outputs_rawdata/run_xxxxxxxx.h5
 
 def inspect_hdf5(path):
     with h5py.File(path, "r") as f:

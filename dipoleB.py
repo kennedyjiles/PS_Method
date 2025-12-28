@@ -13,9 +13,9 @@ from scipy.integrate import solve_ivp
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from functions.functions_library_universal import rk4_fixed_step, plt_config, sparse_labels, data_to_fig, slice_solution
 from functions.functions_library_dipole import PS_dipoleB, lorentz_force_dipole, compute_mu_ps, compute_mu_rk, vector_potential_dipole, rkgl4_hamiltonian, hamiltonian_rhs
-from functions.functions_library_dipole import mirror_times_from_PS, bounce_summary, drift_period_from_PS, get_run_params, h5_path_for, save_results_h5, load_results_h5
+from functions.functions_library_dipole import mirror_times_from_PS, bounce_summary, drift_period_from_PS, get_run_params, h5_path_for, save_results_h5, load_results_h5, summarize_error
 
-run = "demo"   # options: "demo", "paper1", "paper2", or "paper3". Demo mode is a quick test run. Paper modes can take upwards of half an hour. 
+run = "demo"   # options: "demo", "paper1", "paper2", "paper3", unless a new input is made. Demo mode is a quick test run. Paper modes can take upwards of half an hour. 
 
 # Allow command-line override
 if len(sys.argv) > 1:
@@ -51,15 +51,19 @@ tau_time = gamma * mass_si / (abs(q_e) * abs(B_0))  # this is tau0 from paper
 v_tau = v_si * tau_time / RE                        # dimensionless velocity
 physical_time = norm_time * abs(tau_time)           # actual physical time, t; normalized time =t/tau_time
 
+tol = npfloat(tol) * tau_time                       # convert tolerance to normalized units    
 
 # === Velocity Config based on INput Angles ===
 pitch_rad = npfloat(np.radians(pitch_deg))              # degrees to radians, pitch 
 phi_rad = npfloat(np.radians(phi_deg))                  # degrees to radians, phi 
 v_par = npfloat(v_tau) * npfloat(np.cos(pitch_rad))     # parallel velocity component
 v_perp = npfloat(v_tau) * npfloat(np.sin(pitch_rad))    # perpendicular velocity component 
+
 vx_initial = npfloat(v_perp * np.cos(phi_rad))          
 vy_initial = npfloat(v_perp * np.sin(phi_rad))
 vz_initial = npfloat(v_par)
+
+# cleaning small values to zero
 if abs(vx_initial) < (1.0 * np.finfo(npfloat).eps): vx_initial = npfloat(0.0) 
 if abs(vy_initial) < (1.0 * np.finfo(npfloat).eps): vy_initial = npfloat(0.0)
 if abs(vz_initial) < (1.0 * np.finfo(npfloat).eps): vz_initial = npfloat(0.0)
@@ -106,7 +110,7 @@ params = get_run_params(USE_RK45, USE_RK4, USE_RKG,    # parameters it is scanni
                    x_initial, y_initial, z_initial,
                    pitch_deg, phi_deg,
                    norm_time, ps_step, rk4_step, rkg_step,
-                   PS_order, tol, qoverm)
+                   PS_order, tol, qoverm, rtol_rk45, atol_rk45)
 cache_path = h5_path_for(params, run_storage)
 
 if os.path.exists(cache_path) and READ_DATA:
@@ -169,11 +173,6 @@ else:    # if it finds no file, it will proceed with the method calculations her
 
     # Preparing a results dictionary for saving so future heather doesn't have to keep waiting
     results = {
-        # "ps": {
-        #     "t": t_eval_ps,
-        #     "y": solution_ps,
-        #     "orders": orders_used,
-        # },
         "ps": None,
         "rk4": None,
         "rk45": None,
@@ -215,11 +214,11 @@ else:    # if it finds no file, it will proceed with the method calculations her
     timing = results["meta"]["timing"]
     stem = os.path.splitext(os.path.basename(cache_path))[0]
 
-# === Timing Summary ===
-if run == "paper1": USE_RK4 = False
+# these are paper specific adjustments for aeshetic purposes
+if run == "paper1": USE_RK4 = False 
 if run == "paper2": USE_RKG = False
 
-
+# === Timing Summary ===
 print(f"Particle        : {KE_particle:.1e} eV {particle_type}")
 if USE_RK45 and "rk45" in timing:
     print(f"Run Time RK45   : {timing['rk45']:.2f} s")
@@ -317,6 +316,8 @@ if USE_FULL_PLOT:
 # ==========================================
 # ================ Slicing  ================
 # ==========================================
+# Slicing last or first window_duration seconds of data for better visualization of orbits
+
 if USE_PS:
     ps_x, ps_y, ps_z = slice_solution(t_eval_ps, solution_ps, window_duration, norm_time, mode=slice_mode)[:3]
 if USE_RK45:
@@ -329,7 +330,6 @@ if USE_RKG:
 # =====================================================
 # ================ 2D Trajectory Slice ================
 # =====================================================
-
 if USE_FULL_PLOT:
     # === Plot Last Few Cycles ===
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -409,6 +409,7 @@ if USE_EXTERNAL_H5_ps:
     t_ext  = ext_ps["t"]          
     y_ext  = ext_ps["y"]          
 
+    # ---- velocity, energy, drift ----
     vxe = y_ext[3].astype(np.float64)
     vye = y_ext[4].astype(np.float64)
     vze = y_ext[5].astype(np.float64)
@@ -417,17 +418,15 @@ if USE_EXTERNAL_H5_ps:
 
 if USE_EXTERNAL_H5_rk4:
     external_rk4 = load_results_h5(external_h5_rk4)
-
-    # ---- pull RK4 solution from file ----
     ext_rk4 = external_rk4["rk4"]
     t_eval_rk4_ext = ext_rk4["t"]
-    y_rk4_ext = ext_rk4["y"]   # expected shape: (6, N)
+    y_rk4_ext = ext_rk4["y"]   
 
-    # ---- ensure shape consistency ----
+    # ensure shape consistency 
     if y_rk4_ext.shape[0] != 6:
         y_rk4_ext = y_rk4_ext.T
 
-    # ---- velocity, energy, drift ----
+    # velocity, energy, drift ----
     v_rk4_ext = y_rk4_ext[3:6]
     E_rk4_ext = 0.5 * np.sum(v_rk4_ext**2, axis=0)
     rel_drift_rk4_ext = np.abs(E_rk4_ext - E_rk4_ext[0]) / E_rk4_ext[0]
@@ -439,9 +438,11 @@ if USE_EXTERNAL_H5_rk45:
     t_eval_rk45_ext = ext_rk45["t"]
     y_rk45_ext = ext_rk45["y"]   
 
+    # ensure shape consistency 
     if y_rk45_ext.shape[0] != 6:
         y_rk45_ext = y_rk45_ext.T
 
+    # velocity, energy, drift 
     v_rk45_ext = y_rk45_ext[3:6]
     E_rk45_ext = 0.5 * np.sum(v_rk45_ext**2, axis=0)
     rel_drift_rk45_ext = np.abs(E_rk45_ext - E_rk45_ext[0]) / E_rk45_ext[0]
@@ -450,12 +451,11 @@ if USE_EXTERNAL_H5_rk45:
 if USE_EXTERNAL_H5_rkg:
     external_rkg = load_results_h5(external_h5_rkg)
 
-    # Pull RKG solution from file
     ext_rkg = external_rkg["rkg"]
     t_ext_rkg = ext_rkg["t"]
-    y_ext_rkg = ext_rkg["y"]   # shape: (N, 6) or (6, N) depending on save
+    y_ext_rkg = ext_rkg["y"]   
 
-    # Enforce shape: (N, 6)
+    #  ensure shape consistency 
     if y_ext_rkg.shape[0] == 6:
         y_ext_rkg = y_ext_rkg.T
 
@@ -463,24 +463,16 @@ if USE_EXTERNAL_H5_rkg:
     r_rkg_ext = y_ext_rkg[:, 0:3]
     p_rkg_ext = y_ext_rkg[:, 3:6]
 
-    # Recompute vector potential A(r)
+    # Recompute vector potential
     A_rkg_ext = np.zeros_like(r_rkg_ext)
     for i in range(len(r_rkg_ext)):
         A_rkg_ext[i] = vector_potential_dipole(r_rkg_ext[i])
 
-    # Physical velocity
+    # velocity, energy, drift 
     v_rkg_ext = p_rkg_ext - A_rkg_ext
-
-    # Energy + drift
     E_rkg_ext = npfloat(0.5) * np.sum(v_rkg_ext**2, axis=1, dtype=npfloat)
     rel_drift_ext_rkg = np.abs(E_rkg_ext - E_rkg_ext[0]) / E_rkg_ext[0]
 
-
-
-
-
-equatorial_r3 = x_initial**3
-time_factor = 1.0 / (2.0 * np.pi * equatorial_r3)  # to convert to gyroperiods if desired
 
 if USE_PS:
     v_ps = solution_ps[3:6]   
@@ -514,6 +506,9 @@ if USE_RK4:
     rel_drift_rk4 = np.abs(E_rk4 - E_rk4[0]) / E_rk4[0]
  
 # === Plot =====
+equatorial_r3 = x_initial**3
+time_factor = 1.0 / (2.0 * np.pi * equatorial_r3)  # to convert plots to gyroperiods
+
 fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
     lnrk45, = ax.semilogy(t_eval_rk45[1:]*time_factor, np.abs(rel_drift_rk45[1:]), label='RK45', color='#E69F00', linestyle='--')
@@ -562,6 +557,8 @@ fig.canvas.draw()
 ax_pos = ax.get_position()  # Bbox in figure coords
 x_fig_label = ax_pos.x1   # a small gap to the right of axes
 
+
+# Getting labels for end of graphs to work in log plotting, dear lord don't touch this 
 endpoints = []
 if USE_RK45:
     endpoints.append((t_eval_rk45[-1]*time_factor, np.abs(rel_drift_rk45[-1]), "RK45", lnrk45.get_color()))
@@ -584,7 +581,7 @@ xmin, xmax = ax.get_xlim()
 ax.set_xlim(xmin, xmax * 1.05)
 
 last_fy = None
-min_gap = 0.025  # fraction of axes height
+min_gap = 0.025  # min gap if labels are close as fraction of axes height, don't go less than 0.025
 
 endpoints_sorted = sorted(endpoints, key=lambda e: e[1])
 
@@ -605,7 +602,7 @@ for x, y, label, color in endpoints_sorted:
     ax.annotate(
         label,
         xy=(x, y),
-        xytext=(5, dy_pts),   # <-- vertical padding happens here
+        xytext=(5, dy_pts),  
         textcoords="offset points",
         ha="left",
         va="center",
@@ -632,6 +629,7 @@ plt.close(fig)
 
 t_ref = None
 
+# Norm time should all be the same so it's grabbiting whichever t_eval_* is around first
 if USE_PS and 't_eval_ps' in globals() and t_eval_ps is not None:
     t_ref = t_eval_ps
 elif USE_RK4 and 't_eval_rk4' in globals() and t_eval_rk4 is not None:
@@ -686,7 +684,7 @@ if USE_PS:
     mudrift_ps   = np.abs(mu_ps   - mu0_ps)/mu0_ps
 
 
-# indexing for gyro window
+# indexing for gyro window whether first or last was selected
 if USE_RK45:
     idx_rk45 = (
         np.searchsorted(t_eval_rk45, t_start, side="left")
@@ -768,9 +766,11 @@ if USE_PLOT_TITLES: ax.set_title(f"{particle_type} Magnetic Moment Variations in
 
 fig.subplots_adjust(right=0.9)
 fig.canvas.draw()
-ax_pos = ax.get_position()  # Bbox in figure coords
-x_fig_label = ax_pos.x1   # a small gap to the right of axes for label things
+ax_pos = ax.get_position()  
+x_fig_label = ax_pos.x1   
 
+
+# Getting labels for end of graphs to work in log plotting, dear lord don't touch this 
 endpoints = []
 if USE_RK45:
     endpoints.append((t_eval_rk45[-1], np.abs(mudrift_rk45[-1]), "RK45", lnrk45.get_color()))
@@ -813,6 +813,7 @@ plt.close(fig)
 # ===================================================
 # ================ Mirror and Drift  ================
 # ===================================================
+# only for PS method currently
 if USE_PS:
     idxs, crossings_tau = mirror_times_from_PS(solution_ps, ps_step, interp=True, min_gap = user_min_gap)
     bounce_stats = bounce_summary(crossings_tau, time_scale_sec=tau_time)
@@ -852,21 +853,15 @@ if USE_PS:
 # === Write Summary Output to File ===
 # ====================================
 
+# Number of steps to average over, last 1%
 if USE_PS:
-    finalnum = max(1, int(steps_ps * 0.01))  # Number of steps to average over, last 1%
+    finalnum = max(1, int(steps_ps * 0.01))  
 elif USE_RKG:
-    finalnum = max(1, int(len(t_eval_rkg) * 0.01))  # Number of steps to average over, last 1%
+    finalnum = max(1, int(len(t_eval_rkg) * 0.01))  
 elif USE_RK45:
-    finalnum = max(1, int(len(t_eval_rk45) * 0.01))  # Number of steps to average over, last 1%
+    finalnum = max(1, int(len(t_eval_rk45) * 0.01))  
 elif USE_RK4:
-    finalnum = max(1, int(len(t_eval_rk4) * 0.01))  # Number of steps to average over, last 1%
-
-def summarize_error(label, err, f):
-    mean_val = np.mean(err[-finalnum:])
-    max_val  = np.max(np.abs(err[-finalnum:]))
-    rms_val  = np.sqrt(np.mean(err[-finalnum:]**2))
-    f.write(f"  {label:<8}: mean = {mean_val:.2e}, max = {max_val:.2e}, rms = {rms_val:.2e}\n")
-
+    finalnum = max(1, int(len(t_eval_rk4) * 0.01))  
 
 if USE_PS:
     output_filename = f"{output_folder}/{stem}_DipoleB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_simulation_summary.txt"
@@ -936,23 +931,23 @@ with open(output_filename, "w") as f:
 
     f.write(f"=== |detla E|/E0 (relative, last {finalnum} steps)===\n")
     if USE_RK45:
-        summarize_error("RK45", rel_drift_rk45, f)
+        summarize_error("RK45", rel_drift_rk45, finalnum, f)
     if USE_RK4:
-        summarize_error("RK4",  rel_drift_rk4, f)
+        summarize_error("RK4",  rel_drift_rk4, finalnum, f)
     if USE_RKG:
-        summarize_error("RKG",  rel_drift_rkg, f)
+        summarize_error("RKG",  rel_drift_rkg, finalnum, f)
     if USE_PS:
-        summarize_error("PS",   rel_drift_ps,  f)
+        summarize_error("PS",   rel_drift_ps, finalnum, f)
 
     f.write(f"\n=== |delta mu|/mu0(relative, last {finalnum} steps)===\n")
     if USE_RK45:
-        summarize_error("RK45", mudrift_rk45, f)
+        summarize_error("RK45", mudrift_rk45, finalnum, f)
     if USE_RK4:
-        summarize_error("RK4",  mudrift_rk4, f)
+        summarize_error("RK4",  mudrift_rk4, finalnum, f)
     if USE_RKG:
-        summarize_error("RKG",  mudrift_rkg, f)
+        summarize_error("RKG",  mudrift_rkg, finalnum, f)
     if USE_PS:
-        summarize_error("PS",   mudrift_ps,  f)
+        summarize_error("PS",   mudrift_ps, finalnum, f)
 
 # === Shared metadata ===
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
