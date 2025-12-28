@@ -20,72 +20,72 @@ def lorentz_force_hyperB(t, y, gamma, qoverm):
 @maybe_njit
 def PS_hyperB(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol):
     n_total = 9        # x, y, z, v_x, v_y, v_z, sinh, cosh, Bz 
-    final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=npfloat)          # array to store everything
+    final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=npfloat)
     
-    #Labeling indices for sanity tracking
+    # Labeling indices for sanity tracking
     x, y, z = 0, 1, 2
     vx, vy, vz = 3, 4, 5
     sinh_aux, cosh_aux = 6, 7
     Bz_aux  = 8
 
-    # Seeting up Initial conditions
+    # Setting up Initial conditions
     final_coeff_matrix[0:6, 0] = initial_pos_vel
     y0 = initial_pos_vel[1]
     
-    final_coeff_matrix[sinh_aux, 0] = np.sinh(gamma * y0)         # initiated analytically for start
-    final_coeff_matrix[cosh_aux, 0] = np.cosh(gamma * y0) 
-    final_coeff_matrix[Bz_aux, 0] = np.tanh(gamma * y0)
+    final_coeff_matrix[sinh_aux, 0] = np.sinh(gamma * y0)
+    final_coeff_matrix[cosh_aux, 0] = np.cosh(gamma * y0)
+    final_coeff_matrix[Bz_aux, 0]   = np.tanh(gamma * y0)
 
-    Bz_series = np.zeros(PS_order, dtype=npfloat)
+    Bz_series   = np.zeros(PS_order, dtype=npfloat)
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
-    oip1 = 1.0 / (1.0 + np.arange(PS_order))
+    oip1        = 1.0 / (1.0 + np.arange(PS_order))
 
-    for j in range(1, steps_ps + 1):              # indexing over time steps, start @1 b/c 0 is determined above
-        c = np.zeros((n_total, PS_order + 1), dtype=npfloat)    # array storage for loop
-        c[:, 0] = final_coeff_matrix[:, j - 1]   # applies previous step calcs as initial start in temp array
+    for j in range(1, steps_ps + 1):
+        c = np.zeros((n_total, PS_order + 1), dtype=npfloat)
+        c[:, 0] = final_coeff_matrix[:, j - 1]
 
         sum_terms = np.zeros(n_total, dtype=npfloat)
-        power = timedelta
+        power     = timedelta
+        i         = 0
         max_contrib = tol + npfloat(1.0)
-        i = 0
 
         while max_contrib > tol and i < PS_order:
-            # Core expansions occur in this loop 
-            # First, update Bz[i] using the division recurrence: Bz = sinh / cosh= (1/B_0)(A_n-\sum_k=1^n B_k f_(n-k))
-            if i == 0: # caucy division recurrence is definited for n>0, 0 called from initial conditions
-                Bz_series[0] = c[sinh_aux, 0] / c[cosh_aux, 0] # this is just using the analytical values to start
+
+            # --- Core Recurrences ---
+            if i == 0:
+                Bz_series[0] = c[sinh_aux, 0] / c[cosh_aux, 0]
             else:
                 s = c[sinh_aux, i]
-                for k in range(1, i + 1):
-                    s -= c[cosh_aux, k] * Bz_series[i - k]
+                for k in range(1, i+1):
+                    s -= c[cosh_aux, k] * Bz_series[i-k]
                 Bz_series[i] = s / c[cosh_aux, 0]
-            
-            # cauchy product of v_yB_z and v_xB_z, must stay abouve the velocity calculations
+
             vyBz = cauchy_sum(c[vy], Bz_series, i)
             vxBz = cauchy_sum(c[vx], Bz_series, i)
 
-            c[x, i+1] = oip1[i] * c[vx, i] 
-            c[y, i+1] = oip1[i] * c[vy, i]
-            c[z, i+1] = oip1[i] * c[vz, i]
-            c[vx, i+1] = qoverm * oip1[i] * vyBz  
-            c[vy, i+1] = - qoverm * oip1[i] * vxBz
+            c[x, i+1]  = oip1[i] * c[vx, i]
+            c[y, i+1]  = oip1[i] * c[vy, i]
+            c[z, i+1]  = oip1[i] * c[vz, i]
+            c[vx, i+1] = qoverm * oip1[i] * vyBz
+            c[vy, i+1] = -qoverm * oip1[i] * vxBz
             c[vz, i+1] = 0.0
-            
-            # Aux calculations, analytical initial values but the remaining summations are pure expansions
-            c[sinh_aux, i+1] =  oip1[i] * gamma * cauchy_sum(c[cosh_aux], c[vy], i)
-            c[cosh_aux, i+1] =  oip1[i] * gamma * cauchy_sum(c[sinh_aux], c[vy], i)
 
-            # Bz is already computed in Bz_series[i], this is just adding it to the temp matrix (not Neo's)
-            c[Bz_aux, i+1] = Bz_series[i]
+            c[sinh_aux, i+1] = oip1[i] * gamma * cauchy_sum(c[cosh_aux], c[vy], i)
+            c[cosh_aux, i+1] = oip1[i] * gamma * cauchy_sum(c[sinh_aux], c[vy], i)
+            c[Bz_aux,   i+1] = Bz_series[i]
 
-            sum_terms += c[:, i+1]*power # just keeps adding these on until PS prder is reached, final added to permanent matrix below
+            if not np.isfinite(c[:, i+1]).all(): # internal overflow → stop series immediately
+                break
+
+            sum_terms += c[:, i+1] * power
             max_contrib = np.abs(c[:, i+1]).max()
             power *= timedelta
             i += 1
-            
-        final_coeff_matrix[:, j] = final_coeff_matrix[:, j - 1] + sum_terms        
 
-        # tethering
+        final_coeff_matrix[:, j] = final_coeff_matrix[:, j-1] + sum_terms
+        orders_used[j] = i
+
+        # --- tethering ---
         y_now = final_coeff_matrix[y, j]
         sinh_now = np.sinh(gamma * y_now)
         cosh_now = np.cosh(gamma * y_now)
@@ -94,9 +94,6 @@ def PS_hyperB(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol
         final_coeff_matrix[sinh_aux, j] = sinh_now
         final_coeff_matrix[cosh_aux, j] = cosh_now
         final_coeff_matrix[Bz_aux, j] = Bz_now
-
-
-        orders_used[j] = i
 
     return final_coeff_matrix, orders_used
 

@@ -21,7 +21,9 @@ rtol_rk45 = 1e-8                       # RK45 relative tolerance
 atol_rk45 = 1e-10                      # RK45 adapative tolerance
 
 if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
-else: mpl.rcParams['agg.path.chunksize'] = 100
+else: mpl.rcParams['agg.path.chunksize'] = 1000
+
+run_storage = "outputs_rawdata"      # where trajectory files go
 
 # ===================================================================
 # ==============Toggle Parameters for Const B Script ================
@@ -33,7 +35,9 @@ USE_Analytical -- Set to True to include RK4 analysis if using anything other th
 set up for B_z. All other methods fine.
 USE_PLOT_TITLES -- Set to True to include plot titles
 USE_FULL_PLOT -- Set to False for paper plots only, Set to True to enable all plots (not all are useful)
-
+READ_DATA -- Set to True to scan for saved runs and load
+WRITE_DATA -- Set to True to write saved run data to hdf file (what READ_DATA looks for)
+USE_EXTERNAL_H5 -- Set to True to include external high-precision PS data from specified h5 file
 
 pitch_deg -- (degrees)
 phi_deg  -- (degrees)
@@ -42,7 +46,7 @@ y_initial_si -- (m)
 z_initial_si -- (m)
 KE_particle -- (eV)
 B_0 -- (T)
-mass_si -- m_e or m_p, otherwise (kg)
+mass -- m_e or m_p, otherwise (kg)
 gyro_plot_slice -- slices last gyroperiods for visual inspection, suggest 1-10 
 
 
@@ -56,11 +60,19 @@ def load_params(run):
         print("Running full PAPER simulation...this can take a few minutes\n")
         output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True
+        USE_RK45 = False
         USE_RK4 = True
         USE_ANALYTICAL = True
         USE_PLOT_TITLES = False
-        USE_FULL_PLOT = False
+        USE_FULL_PLOT = True
+        READ_DATA = False      
+        WRITE_DATA = True
+        USE_EXTERNAL_H5 = False
+        USE_EXTERNAL_H5b = False
+
+        external_h5 = "outputs_rawdata/run_45e3b0843b9ca245.h5" 
+        external_h5b = "outputs_rawdata/run_344c6be65eafa517.h5" 
+
         pitch_deg = npfloat(45.0)              
         phi_deg = npfloat(45.0)
         x_initial = npfloat(0.0)               
@@ -72,8 +84,12 @@ def load_params(run):
         gyro_plot_slice = 1.5
 
         rk4_step = npfloat(0.063)              
-        ps_step = rk4_step                     
-        norm_time = (1e6) * ps_step            
+        ps_step = rk4_step
+        # rk4_step = npfloat(0.008)              
+        # ps_step = npfloat(1.26)              
+        gyroperiods = 1e5                     
+        norm_time = gyroperiods *2 * np.pi
+        
 
     elif run == "demo":
         print("Running DEMO simulation...this should be done in a couple seconds\n")
@@ -84,6 +100,8 @@ def load_params(run):
         USE_ANALYTICAL = True
         USE_PLOT_TITLES = True
         USE_FULL_PLOT = True
+        READ_DATA = True      
+        WRITE_DATA = True 
         pitch_deg = npfloat(45.0)              
         phi_deg = npfloat(45.0)
         x_initial = npfloat(0.0)               
@@ -95,8 +113,9 @@ def load_params(run):
         gyro_plot_slice = 1.5
 
         rk4_step = npfloat(0.063)              
-        ps_step = rk4_step                     
-        norm_time = 10 * 2 * np.pi 
+        ps_step = rk4_step
+        gyroperiods = 10.0                     
+        norm_time = gyroperiods *2 * np.pi
  
     else:
         raise ValueError("run must be 'paper' or 'demo'")

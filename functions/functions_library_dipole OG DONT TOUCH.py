@@ -2,7 +2,7 @@ import numpy as np
 import os
 import json, hashlib, h5py
 from numba import njit
-from functions.functions_library_universal import npfloat, maybe_njit
+from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, npfloat, maybe_njit
 
 one = npfloat(1.0)
 two = npfloat(2.0)
@@ -70,7 +70,6 @@ def PS_dipoleB(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     oip1 = one / (one + np.arange(PS_order, dtype=npfloat))
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
 
-    # these worked better inline
     def cauchy_sum_inline(a, b, n):
         result = 0.0
         for j in range(n + 1):
@@ -104,6 +103,7 @@ def PS_dipoleB(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
         i = 0
 
         while max_contrib > tol and i < PS_order:
+        # while i < PS_order:
             c[x, i+1]  = c[vx, i] * oip1[i]
             c[y, i+1]  = c[vy, i] * oip1[i]
             c[z, i+1]  = c[vz, i] * oip1[i]
@@ -131,7 +131,8 @@ def PS_dipoleB(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
             c[Bz_aux, i+1] =        -cauchy_sum_inline(c[a_aux], c[b_aux], i+1)
 
             sum_terms += c[:, i+1] * power
-            max_contrib = np.abs(c[:, i+1] * power).max()
+            max_contrib = np.abs(c[:, i+1]).max()
+            # max_contrib = np.abs(c[:, i+1] * power).max()
             power *= timedelta
             i += 1
 
@@ -140,7 +141,6 @@ def PS_dipoleB(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
         x_now, y_now, z_now = final_coeff_matrix[x, j], final_coeff_matrix[y, j], final_coeff_matrix[z, j]
         vx_now, vy_now, vz_now = final_coeff_matrix[vx, j], final_coeff_matrix[vy, j], final_coeff_matrix[vz, j]
 
-        # tethering variables
         r2_now = x_now**two + y_now**two + z_now**two
         a_now = r2_now**(-twopointfive)
         b_now = two * z_now**two - x_now**two - y_now**two
@@ -349,14 +349,8 @@ def rkgl4_hamiltonian(func, y0, t_eval, args=()):
 named_indices = {"vx":3,"vy":4,"vz":5,"Bx":14,"By":15,"Bz":16}
 
 """
-Identify mirror (bounce) times by detecting zero crossings of s = v·B,
-which is proportional to the parallel velocity v_parallel. A sign change
-in v·B indicates reversal of motion along the magnetic field line and thus
-a mirror point. Small-|s| values are excluded to suppress numerical jitter,
-and a minimum index separation is enforced to avoid multiple detections
-near a single mirror. Optional linear interpolation provides sub-step
-estimates of the mirror times.
-s_eps: magnitude threshold to ignore tiny jitters (units of v·B).
+Find mirror crossings (v·B=0) in tau units.
+s_eps: magnitude threshold to ignore tiny jitters (units of v·B in your norm).
 """
 
 def mirror_times_from_PS(final_coeff_matrix, dt, idx_map=None, interp=True, min_gap=15,
@@ -574,9 +568,8 @@ def get_run_params(USE_RK45, USE_RK4, USE_RKG,
                    x_initial, y_initial, z_initial,
                    pitch_deg, phi_deg,
                    norm_time, ps_step, rk4_step, rkg_step,
-                   PS_order, tol, qoverm, rtol_rk45, atol_rk45):
-
-    """Collect all (hopefully) knobs that define a unique run."""
+                   PS_order, tol, qoverm):
+    """Collect all knobs that define a run."""
     return {
         # toggles
         "USE_RK45": bool(USE_RK45),
@@ -605,9 +598,9 @@ def get_run_params(USE_RK45, USE_RK4, USE_RKG,
         # PS & solver knobs
         "PS_order": int(PS_order),
         "tol": _to_serializable(tol),
-        "rtol_rk45": _to_serializable(rtol_rk45),
-        "atol_rk45": _to_serializable(atol_rk45),
-  
+        "rtol_rk45": 1e-8,
+        "atol_rk45": 1e-10,
+
         # charge/mass normalization used in RHS
         "qoverm": _to_serializable(qoverm),
     }
@@ -675,17 +668,11 @@ def load_results_h5(h5_path):
                 loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
-    
-def summarize_error(label, err, finalnum, f):
-    mean_val = np.mean(err[-finalnum:])
-    max_val  = np.max(np.abs(err[-finalnum:]))
-    rms_val  = np.sqrt(np.mean(err[-finalnum:]**2))
-    f.write(f"  {label:<8}: mean = {mean_val:.2e}, max = {max_val:.2e}, rms = {rms_val:.2e}\n")
-
 # ==========================
 # === Decimate Functions ===
 # ==========================
 # currently only for PS and not part of diboleb.py
+
 def run_ps_streaming_with_decimation(
     initial_pos_vel_ps,
     steps_ps,

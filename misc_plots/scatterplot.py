@@ -10,19 +10,19 @@ sys.path.append('/Users/heatherjiles/Documents/GitHub/GradSchool')
 from PSMethod.code.definitions.functions_library_universal import plt_config, sparse_labels
 
 # === Load CSV ===
-csv_path = "electron_summary_results.csv"
+csv_path = "proton_summary_results.csv"
 df = pd.read_csv(csv_path)
 plt_config(scale=1)
 
 # === Toggle electron/proton  and mu/E data ===
-USE_ELECTRON = True  # True for electrons, False for protons
-USE_MU = False   # True for Δμ, False for ΔE
+USE_ELECTRON = False  # True for electrons, False for protons
+USE_MU = True   # True for Δμ, False for ΔE
 
 
 # === Toggle which error to plot ===
 if USE_MU:
     ERR_COLUMN = "errMu_mean"
-    YLABEL = r"$|\Delta \mu|/\mu_0$"
+    YLABEL = r"$|\Delta \mu|/\mu_\emptyset$"
     suffix = "_mu"
 else:
     ERR_COLUMN = "errE_mean"
@@ -114,10 +114,12 @@ ax.set_xscale("log")
 ax.set_yscale('log') 
 
 ax.set_xlabel("Runtime (s)")
+# ax.tick_params(labelbottom=False)
+
 ax.set_ylabel(YLABEL)
 
 ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  # or LogFormatterMathtext()
+ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
 ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
@@ -136,19 +138,19 @@ if USE_ELECTRON:
     angle_handles = [
         Line2D([0], [0], marker="o", linestyle="None",
             markerfacecolor="white", markeredgecolor="black",
-            markersize=10, label="60° = black ring"),
+            markersize=10, label="60° (black ring)"),
         Line2D([0], [0], marker="o", linestyle="None",
             markerfacecolor="lightgray", markeredgecolor="lightgray",
-            markersize=10, label="90° = plain fill"),
+            markersize=10, label="90° (plain fill)"),
     ]
 else:
         angle_handles = [
         Line2D([0], [0], marker="o", linestyle="None",
             markerfacecolor="white", markeredgecolor="black",
-            markersize=10, label="30° = black ring"),
+            markersize=10, label="30° (black ring)"),
         Line2D([0], [0], marker="o", linestyle="None",
             markerfacecolor="lightgray", markeredgecolor="lightgray",
-            markersize=10, label="90° = plain fill"),
+            markersize=10, label="90° (plain fill)"),
     ]
 ax.legend(handles=method_handles + angle_handles, loc="upper right")
 

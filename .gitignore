@@ -7,3 +7,5 @@ master_simulation_log.csv
 *.png
 timestep.py
 test.py
+*.txt
+Archive/ 
