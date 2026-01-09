@@ -17,6 +17,7 @@ from functions.functions_library_dipole import mirror_times_from_PS, bounce_summ
 
 run = "demo"   # options: "demo", "paper1", "paper2", "paper3", unless a new input is made. Demo mode is a quick test run. Paper modes can take upwards of half an hour. 
 
+
 # Allow command-line override
 if len(sys.argv) > 1:
     run = sys.argv[1]
@@ -42,6 +43,8 @@ else:
 
 qoverm = npfloat(-1) if mass_si == m_e else npfloat(1)
 
+user_min_gap = max(3, int(0.5 * T_gyro / ps_step))
+
 # === Misc Conversions  ===
 KE_joules = KE_particle * evtoj                     # converting KE from eV to Joules
 gamma = 1.0 + KE_joules / (mass_si * spdlight**2)   # Lorentz factor
@@ -59,6 +62,7 @@ phi_rad = npfloat(np.radians(phi_deg))                  # degrees to radians, ph
 v_par = npfloat(v_tau) * npfloat(np.cos(pitch_rad))     # parallel velocity component
 v_perp = npfloat(v_tau) * npfloat(np.sin(pitch_rad))    # perpendicular velocity component 
 
+
 vx_initial = npfloat(v_perp * np.cos(phi_rad))          
 vy_initial = npfloat(v_perp * np.sin(phi_rad))
 vz_initial = npfloat(v_par)
@@ -67,37 +71,15 @@ vz_initial = npfloat(v_par)
 if abs(vx_initial) < (1.0 * np.finfo(npfloat).eps): vx_initial = npfloat(0.0) 
 if abs(vy_initial) < (1.0 * np.finfo(npfloat).eps): vy_initial = npfloat(0.0)
 if abs(vz_initial) < (1.0 * np.finfo(npfloat).eps): vz_initial = npfloat(0.0)
-gyro_radius_si=abs(v_si * np.sin(pitch_rad) * mass_si/ (q_e * B_0))
 
+gyro_radius_si = (gamma * mass_si * v_si * np.sin(pitch_rad) / (np.abs(q_e) * (B_0 / x_initial**3)))
+# gyro_radius_REi=float(gyro_radius_si/RE)
+# print(f"Computed gyro radius: {gyro_radius_si:.2e} m ({gyro_radius_REi:.2e} RE)")
+# print(f"Guiding center ration rho/L: ({gyro_radius_REi/(x_initial):.2e} RE)")
 
 # these should be identical, kept seperate in case I decide to scale one method at a later point
 initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)  
 initial_pos_vel_ps = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat) 
-
-if USE_RKG:
-    # === Symplectic Implementations =====
-    r0 = np.array([x_initial, y_initial, z_initial])                # already normalized RE units
-    v_tau_vec = np.array([vx_initial, vy_initial, vz_initial], dtype=npfloat)
-    A0 = vector_potential_dipole(r0)
-    p0 = v_tau_vec + A0
-    y0 = np.concatenate((r0, p0))           # for Hamiltonian in RKG
-    # y0 = np.concatenate((r0, v_tau_vec))  # for Lorentz force in RKG, used as a sanity check
-
-
-# === Ensures that Total Time Elapsed is the Same ===
-if USE_PS:
-    steps_ps = int(norm_time / (ps_step)) 
-    t_eval_ps = np.linspace(0, norm_time, steps_ps + 1, dtype=npfloat)
-if USE_RK4:
-    steps_rk4 = int(norm_time / (rk4_step))
-    t_eval_rk4 = np.linspace(0, norm_time, steps_rk4 + 1, dtype=npfloat)
-if USE_RK45:
-    steps_rk45 = int(norm_time / (ps_step)) # no steps so we just set equal to ps for plotting
-    t_eval_rk45 = np.linspace(0, norm_time, steps_rk45 + 1, dtype=npfloat)   
-if USE_RKG:
-    steps_rkg = int(norm_time / (rkg_step))
-    t_eval_rkg = np.linspace(0, norm_time, steps_rkg + 1, dtype=npfloat)
-
 
 
 # === Build parameter tracer & check cache ===
@@ -114,6 +96,9 @@ params = get_run_params(USE_RK45, USE_RK4, USE_RKG,    # parameters it is scanni
 cache_path = h5_path_for(params, run_storage)
 
 if os.path.exists(cache_path) and READ_DATA:
+# if READ_DATA: 
+#     cache_path= "outputs_rawdata/run_d26d20d68d3e2dcd.h5"
+    
     print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
     cached = load_results_h5(cache_path)
 
@@ -121,10 +106,12 @@ if os.path.exists(cache_path) and READ_DATA:
         solution_ps = cached["ps"]["y"] if cached["ps"] else None
         orders_used = cached["ps"]["orders"] if cached["ps"] else None
         t_eval_ps = cached["ps"]["t"] if cached["ps"] else None
+        steps_ps = len(t_eval_ps) - 1
 
     if USE_RK4 and cached["rk4"]:
         solution_rk4 = cached["rk4"]["y"]
         t_eval_rk4 = cached["rk4"]["t"]
+        steps_rk4 = len(t_eval_rk4) - 1
         
     if USE_RK45 and cached["rk45"]:
         class _Obj: pass
@@ -132,10 +119,12 @@ if os.path.exists(cache_path) and READ_DATA:
         solution_rk45.t = cached["rk45"]["t"]
         solution_rk45.y = cached["rk45"]["y"]
         t_eval_rk45 = cached["rk45"]["t"]
+        steps_rk45 = len(t_eval_rk45) - 1
 
     if USE_RKG and cached["rkg"]:
         solution_rkg = cached["rkg"]["y"]
         t_eval_rkg = cached["rkg"]["t"]
+        steps_rkg = len(t_eval_rkg) - 1
     
     timing = cached.get("meta", {}).get("timing", {})
     stem = os.path.splitext(os.path.basename(cache_path))[0]
@@ -143,6 +132,8 @@ else:    # if it finds no file, it will proceed with the method calculations her
     print("No matching file or 'Read Data' skipped. Running solvers...\n")
     # ====== Run RK45 ======
     if USE_RK45:
+        steps_rk45 = int(norm_time / (ps_step)) # no steps so we just set equal to ps for plotting
+        t_eval_rk45 = np.linspace(0, norm_time, steps_rk45 + 1, dtype=npfloat) 
         start_time_rk45 = time.time()
         solution_rk45 = solve_ivp(
             lorentz_force_dipole, (0, norm_time), 
@@ -153,6 +144,8 @@ else:    # if it finds no file, it will proceed with the method calculations her
 
     # ====== Run RK4 ======
     if USE_RK4:
+        steps_rk4 = int(norm_time / (rk4_step))
+        t_eval_rk4 = np.linspace(0, norm_time, steps_rk4 + 1, dtype=npfloat)
         start_time_rk4 = time.time()
         solution_rk4 = rk4_fixed_step(
             lorentz_force_dipole, initial_pos_vel, t_eval_rk4, args=(qoverm,))
@@ -160,6 +153,8 @@ else:    # if it finds no file, it will proceed with the method calculations her
 
     # ====== Run PS ======
     if USE_PS:
+        steps_ps = int(norm_time / (ps_step)) 
+        t_eval_ps = np.linspace(0, norm_time, steps_ps + 1, dtype=npfloat)
         start_time_ps = time.time()
         solution_ps, orders_used = PS_dipoleB(
             PS_order, steps_ps, initial_pos_vel_ps, tol, qoverm, ps_step)
@@ -167,6 +162,16 @@ else:    # if it finds no file, it will proceed with the method calculations her
 
     # ====== Run RKG ======
     if USE_RKG:
+        # === Symplectic Implementations =====
+        r0 = np.array([x_initial, y_initial, z_initial])                # already normalized RE units
+        v_tau_vec = np.array([vx_initial, vy_initial, vz_initial], dtype=npfloat)
+        A0 = vector_potential_dipole(r0)
+        p0 = v_tau_vec + A0
+        y0 = np.concatenate((r0, p0))           # for Hamiltonian in RKG
+        # y0 = np.concatenate((r0, v_tau_vec))  # for Lorentz force in RKG, used as a sanity check
+
+        steps_rkg = int(norm_time / (rkg_step))
+        t_eval_rkg = np.linspace(0, norm_time, steps_rkg + 1, dtype=npfloat)
         start_time_rkg = time.time()
         solution_rkg = rkgl4_hamiltonian(hamiltonian_rhs, y0, t_eval_rkg, args=(qoverm,))
         end_time_rkg = time.time()
@@ -621,7 +626,32 @@ if USE_PS:
     fig.savefig( f"{output_folder}/{stem}_DipoleB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
 else:
     fig.savefig( f"{output_folder}/{stem}_DipoleB_{particle_type}_{KE_particle:.1e}eV_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
-plt.close(fig)  
+# plt.close(fig)  
+
+# ==================================================
+# ================ Dragt Comparison ================
+# ==================================================
+
+# plt.close('all')
+# fig, ax = plt.subplots(figsize=(10, 7))
+# DRAGT_P= solution_ps[0:3]   
+# DRAGT_V= solution_ps[3:6]
+# DRAGT_rho= np.sqrt(DRAGT_P[0]**2 + DRAGT_P[1]**2)
+# DRAGT_vperp= np.sqrt(DRAGT_V[0]**2 + DRAGT_V[1]**2)
+# z_DRAGT=DRAGT_P[2]
+# mask= (z_DRAGT[1:] > 0) & (z_DRAGT[:-1] <= 0)
+# i= np.where(mask)[0]
+# R_DRAGT= DRAGT_rho[i]
+# Vperp_DRAGT= DRAGT_vperp[i]
+
+# ax.plot(R_DRAGT, Vperp_DRAGT, '.')
+
+# fig.canvas.draw()   
+# fig.savefig("atest.png") 
+# plt.close(fig) 
+# exit()
+
+
 
 # ============================================================
 # ================ Magnetic Moment Deviations ================
@@ -747,13 +777,20 @@ if USE_PS:
 
 
 ax.margins(x=0.01)
+
 ax.set_yscale('log') 
 ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
 ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
 ax.grid(True, which='major', linestyle='--', linewidth=0.7)
+# ax.set_ylim( 5e-7, 5e0)
 ax.get_xaxis().get_major_formatter().set_useOffset(False)
+
+# # for top slices of mu 
+# ax.set_ylim(1e-1, 2e-1)
+# ax.set_yscale('linear')
+
 
 
 ax.spines['top'].set_visible(False)
@@ -814,8 +851,10 @@ plt.close(fig)
 # ================ Mirror and Drift  ================
 # ===================================================
 # only for PS method currently
+v_eps = npfloat(1e-14) * v_tau
+
 if USE_PS:
-    idxs, crossings_tau = mirror_times_from_PS(solution_ps, ps_step, interp=True, min_gap = user_min_gap)
+    idxs, crossings_tau = mirror_times_from_PS(solution_ps, ps_step, interp=True, min_gap = user_min_gap, s_eps=v_eps)
     bounce_stats = bounce_summary(crossings_tau, time_scale_sec=tau_time)
 
     if bounce_stats["full_mean_s"] is not None:
@@ -855,7 +894,7 @@ if USE_PS:
 
 # Number of steps to average over, last 1%
 if USE_PS:
-    finalnum = max(1, int(steps_ps * 0.01))  
+    finalnum = max(1, int(len(t_eval_ps) * 0.01))  
 elif USE_RKG:
     finalnum = max(1, int(len(t_eval_rkg) * 0.01))  
 elif USE_RK45:
@@ -888,7 +927,7 @@ with open(output_filename, "w") as f:
     f.write(f"  vz_initial    = {vz_initial} RE/tau0\n")
     f.write(f"  Initial Bfield= {B_0} T\n")
     f.write(f"  gyroperiod    = {T_gyro} normalized time units\n")
-    # f.write(f"  gyroperiods    = {gyroperiods} \n")
+    f.write(f"  gyroradius    = {gyro_radius_si} \n")
     
     f.write(f"  float type    = {npfloat.__name__}\n\n")
     

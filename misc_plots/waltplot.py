@@ -134,8 +134,8 @@ def main(csv_path: str, out_file: str):
     ax.autoscale(enable=True, axis="both", tight=False)
     ax.margins(x=0.05, y=0.10)  # ~5% x, ~10% y padding
 
-    ax.text(2e6, 4e-2, "Bounce Period", ha="left", va="center", fontsize=14)
-    ax.text(2e6, 1e4, "Drift Period", ha="left", va="center", fontsize=14)
+    ax.text(2e6, 1.5e-1, "Bounce Period", ha="left", va="center", fontsize=14)
+    ax.text(2e6, 3e3, "Drift Period", ha="left", va="center", fontsize=14)
 
     fig.tight_layout()
     fig.savefig(out_file, dpi=200)
