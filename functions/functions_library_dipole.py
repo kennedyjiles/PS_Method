@@ -2,7 +2,7 @@ import numpy as np
 import os
 import json, hashlib, h5py
 from numba import njit
-from functions.functions_library_universal import npfloat, maybe_njit
+from functions.functions_library_universal_chunk import npfloat, maybe_njit
 
 one = npfloat(1.0)
 two = npfloat(2.0)
@@ -332,15 +332,16 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
 
     return y0 + dt * (b1 * K[0] + b2 * K[1])
 
-
 @maybe_njit
-def rkgl4_hamiltonian(func, y0, t_eval, args=()):
-    nt = len(t_eval)
-    d_out = np.zeros((nt, len(y0)), dtype=np.float64)
+def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
+    d_out = np.zeros((steps + 1, len(y0)), dtype=npfloat)
     d_out[0] = y0
-    for i in range(1, nt):
-        dt = t_eval[i] - t_eval[i - 1]
-        d_out[i] = rkgl4_hamiltonian_step(func, d_out[i - 1], dt, args)
+
+    for i in range(1, steps + 1):
+        d_out[i] = rkgl4_hamiltonian_step(
+            func, d_out[i - 1], dt, args
+        )
+
     return d_out
 
 # ========================
@@ -619,51 +620,119 @@ def run_hash(params: dict) -> str:
 def h5_path_for(params, output_folder):
     return os.path.join(output_folder, f"run_{run_hash(params)}.h5")
 
+# def save_results_h5(h5_path, params, results):
+#     """
+#     results expects keys like:
+#       'ps': {'y': solution_ps, 'orders': orders_used, ...}
+#       'rk4': {'y': solution_rk4, ...}
+#       'rk45': {'t': solution_rk45.t, 'y': solution_rk45.y}
+#       'rkg': {'y': solution_rkg, ...}
+#       'meta': {'timing': {...}, 'physical_time': physical_time, ...}
+#     """
+#     with h5py.File(h5_path, "w") as f:
+#         # store params as a single JSON attribute on root
+#         f.attrs["params_json"] = json.dumps(
+#             params, sort_keys=True, default=_to_serializable
+#         )
+
+#         # === Solver results ===
+#         for k in ("ps", "rk4", "rk45", "rkg"):
+#             if k in results and results[k] is not None:
+#                 grp = f.create_group(k)
+#                 for name, arr in results[k].items():
+#                     if arr is None:
+#                         continue
+#                     # >>> FIX: only store numeric arrays <<<
+#                     if not isinstance(arr, np.ndarray):
+#                         continue
+#                     grp.create_dataset(
+#                         name,
+#                         data=arr,
+#                         compression="gzip",
+#                         compression_opts=2
+#                     )
+
+#         # === Meta info ===
+#         meta = results.get("meta", {})
+#         gmeta = f.create_group("meta")
+
+#         # timing dict → attrs
+#         for mk, mv in meta.get("timing", {}).items():
+#             gmeta.attrs[f"timing_{mk}"] = float(mv)
+
+#         # scalar attrs
+#         for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+#             if sk in meta:
+#                 gmeta.attrs[sk] = meta[sk]
+
 def save_results_h5(h5_path, params, results):
-    """
-    results expects keys like:
-      'ps': {'t': t_eval_ps, 'y': solution_ps_rescaled, 'orders': orders_used}
-      'rk4': {'t': t_eval_rk4, 'y': solution_rk4}
-      'rk45': {'t': solution_rk45.t, 'y': solution_rk45.y}
-      'rkg': {'t': t_eval_rkg, 'y': solution_rkg}
-      'meta': {'timing': {...}, 'physical_time': physical_time, ...}
-    """
     with h5py.File(h5_path, "w") as f:
-        # store params as a single JSON attribute on root
-        f.attrs["params_json"] = json.dumps(params, sort_keys=True, default=_to_serializable)
 
-        for k in ("ps","rk4","rk45","rkg"):
-            if k in results and results[k] is not None:
-                grp = f.create_group(k)
-                for name, arr in results[k].items():
-                    if arr is None: 
-                        continue
-                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=2)
+        # --- params ---
+        f.attrs["params_json"] = json.dumps(
+            params, sort_keys=True, default=_to_serializable
+        )
 
-        # meta info
+        # --- solver groups ---
+        for k in ("ps", "rk4", "rk45", "rkg"):
+            if k not in results or results[k] is None:
+                continue
+
+            grp = f.create_group(k)
+
+            for name, val in results[k].items():
+                if val is None:
+                    continue
+
+                if isinstance(val, np.ndarray):
+                    grp.create_dataset(
+                        name,
+                        data=val,
+                        compression="gzip",
+                        compression_opts=2
+                    )
+                else:
+                    grp.attrs[name] = val
+
+        # --- meta ---
         meta = results.get("meta", {})
         gmeta = f.create_group("meta")
-        # store timing dict as attrs
+
         for mk, mv in meta.get("timing", {}).items():
             gmeta.attrs[f"timing_{mk}"] = float(mv)
-        # scalar attrs
-        for sk in ("physical_time","norm_time","percent_c","particle_label"):
+
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
             if sk in meta:
                 gmeta.attrs[sk] = meta[sk]
+
 
 def load_results_h5(h5_path):
     with h5py.File(h5_path, "r") as f:
         loaded = {"meta": {"timing": {}}}
-        loaded["params"] = json.loads(f.attrs["params_json"])
+        # loaded["params"] = json.loads(f.attrs["params_json"])
+
+        if "params_json" in f.attrs:
+            loaded["params"] = json.loads(f.attrs["params_json"])
+        else:
+            loaded["params"] = None   # streaming-only file
+
 
         def _read_grp(name):
-            if name not in f: return None
+            if name not in f:
+                return None
+
             g = f[name]
             out = {}
+
+            # datasets
             for ds in g:
                 out[ds] = g[ds][...]
-            return out
 
+            # attributes (dt, steps, t0, etc.)
+            for k, v in g.attrs.items():
+                out[k] = v
+
+            return out
         for k in ("ps","rk4","rk45","rkg"):
             loaded[k] = _read_grp(k)
 
@@ -675,17 +744,29 @@ def load_results_h5(h5_path):
                 loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
-    
-def summarize_error(label, err, finalnum, f):
-    mean_val = np.mean(err[-finalnum:])
-    max_val  = np.max(np.abs(err[-finalnum:]))
-    rms_val  = np.sqrt(np.mean(err[-finalnum:]**2))
-    f.write(f"  {label:<8}: mean = {mean_val:.2e}, max = {max_val:.2e}, rms = {rms_val:.2e}\n")
 
-# ==========================
-# === Decimate Functions ===
-# ==========================
-# currently only for PS and not part of diboleb.py
+def summarize_error(label, err, f):
+    mean_val = np.mean(err)
+    max_val  = np.max(np.abs(err))
+    rms_val  = np.sqrt(np.mean(err**2))
+    f.write(
+        f"  {label:<8}: "
+        f"mean = {mean_val:.2e}, "
+        f"max = {max_val:.2e}, "
+        f"rms = {rms_val:.2e}\n"
+    )
+
+def summarize(err):
+    return {
+        "mean": np.mean(err),
+        "max":  np.max(np.abs(err)),
+        "rms":  np.sqrt(np.mean(err**2))
+    }
+
+
+# ===================================
+# === Decimate/Chunking Functions ===
+# ===================================
 def run_ps_streaming_with_decimation(
     initial_pos_vel_ps,
     steps_ps,
@@ -693,73 +774,71 @@ def run_ps_streaming_with_decimation(
     PS_order,
     tol,
     qoverm,
+    E0_ps,
+    mu0_ps,
     cache_path,
     write_data=True,
     chunk_steps=10**6,
     decimate=1,
 ):
     import time
+    import h5py
+    import numpy as np
+
     start_time_ps = time.time()
 
-    # PS_dipoleB always returns 17-component rows
     n_state = 17
-
-    # cur_state must ALWAYS be the 6 physical variables only
-    cur_state = initial_pos_vel_ps.copy()   # shape (6,)
+    cur_state = initial_pos_vel_ps.copy()
     remaining = steps_ps
     global_index = 0
+    max_ps = 0
 
-    # In-memory decimated storage
-    t_list = []
-    y_list = []
-    orders_list = []
-
-    # Create the HDF5 file (or overwrite)
     if write_data:
         f = h5py.File(cache_path, "w")
-
-        meta_grp = f.create_group("meta")
-
         ps_grp = f.create_group("ps")
 
-        dset_t = ps_grp.create_dataset(
-            "t",
-            shape=(0,),
-            maxshape=(None,),
-            dtype=npfloat,
-        )
+        ps_grp.attrs["dt"]        = float(ps_step)
+        ps_grp.attrs["steps"]    = int(steps_ps)
+        ps_grp.attrs["t0"]       = 0.0
+        ps_grp.attrs["decimate"] = int(decimate)
+
+        ps_grp.attrs["E0"]       = float(E0_ps)
+        ps_grp.attrs["mu0"]      = float(mu0_ps)
+
+        ps_grp.attrs["streaming"] = True
+
         dset_y = ps_grp.create_dataset(
             "y",
             shape=(n_state, 0),
             maxshape=(n_state, None),
             dtype=npfloat,
             chunks=(n_state, min(chunk_steps, steps_ps + 1)),
+            compression="gzip",
+            compression_opts=2,
         )
+
         dset_orders = ps_grp.create_dataset(
             "orders",
             shape=(0,),
             maxshape=(None,),
             dtype=np.int16,
+            compression="gzip",
+            compression_opts=2,
         )
     else:
         f = None
-        dset_t = dset_y = dset_orders = None
+        dset_y = dset_orders = None
 
     try:
         while remaining > 0:
             this_chunk = min(chunk_steps, remaining)
 
-            # 🔹 Compute chunk
             sol_chunk, orders_chunk = PS_dipoleB(
                 PS_order, this_chunk, cur_state, tol, qoverm, ps_step
             )
-            # sol_chunk: (17, this_chunk+1)
-            # orders_chunk: (this_chunk+1,)
 
-            # Global indices for this chunk
-            idx_chunk = np.arange(global_index, global_index + this_chunk + 1, dtype=np.int64)
+            idx_chunk = np.arange(global_index, global_index + this_chunk + 1)
 
-            # 🔹 Avoid duplicating boundary between chunks
             if global_index == 0:
                 sol_eff = sol_chunk
                 orders_eff = orders_chunk
@@ -769,57 +848,166 @@ def run_ps_streaming_with_decimation(
                 orders_eff = orders_chunk[1:]
                 idx_eff = idx_chunk[1:]
 
-            # 🔹 Decimation
             if decimate <= 1:
                 keep = np.ones_like(idx_eff, dtype=bool)
             else:
                 keep = (idx_eff % decimate == 0) | (idx_eff == steps_ps)
 
-            idx_keep = idx_eff[keep]
-            sol_keep = sol_eff[:, keep]         # KEEP ALL 17 ROWS
+            sol_keep = sol_eff[:, keep]
             orders_keep = orders_eff[keep]
 
-            # 🔹 Append to in-memory lists
-            if idx_keep.size > 0:
-                t_list.append(idx_keep.astype(npfloat) * npfloat(ps_step))
-                y_list.append(sol_keep)
-                orders_list.append(orders_keep.astype(np.int16))
+            if sol_keep.shape[1] > 0:
+                max_ps = max(max_ps, int(orders_keep.max()))
 
-                # 🔹 Stream to HDF5
                 if write_data:
-                    old_len = dset_t.shape[0]
-                    new_len = old_len + idx_keep.size
+                    old_len = dset_y.shape[1]
+                    new_len = old_len + sol_keep.shape[1]
 
-                    dset_t.resize((new_len,))
                     dset_y.resize((n_state, new_len))
                     dset_orders.resize((new_len,))
 
-                    dset_t[old_len:new_len] = idx_keep.astype(npfloat) * npfloat(ps_step)
                     dset_y[:, old_len:new_len] = sol_keep
-                    dset_orders[old_len:new_len] = orders_keep.astype(np.int16)
+                    dset_orders[old_len:new_len] = orders_keep
 
-            # 🔹 Prepare next-chunk initial state
-            cur_state = sol_chunk[0:6, -1].copy()   # ONLY pass (x,y,z,vx,vy,vz)
-
-            # Step forward
+            cur_state = sol_chunk[0:6, -1].copy()
             global_index += this_chunk
             remaining -= this_chunk
 
-        # Concatenate decimated arrays
-        if t_list:
-            t_dec = np.concatenate(t_list)
-            y_dec = np.hstack(y_list)
-            orders_dec = np.concatenate(orders_list)
-        else:
-            t_dec = np.zeros(1, dtype=npfloat)
-            y_dec = initial_pos_vel_ps.reshape(n_state, 1)
-            orders_dec = np.zeros(1, dtype=np.int16)
+        if write_data:
+            ps_grp.attrs["max_ps"] = max_ps
 
-        end_time_ps = time.time()
-        elapsed_ps = end_time_ps - start_time_ps
-
-        return t_dec, y_dec, orders_dec, elapsed_ps
+        elapsed_ps = time.time() - start_time_ps
+        return max_ps, elapsed_ps
 
     finally:
         if f is not None:
             f.close()
+
+
+def slice_solution(t, sol, window_duration, norm_time, mode="last"):
+
+    if mode == "last":
+        t_end = norm_time
+        t_start = max(t[0], t_end - window_duration)
+    elif mode == "first":
+        t_start = t[0]
+        t_end = min(t[-1], t_start + window_duration)
+    else:
+        raise ValueError(f"Unknown slice mode: {mode}")
+
+    idx = np.where((t >= t_start) & (t <= t_end))[0]
+
+    if sol is None:
+        return idx
+
+    if sol.shape[0] <= sol.shape[1]:
+        arr = sol
+    else:
+        arr = sol.T
+
+    x = arr[0, idx]
+    y = arr[1, idx]
+    z = arr[2, idx]
+
+    return x, y, z
+
+def append_results_h5(h5_path, results, params):
+    """
+    Append non-PS solver results and metadata to an existing HDF5 file.
+    Ensures params_json is written exactly once (for streaming PS files).
+    """
+
+    with h5py.File(h5_path, "a") as f:
+
+        # -------------------------------------------------
+        # Root-level metadata (FINALIZE STREAMED FILE)
+        # -------------------------------------------------
+        if "params_json" not in f.attrs:
+            f.attrs["params_json"] = json.dumps(params)
+
+        # -------------------------------------------------
+        # Meta group
+        # -------------------------------------------------
+        if "meta" not in f:
+            gmeta = f.create_group("meta")
+        else:
+            gmeta = f["meta"]
+
+        # Timing
+        for mk, mv in results["meta"]["timing"].items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+
+        # Other meta
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in results["meta"]:
+                gmeta.attrs[sk] = results["meta"][sk]
+
+        # -------------------------------------------------
+        # RK solvers
+        # -------------------------------------------------
+        for k in ("rk4", "rk45", "rkg"):
+            if results.get(k) is None:
+                continue
+
+            if k in f:
+                del f[k]
+
+            grp = f.create_group(k)
+            for name, val in results[k].items():
+                if isinstance(val, np.ndarray):
+                    grp.create_dataset(
+                        name,
+                        data=val,
+                        compression="gzip",
+                        compression_opts=2,
+                    )
+                else:
+                    grp.attrs[name] = val
+
+
+def compute_energy_ps_chunked(
+    ps_y_h5,
+    E0_ps,
+    dt_ps_store,
+    chunk_cols=200000,
+    stride=1,
+    dtype=np.float64,
+    return_plot_data=True,
+):
+    """
+    Computes relative kinetic energy drift in a memory-efficient, chunked manner.
+    Optionally returns decimated (stride-sampled) plot arrays only.
+    """
+    import numpy as np
+
+    n_store = ps_y_h5.shape[1]
+
+    if return_plot_data:
+        # Estimate length of final array with stride
+        n_points = (n_store + stride - 1) // stride
+        t_plot = np.empty(n_points, dtype=npfloat)
+        drift_plot = np.empty(n_points, dtype=npfloat)
+        k = 0
+
+    j_global = 0
+    for j0 in range(0, n_store, chunk_cols):
+        j1 = min(j0 + chunk_cols, n_store)
+        v = ps_y_h5[3:6, j0:j1].astype(dtype, copy=False)
+
+        E = 0.5 * np.sum(v * v, axis=0)
+        rel = np.abs(E - E0_ps) / E0_ps
+
+        if return_plot_data:
+            for j_local in range(j1 - j0):
+                if j_global % stride == 0:
+                    t_plot[k] = j_global * dt_ps_store
+                    drift_plot[k] = rel[j_local]
+                    k += 1
+                j_global += 1
+        else:
+            # If keeping full rel array
+            raise NotImplementedError("Full array return not yet implemented in memory-saving mode")
+
+    if return_plot_data:
+        return t_plot[:k], drift_plot[:k]
+
