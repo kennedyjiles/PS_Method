@@ -3,7 +3,7 @@
 ## Overview
 This repository contains a suite of Python codes developed to compare the **Parker–Sochacki (PS) power-series integration method** against several **Runge–Kutta-based solvers** (fixed-step fourth order (RK4), adaptive Dormand-Prince (RK45), and the symplectic application of the Gauss-Lagrange Runge-Kutta (RKG)) for charged-particle motion in various magnetic-field configurations, demonstrating the PS method achieves superior energy conservation.
 
-The project was developed as part of graduate research at **George Mason University**, Astronomy and Physics Department. This repository accompanies the research paper  *“The Parker-Sochacki Method vs. Runge-Kutta Methods for Particle Motion in Static Magnetic Fields,”* in preparation (2026) by H. Jiles and R. Weigel, providing simulation codes and analysis scripts used in the study.
+The project was developed as part of graduate research at the Physics and Astronomy Department at **George Mason University**. This repository accompanies the research paper  *“The Parker-Sochacki Method vs. Runge-Kutta Methods for Particle Motion in Static Magnetic Fields,”* in preparation (2026) by H. Jiles and R. Weigel, providing simulation codes and analysis scripts used in the study.
 
 Three benchmark problems are included:
 - **`constB.py`** — Uniform magnetic field: 
