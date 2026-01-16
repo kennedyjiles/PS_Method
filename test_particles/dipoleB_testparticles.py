@@ -28,9 +28,7 @@ else: mpl.rcParams['agg.path.chunksize'] = 1000
 
 
 MAX_PLOT_POINTS= 200000 # cap number of points on each graph to speed things up
-PS_CHUNKING = True   # for this file, we want streaming mode
 PS_chunk_steps = int(1e4)
-PS_decimate = 10
 
 run_storage = "outputs_rawdata"       # where raw trajectory files go when USE_WRITE_DATA = True
 
@@ -95,6 +93,8 @@ def load_params(run):
         READ_DATA = True
         WRITE_DATA = True
         USE_FULL_PLOT = False
+        PS_decimate = 1
+        PS_CHUNKING = False
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -145,6 +145,8 @@ def load_params(run):
         READ_DATA = True 
         WRITE_DATA = True
         USE_FULL_PLOT = False
+        PS_decimate = 1
+        PS_CHUNKING = False
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -196,6 +198,8 @@ def load_params(run):
         READ_DATA = True
         WRITE_DATA = True
         USE_FULL_PLOT = False
+        PS_decimate = 1
+        PS_CHUNKING = False
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -248,6 +252,8 @@ def load_params(run):
         READ_DATA = True
         WRITE_DATA = True
         USE_FULL_PLOT = False
+        PS_decimate = 1
+        PS_CHUNKING = False  
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -294,6 +300,8 @@ def load_params(run):
         READ_DATA = False
         WRITE_DATA = True
         USE_FULL_PLOT = True
+        PS_decimate = 1
+        PS_CHUNKING = True  
 
         pitch_deg = npfloat(30.0)              
         phi_deg = npfloat(90.0)
@@ -343,6 +351,9 @@ def load_params(run):
         READ_DATA = True 
         WRITE_DATA = True
         USE_FULL_PLOT = False
+        PS_decimate = 10
+        PS_CHUNKING = True   
+
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
