@@ -9,3 +9,4 @@ timestep.py
 test.py
 *.txt
 Archive/ 
+outputs_*
