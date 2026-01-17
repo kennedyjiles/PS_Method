@@ -1,0 +1,32 @@
+INFO — Starting chunked dipole run.
+DEBUG — Initial velocity: 0.0, 0.00011481320275385376, 0.0001988623005493817
+DEBUG — Initial position: 5.0, 0.0, 0.0
+DEBUG — Initial gyroradius: 0.014351650344231715
+INFO — Peak memory usage for load/write h5: 17.11 MB
+
+DEBUG — Data access for plottings: 0.04 MB
+
+DEBUG — Norm Time: 1.21e+04 MB
+DEBUG — Physical Time   : 4.05e+00 s
+DEBUG — ps_step: 12.1, norm_time: 12100.0, steps_ps: 1000
+INFO — Peak memory usage for slice analysis: 0.24 MB
+DEBUG — [Window] mode=last, t_start=0.000000e+00, t_end=1.210000e+04
+DEBUG — [PS] x_start=5.000000e+00, x_end=3.801434e+00
+INFO — Peak memory usage for KE analysis: 5.74 MB
+INFO — energy stride: 1
+DEBUG — [PS] E rel drift initial =0.00e+00, E rel drift mid =0.00e+00, E rel drift final =1.26e-16
+DEBUG — [RKG] E rel drift initial =0.00e+00, E rel drift mid =6.58e-08, E rel drift final =1.29e-06
+DEBUG — [RK4] E rel drift initial =0.00e+00, E rel drift mid =3.05e-06, E rel drift final =7.82e-05
+DEBUG — [RK45] E rel drift initial =0.00e+00, E rel drift mid =5.12e-07, E rel drift final =2.45e-06
+INFO — Peak memory usage for moment analysis: 7.21 MB
+DEBUG — mu midpoint: 500
+DEBUG — mu midpoint: 500
+DEBUG — mu midpoint: 500
+DEBUG — mu midpoint: 500
+INFO — moment stride: 1
+DEBUG — [PS] mu rel drift initial =0.00e+00, mu rel drift mid =7.23e-02, mu rel drift final =5.86e-02
+DEBUG — [RKG] mu rel drift initial =0.00e+00, mu rel drift mid =7.23e-02, mu rel drift final =5.86e-02
+DEBUG — [RK4] mu rel drift initial =0.00e+00, mu rel drift mid =7.23e-02, mu rel drift final =5.84e-02
+DEBUG — [RK45] mu rel drift initial =0.00e+00, mu rel drift mid =7.23e-02, mu rel drift final =5.86e-02
+DEBUG — [RK45 Slice] t_start=0.000e+00, t_end=1.209e+04, len=1000
+INFO — Peak memory usage for summary write up: 0.23 MB

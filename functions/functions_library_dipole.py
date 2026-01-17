@@ -978,8 +978,6 @@ def compute_energy_ps_chunked(
     Computes relative kinetic energy drift in a memory-efficient, chunked manner.
     Optionally returns decimated (stride-sampled) plot arrays only.
     """
-    import numpy as np
-
     n_store = ps_y_h5.shape[1]
 
     if return_plot_data:
@@ -1011,3 +1009,35 @@ def compute_energy_ps_chunked(
     if return_plot_data:
         return t_plot[:k], drift_plot[:k]
 
+def build_run_stem(summary, stem):
+    r = summary["run"]
+    ps = summary["ps"]
+
+    parts = [
+        stem,
+        "DipoleB_",
+        r["particle"],
+        f"{r['energy_eV']:.1e}eV",
+        f"pitch{r['pitch_deg']}",
+        f"phi{r['phi_deg']}",
+        f"{r['norm_time_s']:.2e}s",
+        r["dtype"],
+    ]
+
+    if ps["enabled"]:
+        parts.insert(4, f"{ps['step']}step_PS{ps['order']}")
+
+    return "_".join(parts)
+
+def build_figure_filename(
+    summary,
+    output_folder,
+    stem,
+    figure_tag,
+    ext="png"
+):
+    run_stem = build_run_stem(summary, stem)
+
+    return (
+        f"{output_folder}/{run_stem}_{figure_tag}.{ext}"
+    )

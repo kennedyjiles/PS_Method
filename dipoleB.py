@@ -13,7 +13,7 @@ from scipy.integrate import solve_ivp
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from functions.functions_library_universal_chunk import rk4_fixed_step, plt_config, sparse_labels, data_to_fig
 from functions.functions_library_dipole import PS_dipoleB, lorentz_force_dipole, compute_mu_ps, compute_mu_rk, vector_potential_dipole, rkgl4_hamiltonian, hamiltonian_rhs, summarize, slice_solution, append_results_h5, compute_energy_ps_chunked
-from functions.functions_library_dipole import mirror_times_from_PS, bounce_summary, drift_period_from_PS, get_run_params, h5_path_for, save_results_h5, load_results_h5, summarize_error, run_ps_streaming_with_decimation
+from functions.functions_library_dipole import mirror_times_from_PS, bounce_summary, drift_period_from_PS, get_run_params, h5_path_for, save_results_h5, load_results_h5, summarize_error, run_ps_streaming_with_decimation, build_figure_filename
 from logger_util import setup_logger
 logger = setup_logger("dipole_logger", "dipole_chunk.log", level=logging.DEBUG)
 
@@ -350,6 +350,31 @@ if DEBUG:
     tracemalloc.stop()
     logger.info(f"Peak memory usage for load/write h5: {peak / 1024**2:.2f} MB\n")
 
+
+# ==================================
+# ==== Dictionary of run params ====
+# ==================================
+
+run_summary = {
+    "run": {
+        "stem": stem,
+        "particle": particle_type,
+        "energy_eV": float(KE_particle),
+        "pitch_deg": float(pitch_deg),
+        "phi_deg": float(phi_deg),
+        "norm_time_s": float(norm_time),
+        "dtype": npfloat.__name__,
+    },
+}
+
+run_summary["ps"] = {
+    "enabled": USE_PS,
+    "step": ps_step if USE_PS else None,
+    "order": ps_order_label if USE_PS else None,
+    "chunking": PS_CHUNKING if USE_PS else None,
+}
+
+
 # ===============================
 # Build RK45 solution on PS grid 
 # ===============================
@@ -482,12 +507,11 @@ if USE_FULL_PLOT:
     ax.grid(True)
 
     # === Save and Close ===
-    fig.canvas.draw()   
-    if USE_PS:
-        fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{ps_order_label}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_2D.png", dpi=600, bbox_inches="tight")
-    else:
-        fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_{KE_particle:.1e}eV_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_2D.png", dpi=600, bbox_inches="tight")
+    fig.canvas.draw()  
+    fig_path_2D = build_figure_filename( run_summary , output_folder , stem , figure_tag="2D", ext="png")
+    plt.savefig(fig_path_2D, dpi=600, bbox_inches="tight") 
     plt.close(fig)  
+
 
 # =====================================================
 # ============== Full 3D Trajectory Plot ==============
@@ -519,10 +543,8 @@ if USE_FULL_PLOT:
 
     # === Save and Close ===
     fig.canvas.draw()   
-    if USE_PS:
-        fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{ps_order_label}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_3D.png", dpi=600, bbox_inches="tight")
-    else:
-        fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_{KE_particle:.1e}eV_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_3D.png", dpi=600, bbox_inches="tight")
+    fig_path_3D = build_figure_filename( run_summary , output_folder , stem , figure_tag="3D", ext="png")
+    plt.savefig(fig_path_3D, dpi=600, bbox_inches="tight") 
     plt.close(fig) 
 
 # ==========================================
@@ -634,8 +656,8 @@ if USE_FULL_PLOT:
     if USE_PS:
         ax.plot(ps_x_slice, ps_y_slice, label=f"PS{ps_order_label}", alpha=0.8, color='#009E73', linestyle=':')
 
-    ax.set_xlabel(r"x")
-    ax.set_ylabel(r"y")
+    ax.set_xlabel(r"X")
+    ax.set_ylabel(r"Y")
     if USE_PLOT_TITLES: ax.set_title(f"2D Trajectory of Slice {particle_type} Orbits in Dipole B Field")
     # ax.set_xlim(-plotbounds, plotbounds)
     # ax.set_ylim(-plotbounds, plotbounds)
@@ -647,10 +669,8 @@ if USE_FULL_PLOT:
 
     # === Save and Close ===
     fig.canvas.draw()   
-    if USE_PS:
-        fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_chunk_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{ps_order_label}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_2Dslice.png", dpi=600, bbox_inches="tight")
-    else:
-        fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_chunk_{particle_type}_{KE_particle:.1e}eV_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_2Dslice.png", dpi=600, bbox_inches="tight")
+    fig_path_2Dslice = build_figure_filename( run_summary , output_folder , stem , figure_tag="2Dslice", ext="png")
+    plt.savefig(fig_path_2Dslice, dpi=600, bbox_inches="tight") 
     plt.close(fig) 
 
 
@@ -965,10 +985,8 @@ for x, y, label, color in endpoints_sorted:
 
 # === Save and Close ===
 fig.canvas.draw()   
-if USE_PS:
-    fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{ps_order_label}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
-else:
-    fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_{KE_particle:.1e}eV_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_KEerror.png", dpi=600, bbox_inches="tight")
+fig_path_KEerror = build_figure_filename( run_summary , output_folder , stem , figure_tag="KEerror", ext="png")
+plt.savefig(fig_path_KEerror, dpi=600, bbox_inches="tight") 
 plt.close(fig)  
 
 if DEBUG:
@@ -1053,7 +1071,6 @@ if USE_RK45:
     y0 = y_rk45_common[:, 0:1]   
     mu0_rk45 = compute_mu_rk(y0.T, mass)[0]
 
-
     if gyro_window == "last":
         i1_rk45 = steps_ps
         i0_rk45 = max(0, i1_rk45 - window_steps_ps)
@@ -1133,8 +1150,7 @@ elif USE_PS and PS_CHUNKING:
         t_ps_plot = t_ps_store[::moment_stride] * time_factor
         mudrift_ps_plot = mudrift_ps[::moment_stride]
 
-# Plotting
-
+# ===== Plotting ========
 fig, ax = plt.subplots(figsize=(10, 5))
 
 if USE_RK45:
@@ -1153,7 +1169,6 @@ ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
 ax.grid(True, which="major", linestyle="--", linewidth=0.7)
-# ax.set_ylim( 5e-7, 5e0)
 ax.get_xaxis().get_major_formatter().set_useOffset(False)
 
 # # for top slices of mu 
@@ -1205,10 +1220,8 @@ for fy, label, color in labels:
     fig.text(x_fig_label, fy, label, color=color, va="center", ha="left", fontsize=11)
 
 # === Save and Close ===
-if USE_PS:
-    fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{ps_order_label}_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_mu.png", dpi=600, bbox_inches="tight")
-else:
-    fig.savefig( f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_{KE_particle:.1e}eV_pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_{npfloat.__name__}_mu.png", dpi=600, bbox_inches="tight")
+fig_path_mu = build_figure_filename( run_summary , output_folder , stem , figure_tag="mu", ext="png")
+plt.savefig(fig_path_mu, dpi=600, bbox_inches="tight") 
 plt.close(fig)  
 
 
@@ -1288,6 +1301,7 @@ else:
 # === Write Summary Output to File ===
 # ====================================
 if DEBUG: tracemalloc.start()
+"This is determining the last fraction of the run to report some average numbers on"
 
 if gyroperiods < 1e6:
     TAIL_FRAC = 0.01        # last 1%
@@ -1296,7 +1310,7 @@ else:
 
 tail_start = (1.0 - TAIL_FRAC) * npfloat(norm_time)
 
-MAX_TAIL_STEPS = 500_000   # hard safety cap
+MAX_TAIL_STEPS = 500_000   # hard safety cap for big h5s
 tail_masks = {}
 
 def make_tail_mask(n_points, step_size, label=None):
@@ -1317,141 +1331,190 @@ def make_tail_mask(n_points, step_size, label=None):
 
     return mask, j0
 
+def record_error(label, values, ref, store):
+    err = np.abs(values - ref) / ref
+    store[label] = {
+        "mean": float(np.mean(err)),
+        "max":  float(np.max(err)),
+        "min":  float(np.min(err)),
+    }
+
 # ============================================================
 # Build tail masks for last fraction of invariants
 # ============================================================
 
-if USE_PS:
-    step_ps = ps_store_stride * ps_step
-    tail_masks["PS"], j0_ps = make_tail_mask(rel_drift_ps.size, step_ps, "PS")
+# if USE_PS:
+#     step_ps = ps_store_stride * ps_step
+#     tail_masks["PS"], j0_ps = make_tail_mask(rel_drift_ps.size, step_ps, "PS")
 
-if USE_RK45:
-    tail_masks["RK45"], j0_rk45 = make_tail_mask(len(rel_drift_rk45), ps_step, "RK45")
+# if USE_RK45:
+#     tail_masks["RK45"], j0_rk45 = make_tail_mask(len(rel_drift_rk45), ps_step, "RK45")
 
-if USE_RK4:
-    tail_masks["RK4"], j0_rk4 = make_tail_mask(len(rel_drift_rk4), rk4_step, "RK4")
+# if USE_RK4:
+#     tail_masks["RK4"], j0_rk4 = make_tail_mask(len(rel_drift_rk4), rk4_step, "RK4")
 
-if USE_RKG:
-    tail_masks["RKG"], j0_rkg = make_tail_mask(len(rel_drift_rkg), rkg_step, "RKG")
+# if USE_RKG:
+#     tail_masks["RKG"], j0_rkg = make_tail_mask(len(rel_drift_rkg), rkg_step, "RKG")
 
-# ============================================================
-# Write summary file
-# ============================================================
+# # ============================================================
+# # Write summary file
+# # ============================================================
 
-output_filename = (
-    f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_"
-    f"{KE_particle:.1e}eV_{ps_step}step_PS{ps_order_label}_"
-    f"pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_"
-    f"{npfloat.__name__}_simulation_summary.txt"
-    if USE_PS else
-    f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_"
-    f"{KE_particle:.1e}eV_pitch{pitch_deg}_phi{phi_deg}_"
-    f"{norm_time:.2e}s_{npfloat.__name__}_simulation_summary.txt"
-)
+# output_filename = (
+#     f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_"
+#     f"{KE_particle:.1e}eV_{ps_step}step_PS{ps_order_label}_"
+#     f"pitch{pitch_deg}_phi{phi_deg}_{norm_time:.2e}s_"
+#     f"{npfloat.__name__}_simulation_summary.txt"
+#     if USE_PS else
+#     f"{output_folder}/{stem}_DipoleB_chunk_{particle_type}_"
+#     f"{KE_particle:.1e}eV_pitch{pitch_deg}_phi{phi_deg}_"
+#     f"{norm_time:.2e}s_{npfloat.__name__}_simulation_summary.txt"
+# )
 
-with open(output_filename, "w") as f:
+# with open(output_filename, "w") as f:
 
-    if WRITE_DATA or READ_DATA:
-        f.write(f"Run Data: {stem}.hd5\n\n")
+#     if WRITE_DATA or READ_DATA:
+#         f.write(f"Run Data: {stem}.hd5\n\n")
 
-    f.write("=== Simulation Summary ===\n")
-    f.write(f"particle = {particle_type}\n")
-    f.write(f"energy   = {KE_particle} eV\n")
-    f.write(f"pitch    = {pitch_deg} deg\n")
-    f.write(f"phi      = {phi_deg} deg\n")
-    f.write(f"ps step  = {ps_step}\n")
-    f.write(f"norm_time = {norm_time}\n\n")
+#     f.write("=== Simulation Summary ===\n")
+#     f.write(f"particle = {particle_type}\n")
+#     f.write(f"energy   = {KE_particle} eV\n")
+#     f.write(f"pitch    = {pitch_deg} deg\n")
+#     f.write(f"phi      = {phi_deg} deg\n")
+#     f.write(f"ps step  = {ps_step}\n")
+#     f.write(f"norm_time = {norm_time}\n\n")
 
-    f.write("=== Timing Summary ===\n")
-    for k in ("rk45", "rk4", "rkg", "ps"):
-        if k in timing:
-            f.write(f"  Run Time {k.upper()} = {timing[k]:.2f} s\n")
+#     f.write("=== Timing Summary ===\n")
+#     for k in ("rk45", "rk4", "rkg", "ps"):
+#         if k in timing:
+#             f.write(f"  Run Time {k.upper()} = {timing[k]:.2f} s\n")
 
-    f.write("\n=== |delta E|/E0 (tail average) ===\n")
-    if USE_RK45:
-        summarize_error("RK45", rel_drift_rk45[j0_rk45:], f)
-    if USE_RK4:
-        summarize_error("RK4", rel_drift_rk4[j0_rk4:], f)
-    if USE_RKG:
-        summarize_error("RKG", rel_drift_rkg[j0_rkg:], f)
-    if USE_PS:
-        summarize_error("PS", rel_drift_ps[j0_ps:], f)
+#     f.write("\n=== |delta E|/E0 (tail average) ===\n")
+#     if USE_RK45:
+#         summarize_error("RK45", rel_drift_rk45[j0_rk45:], f)
+#     if USE_RK4:
+#         summarize_error("RK4", rel_drift_rk4[j0_rk4:], f)
+#     if USE_RKG:
+#         summarize_error("RKG", rel_drift_rkg[j0_rkg:], f)
+#     if USE_PS:
+#         summarize_error("PS", rel_drift_ps[j0_ps:], f)
 
-    f.write("\n=== |delta mu|/mu0 (tail average) ===\n")
+#     f.write("\n=== |delta mu|/mu0 (tail average) ===\n")
 
-    # === mu drift for RK45 ===
-    if USE_RK45:
-        y_tail = y_rk45_common[:, j0_rk45:] 
-        mu_tail = compute_mu_rk(y_tail.T, mass)
-        summarize_error("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
-        del y_tail, mu_tail
-        gc.collect()
+#     # === mu drift for RK45 ===
+#     if USE_RK45:
+#         y_tail = y_rk45_common[:, j0_rk45:] 
+#         mu_tail = compute_mu_rk(y_tail.T, mass)
+#         summarize_error("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
+#         del y_tail, mu_tail
+#         gc.collect()
 
-    # === mu drift for RK4 ===
-    if USE_RK4:
-        y_tail = solution_rk4[:, j0_rk4:]  
-        mu_tail = compute_mu_rk(y_tail.T, mass)
-        summarize_error("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
-        del y_tail, mu_tail
-        gc.collect()
+#     # === mu drift for RK4 ===
+#     if USE_RK4:
+#         y_tail = solution_rk4[:, j0_rk4:]  
+#         mu_tail = compute_mu_rk(y_tail.T, mass)
+#         summarize_error("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
+#         del y_tail, mu_tail
+#         gc.collect()
 
-    # === mu drift for RKG ===
-    if USE_RKG:
-        r_tail = solution_rkg[j0_rkg:, 0:3]
-        p_tail = solution_rkg[j0_rkg:, 3:6]
+#     # === mu drift for RKG ===
+#     if USE_RKG:
+#         r_tail = solution_rkg[j0_rkg:, 0:3]
+#         p_tail = solution_rkg[j0_rkg:, 3:6]
 
-        A_tail = np.empty_like(r_tail)
-        for i in range(len(r_tail)):
-            A_tail[i] = vector_potential_dipole(r_tail[i])
+#         A_tail = np.empty_like(r_tail)
+#         for i in range(len(r_tail)):
+#             A_tail[i] = vector_potential_dipole(r_tail[i])
 
-        v_tail = p_tail - A_tail
-        state_tail = np.hstack((r_tail, v_tail))
+#         v_tail = p_tail - A_tail
+#         state_tail = np.hstack((r_tail, v_tail))
 
-        mu_tail = compute_mu_rk(state_tail, mass)
-        summarize_error("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
-        del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
-        gc.collect()
+#         mu_tail = compute_mu_rk(state_tail, mass)
+#         summarize_error("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
+#         del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
+#         gc.collect()
 
-    # === mu drift for PS ===
-    if USE_PS:
+#     # === mu drift for PS ===
+#     if USE_PS:
 
-        # ---------- RAM ----------
-        if not PS_CHUNKING:
-            y_tail = solution_ps[:, j0_ps:]
-            mu_tail = compute_mu_ps(y_tail, mass)
-            summarize_error("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
+#         # ---------- RAM ----------
+#         if not PS_CHUNKING:
+#             y_tail = solution_ps[:, j0_ps:]
+#             mu_tail = compute_mu_ps(y_tail, mass)
+#             summarize_error("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
 
-            del y_tail, mu_tail
-            gc.collect()
+#             del y_tail, mu_tail
+#             gc.collect()
 
-        # ---------- Chunking ----------
-        else:
-            step_ps = ps_store_stride * ps_step
+#         # ---------- Chunking ----------
+#         else:
+#             step_ps = ps_store_stride * ps_step
 
-            with h5py.File(cache_path, "r") as ps_h5:
-                ps_y = ps_h5["ps"]["y"]
-                n_store = ps_y.shape[1]
+#             with h5py.File(cache_path, "r") as ps_h5:
+#                 ps_y = ps_h5["ps"]["y"]
+#                 n_store = ps_y.shape[1]
 
-                j0 = int(tail_start / step_ps)
-                j0 = max(0, min(j0, n_store - 1))
+#                 j0 = int(tail_start / step_ps)
+#                 j0 = max(0, min(j0, n_store - 1))
 
-                if n_store - j0 > MAX_TAIL_STEPS:
-                    j0 = n_store - MAX_TAIL_STEPS
+#                 if n_store - j0 > MAX_TAIL_STEPS:
+#                     j0 = n_store - MAX_TAIL_STEPS
 
-                y_tail = ps_y[:, j0:]
+#                 y_tail = ps_y[:, j0:]
 
-            mu_tail = compute_mu_ps(y_tail, mass)
-            summarize_error("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
+#             mu_tail = compute_mu_ps(y_tail, mass)
+#             summarize_error("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
 
-            del y_tail, mu_tail
-            gc.collect()
+#             del y_tail, mu_tail
+#             gc.collect()
 
-if DEBUG:
-    if USE_RK4:logger.debug(f"  rk4 step size = {rk4_step}")
-    if USE_RKG: logger.debug(f"  rkg step size = {rkg_step}")
-    if USE_RK4: logger.debug(f"  rk4 steps     = {steps_rk4}")
-    if USE_RKG: logger.debug(f"  rkg steps     = {steps_rkg}")
-    if USE_PS: logger.debug(f"  ps steps      = {steps_ps}")
+# if DEBUG:
+#     if USE_RK4:logger.debug(f"  rk4 step size = {rk4_step}")
+#     if USE_RKG: logger.debug(f"  rkg step size = {rkg_step}")
+#     if USE_RK4: logger.debug(f"  rk4 steps     = {steps_rk4}")
+#     if USE_RKG: logger.debug(f"  rkg steps     = {steps_rkg}")
+#     if USE_PS: logger.debug(f"  ps steps      = {steps_ps}")
+
+# # ====== Dictionary Output =========
+# run_summary = {
+#     "run": {
+#         "stem": stem,
+#         "particle": particle_type,
+#         "energy_eV": float(KE_particle),
+#         "pitch_deg": float(pitch_deg),
+#         "phi_deg": float(phi_deg),
+#         "norm_time_s": float(norm_time),
+#         "dtype": npfloat.__name__,
+#     },
+
+#     "ps": {
+#         "enabled": USE_PS,
+#         "step": ps_step if USE_PS else None,
+#         "order": ps_order_label if USE_PS else None,
+#         "chunking": PS_CHUNKING if USE_PS else None,
+#     },
+
+#     "timing": timing.copy(),  # rk4, rk45, rkg, ps runtimes
+
+#     "errors": {
+#         "energy": {},
+#         "mu": {},
+#     },
+# }
+
+# if USE_RK45:
+#     record_error("RK45", rel_drift_rk45[j0_rk45:], 0.0, run_summary["errors"]["energy"])
+
+# if USE_RK4:
+#     record_error("RK4", rel_drift_rk4[j0_rk4:], 0.0, run_summary["errors"]["energy"])
+
+# if USE_RKG:
+#     record_error("RKG", rel_drift_rkg[j0_rkg:], 0.0, run_summary["errors"]["energy"])
+
+# if USE_PS:
+#     record_error("PS", rel_drift_ps[j0_ps:], 0.0, run_summary["errors"]["energy"])
+
+
 
 # === Shared metadata ===
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1523,7 +1586,14 @@ if os.path.exists(csv_path):
 else:
     df.to_csv(csv_path, index=False)
 
+
 print(f"\nRun Complete → {output_folder}/{stem}")
+
+
+
+
+
+
 
 if DEBUG:
     current, peak = tracemalloc.get_traced_memory()
