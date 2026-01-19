@@ -510,7 +510,7 @@ def load_params(run):
         USE_RK4 = False  
         USE_RKG = False
         USE_PS = True
-        PS_decimate = 1   # only works with chunking
+        PS_decimate = 100   # only works with chunking
         PS_CHUNKING = True
 
         pitch_deg = npfloat(30.0)              
@@ -529,8 +529,11 @@ def load_params(run):
         rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
         ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
         rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))                         
-        gyroperiods = 1e4
-        norm_time = npfloat(gyroperiods) * T_gyro
+        # gyroperiods = 1e4
+        # norm_time = npfloat(gyroperiods) * T_gyro
+        norm_time= 314159.2653589793
+        gyroperiods= npfloat(norm_time) / T_gyro
+
 
         # -------- plotting parameters -------
         """

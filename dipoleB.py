@@ -3,8 +3,8 @@ logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG)
 
 
 # === Misc Odds and Ends ===  
-legacy_h5_path = None  # hard disable for most runs, can be overwritten with 'run' load
-manual_h5_path = None  # hard disable for most runs, can be overwritten with 'run' load
+legacy_h5_path = None  # hard disable for most runs, can be overwritten with 'legacy' load
+manual_h5_path = None  # hard disable for most runs, can be overwritten with 'manual' load
 
 DEBUG = True
 if DEBUG: tracemalloc.start()
@@ -270,7 +270,6 @@ load relevant parameters. If it does not find a file, it will start running the 
 Beware that these files can be GB size for dipole.
 """
 if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
-    print(FLAG)
     params = get_run_params(USE_RK45, USE_RK4, USE_RKG, USE_PS, PS_decimate, PS_CHUNKING,   # parameters it is scanning
                     mass_si, q_e, B_0, gamma, user_min_phase,
                     x_initial, y_initial, z_initial,
