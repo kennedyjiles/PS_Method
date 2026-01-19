@@ -20,7 +20,7 @@ PS_order = 40                       # Max Power Series Order, system will trunca
 tol = 1.0 * np.finfo(npfloat).eps   # setting tolerance to machine epsilon to drop terms later, will be multiplied by tau_0
 rtol_rk45 = 1e-8                    # RK45 relative tolerance
 atol_rk45 = 1e-10                   # RK45 adapative tolerance
-user_min_phase = npfloat(1)        # Minimum radians to extrapolate drift from,   .0000001 needed for L=1, 10 eV electron
+user_min_phase = npfloat(.1)        # Minimum radians to extrapolate drift from,   .0000001 needed for L=1, 10 eV electron
 mpl.rcParams['agg.path.chunksize'] = 100   # may have to adjust if matplotlib barfs on large datasets
 
 if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
@@ -96,6 +96,7 @@ def load_params(run):
         PS_decimate = 1
         PS_CHUNKING = False
 
+
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
         USE_EXTERNAL_H5_rk45 = False
@@ -148,12 +149,13 @@ def load_params(run):
         PS_decimate = 1
         PS_CHUNKING = False
 
+
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
         USE_EXTERNAL_H5_rk45 = False
         USE_EXTERNAL_H5_rkg = False
 
-        external_h5_ps = "outputs_rawdata/run_669e61bd5c4a6f40.h5" # big PS run
+        external_h5_ps = "outputs_rawdata/run_669e61bd5c4a6f40.h5" # big PS run FIX LOADING
         PS_order_ext = 16    # old h5 files did not have max_ps captured, new do. Us inspect_hdf5.py to check 
         external_h5_rk4 = "outputs_rawdata/" 
         external_h5_rk45 = "outputs_rawdata/" 
@@ -199,7 +201,8 @@ def load_params(run):
         WRITE_DATA = True
         USE_FULL_PLOT = False
         PS_decimate = 1
-        PS_CHUNKING = False
+        PS_CHUNKING = True
+
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -255,6 +258,7 @@ def load_params(run):
         PS_decimate = 1
         PS_CHUNKING = False  
 
+
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
         USE_EXTERNAL_H5_rk45 = False
@@ -293,7 +297,7 @@ def load_params(run):
         output_folder = "outputs_tinker"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True  
-        USE_RK4 = True  # removed from paper plots due to failure
+        USE_RK4 = True # removed from paper plots due to failure
         USE_RKG = True
         USE_PS = True
         USE_PLOT_TITLES = False
@@ -301,18 +305,7 @@ def load_params(run):
         WRITE_DATA = True
         USE_FULL_PLOT = True
         PS_decimate = 1
-        PS_CHUNKING = True
-
-        USE_EXTERNAL_H5_ps = False
-        USE_EXTERNAL_H5_rk4 = False
-        USE_EXTERNAL_H5_rk45 = False
-        USE_EXTERNAL_H5_rkg = False
-
-        external_h5_ps = "outputs_rawdata/run_669e61bd5c4a6f40.h5" # big PS run
-        PS_order_ext = 16    # old h5 files did not have max_ps captured, new do. Us inspect_hdf5.py to check 
-        external_h5_rk4 = "outputs_rawdata/" 
-        external_h5_rk45 = "outputs_rawdata/" 
-        external_h5_rkg = "outputs_rawdata/run_2710a82210ebb716.h5"
+        PS_CHUNKING = False
 
         pitch_deg = npfloat(30.0)              
         phi_deg = npfloat(90.0)
@@ -321,24 +314,82 @@ def load_params(run):
         z_initial = npfloat(0)
         KE_particle = npfloat(100e3)              
         B_0 = npfloat(3.12e-5)  
-        mass_si = m_p   
+        mass_si = m_e   
         T_gyro = 2.0 * np.pi * (x_initial**3)  
 
-        window_time = npfloat(6209.0) # only interested in ~one drift period so same as slice
+        N_STEPS_PER_GYRO_rk4 = 65
+        N_STEPS_PER_GYRO_ps = 65
+        N_STEPS_PER_GYRO_rkg = 65
+        rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
+        ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
+        rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))  
+        gyroperiods = 4.1e2
+        norm_time = npfloat(gyroperiods) * T_gyro
+
+
+                # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
+
+        window_time = npfloat(6209.0)
         slice_mode = "last"   
         N_GYRO = 150
         gyro_window = "last"   
 
-        # used for paper only, see "tinker" for better approach
-        N_STEPS_PER_GYRO_rk4= 65
-        N_STEPS_PER_GYRO_ps=65
-        N_STEPS_PER_GYRO_rkg=65
-        rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
-        ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
-        rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))  
-        totatl_integration_steps = 1e3
-        norm_time = npfloat(totatl_integration_steps) * ps_step
-        gyroperiods= npfloat(totatl_integration_steps) * ps_step / T_gyro
+        USE_EXTERNAL_H5_ps = False
+        USE_EXTERNAL_H5_rk4 = False
+        USE_EXTERNAL_H5_rk45 = False
+        USE_EXTERNAL_H5_rkg = False
+
+        USE_EXTERNAL_H5_ps = False
+        USE_EXTERNAL_H5_rk4 = False
+        USE_EXTERNAL_H5_rk45 = False
+        USE_EXTERNAL_H5_rkg = False
+
+        external_h5_ps = "outputs_rawdata/run_70fbbb1af469ba4c.h5" # big PS run
+        # fix external loaded h5 files with decimation
+        external_h5_rk4 = "outputs_rawdata/" 
+        external_h5_rk45 = "outputs_rawdata/" 
+        external_h5_rkg = "outputs_rawdata/run_2710a82210ebb716.h5"
+
+    elif run == "legacy": # using this one to play with parameters 
+        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
+        else: print("Running full PAPER simulation...this can take a few minutes\n")
+        output_folder = "outputs_tinker"
+        os.makedirs(output_folder, exist_ok=True)
+        USE_PLOT_TITLES = False
+        READ_DATA = False 
+        WRITE_DATA = False
+        PS_CHUNKING = True
+        USE_FULL_PLOT = True
+
+        legacy_h5_path = "outputs_rawdata/run_70fbbb1af469ba4c.h5"
+
+
+        # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
+        
+        window_time = npfloat(6209.0)
+        slice_mode = "last"   
+        N_GYRO = 150
+        gyro_window = "last"   
+
+        USE_EXTERNAL_H5_ps = False
+        USE_EXTERNAL_H5_rk4 = False
+        USE_EXTERNAL_H5_rk45 = False
+        USE_EXTERNAL_H5_rkg = False
+
+        external_h5_ps = "outputs_rawdata/run_669e61bd5c4a6f40.h5" # big PS run
+        external_h5_rk4 = "outputs_rawdata/" 
+        external_h5_rk45 = "outputs_rawdata/" 
+        external_h5_rkg = "outputs_rawdata/run_2710a82210ebb716.h5"  
 
     elif run == "monster_ps": #100 keV proton, 30deg pitch, 5RE, B0 at Earth surface
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
@@ -353,9 +404,39 @@ def load_params(run):
         READ_DATA = True 
         WRITE_DATA = True
         USE_FULL_PLOT = False
-        PS_decimate = 10
+        PS_decimate = 1
         PS_CHUNKING = True   
 
+        pitch_deg = npfloat(30.0)              
+        phi_deg = npfloat(90.0)
+        x_initial = npfloat(5)                 
+        y_initial = npfloat(0)
+        z_initial = npfloat(0)
+        KE_particle = npfloat(100e3)              
+        B_0 = npfloat(3.12e-5)  
+        mass_si = m_p   
+        T_gyro = 2.0 * np.pi * (x_initial**3)  
+
+        N_STEPS_PER_GYRO_rk4= 65
+        N_STEPS_PER_GYRO_ps=65
+        N_STEPS_PER_GYRO_rkg=65
+        rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
+        ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
+        rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))                         
+        gyroperiods = 1e7
+        norm_time = npfloat(gyroperiods) * T_gyro
+
+        # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
+
+        window_time = npfloat(6209.0)
+        slice_mode = "last"   
+        N_GYRO = 150
+        gyro_window = "last"   
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -368,29 +449,6 @@ def load_params(run):
         external_h5_rk45 = "outputs_rawdata/" 
         external_h5_rkg = "outputs_rawdata/" 
 
-        pitch_deg = npfloat(30.0)              
-        phi_deg = npfloat(90.0)
-        x_initial = npfloat(5)                 
-        y_initial = npfloat(0)
-        z_initial = npfloat(0)
-        KE_particle = npfloat(100e3)              
-        B_0 = npfloat(3.12e-5)  
-        mass_si = m_p   
-        T_gyro = 2.0 * np.pi * (x_initial**3)  
-
-        window_time = npfloat(6209.0) # only interested in one drift period so same as slice
-        slice_mode = "last"   
-        N_GYRO = 150
-        gyro_window = "last"   
-
-        N_STEPS_PER_GYRO_rk4= 65
-        N_STEPS_PER_GYRO_ps=65
-        N_STEPS_PER_GYRO_rkg=65
-        rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
-        ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
-        rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))                         
-        gyroperiods = 1e5
-        norm_time = npfloat(gyroperiods) * T_gyro
     else:
         raise ValueError("run must be 'demo', 'paper1', 'paper2', or 'paper3'")
 

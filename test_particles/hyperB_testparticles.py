@@ -2,7 +2,7 @@ import numpy as np
 import os
 import matplotlib as mpl
 
-USE_FLOAT128 = True
+USE_FLOAT128 = False
 
 if USE_FLOAT128: npfloat = np.float128 
 else: npfloat = np.float64
@@ -95,8 +95,8 @@ def load_params(run):
         else: print("Running full PAPER simulation...this will take a few minutes\n")
         output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = False       
-        USE_RK4 = False        
+        USE_RK45 = True       
+        USE_RK4 = True        
         READ_DATA = True      
         WRITE_DATA = True     
         USE_PLOT_TITLES = False
@@ -107,7 +107,7 @@ def load_params(run):
         external_h5 = "outputs_rawdata/run_8d05c562f1137db2.h5" 
         PS_order_ext = "25"
         external_h5b = "outputs_rawdata/run_2e64db24ec88cb7e.h5" 
-        PS_order_ext = "10"
+        PS_order_extb = "10"
 
 
         pitch_deg = npfloat(75.0)
