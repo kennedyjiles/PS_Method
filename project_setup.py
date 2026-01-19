@@ -59,6 +59,7 @@ from functions.functions_library_dipole import (
     build_figure_filename,
     process_bounce_and_drift_chunk, 
     init_bounce_stream_state, 
+    check_time_grids,
     finalize_drift_stream
 )
 

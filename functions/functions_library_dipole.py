@@ -1333,3 +1333,31 @@ def build_figure_filename(
     return (
         f"{output_folder}/{run_stem}_{figure_tag}.{ext}"
     )
+
+# ===================================
+# ======= Debug/Sanity Check =======
+# ===================================
+
+def check_time_grids(norm_time, ps_step=None, steps_ps=None,
+                     rk4_step=None, steps_rk4=None,
+                     rkg_step=None, steps_rkg=None,
+                     rk45_t=None):
+
+    lines = []
+
+    def _report(label, step, steps):
+        final_t = step * steps
+        lines.append(
+            f"{label}: step={step:.3e}, steps={steps}, final_time={final_t:.3e}"
+        )
+
+    if ps_step is not None and steps_ps is not None:
+        _report("PS", ps_step, steps_ps)
+    if rk4_step is not None and steps_rk4 is not None:
+        _report("RK4", rk4_step, steps_rk4)
+    if rkg_step is not None and steps_rkg is not None:
+        _report("RKG", rkg_step, steps_rkg)
+    if rk45_t is not None:
+        lines.append(f"RK45: final time = {rk45_t[-1]:.3e}")
+
+    return "\n".join(lines)

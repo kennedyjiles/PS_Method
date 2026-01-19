@@ -1,35 +1,42 @@
 from project_setup import * 
-logger = setup_logger("dipole_logger", "dipole_chunk.log", level=logging.DEBUG)
+logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG)
 
-legacy_h5_path = None  # hard disable for most runs,
+
+# === Misc Odds and Ends ===  
+legacy_h5_path = None  # hard disable for most runs, can be overwritten with 'run' load
+manual_h5_path = None  # hard disable for most runs, can be overwritten with 'run' load
+
 DEBUG = True
 if DEBUG: tracemalloc.start()
 
-# Run load, Allow command-line override
-run = "demo"   # key options: "demo", "paper1", "paper2", "paper3", unless a new input is made. Demo mode is a quick test run. Paper modes can take upwards of half an hour. 
+"""
+key options: "demo", "paper1", "paper2", "paper3", unless a new input is made. Demo mode is a quick test run.
+Paper modes can take upwards of half an hour. See test particle script for details. Code will default to demo
+mode if nothing is selected.
+"""
+
+run = "demo"   
 if len(sys.argv) > 1:
     run = sys.argv[1]
     print(f"Run mode set from command line: {run}\n")
 else:
     print(f"Using default run mode: {run}\n")
 
-globals().update(load_params(run)) # fix later and turn into dictionary 
+globals().update(load_params(run))         # FIX later and turn into dictionary 
 
-
-# === Misc Odds and Ends ===  
-plt_config(scale=1)                   # config file for setting plot sizes and fonts (from Dr. W)
-os.makedirs(run_storage, exist_ok=True)
-os.makedirs(output_folder, exist_ok=True)
-plt.ioff()              # turn off interactive mode for plots
+plt_config(scale=1)                        # config file for setting plot sizes and fonts (from Dr. W)
+os.makedirs(run_storage, exist_ok=True)    # ensures file for the storagae for raw data exists
+os.makedirs(output_folder, exist_ok=True)  # ensures file for the storagae for images and text file exists
+plt.ioff()                                 # turn off interactive mode for plots
 if USE_FLOAT128: USE_RKG = False
 
-# ===============================================
-# ============= Legacy File Load ================
-# ===============================================
+# ======================================================
+# ============= Legacy/Manual File Load ================
+# ======================================================
 """
 this allows legacy files to be loaded directly through the 'legacy' run in the test particle function, 
-early runs didn't have all the parameters we are not tracking so the scanning doesn't work. The 
-functions take the old h5 files we did have and reconstructions a dictionary in the format we are using now.
+early runs didn't have all the parameters we are now tracking so the scanning doesn't work properly. The 
+functions take the old h5 files we did have and reconstructs a dictionary in the format we are using now.
 """
 USE_LEGACY_FILE = legacy_h5_path is not None and os.path.exists(legacy_h5_path)
 if USE_LEGACY_FILE:
@@ -86,6 +93,112 @@ if USE_LEGACY_FILE:
         if not USE_PS: gyroperiods= npfloat(steps_rkg) / T_gyro
         N_STEPS_PER_GYRO_rkg = summary["rkg"]["numberstepspergyro"]
 
+USE_MANUAL_FILE = manual_h5_path is not None and os.path.exists(manual_h5_path)
+if USE_MANUAL_FILE:   
+    cache_path = manual_h5_path
+    print(f"You have manually selected a file: {cache_path}\n") 
+    if os.path.exists(cache_path):
+        print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
+        with h5py.File(cache_path, "r") as cached:
+            # creating summary dictionary, legacy files should create a similar dictionary now
+            if "summary_json" not in cached.attrs:
+                raise RuntimeError(
+                    "Cached file missing summary_json. "
+                    "This file was written by an older version."
+                )
+
+            summary = json.loads(cached.attrs["summary_json"])
+
+            # ---- meta ----
+            meta = summary["meta"]
+            timing = meta["timing"]
+
+            stem = meta["stem"]
+            mass_si = summary["meta"]["mass_si"]
+            particle_type = meta["particle"]
+            KE_particle = meta["energy_eV"]
+            pitch_deg = meta["pitch_deg"]
+            phi_deg = meta["phi_deg"]
+            x_initial = meta["x0"]
+            y_initial = meta["y0"]
+            z_initial = meta["z0"]
+            B_0 = meta["B0_T"]
+            gyroperiods = meta["gyroperiods"]
+            norm_time = meta["norm_time"]
+            npfloat = np.dtype(meta["dtype"]).type  # optional
+
+            T_gyro = 2.0 * np.pi * (x_initial**3) 
+
+            # ---- PS config ----
+            ps_cfg = summary["ps"]
+            USE_PS = ps_cfg["enabled"]
+            PS_CHUNKING = ps_cfg["streaming"]
+            ps_step = ps_cfg["dt"]
+            steps_ps = ps_cfg["steps"]
+            PS_decimate = ps_cfg["decimate"]
+            PS_chunk_steps = ps_cfg["chunksize"]
+            N_STEPS_PER_GYRO_ps = ps_cfg["numberstepspergyro"]
+            max_ps_value = ps_cfg["max_ps"]
+            E0_ps = ps_cfg["E0"]
+            mu0_ps = ps_cfg["mu0"]
+
+            # ---- RK4 config ----
+            rk4_cfg = summary["rk4"]
+            USE_RK4 = rk4_cfg["enabled"]
+            rk4_step = rk4_cfg["dt"]
+            steps_rk4 = rk4_cfg["steps"]
+            N_STEPS_PER_GYRO_rk4 = rk4_cfg["numberstepspergyro"]
+
+
+            # ---- RK45 config ----
+            rk45_cfg = summary["rk45"]
+            USE_RK45 = rk45_cfg["enabled"]
+            rtol_rk45 = rk45_cfg["rtol"]
+            atol_rk45 = rk45_cfg["atol"]
+
+            # ---- RKG config ----
+            rkg_cfg = summary["rkg"]
+            USE_RKG = rkg_cfg["enabled"]
+            rkg_step = rkg_cfg["dt"]
+            steps_rkg = rkg_cfg["steps"]
+            N_STEPS_PER_GYRO_rkg = rkg_cfg["numberstepspergyro"]
+
+
+            # ---- Load solver data ------
+            """
+            Earlier editions of the code loaded everything into memory, for extended runs this has become untenable. 
+            Chunking allows files to be written and read in chunks which takes far less memory. However, the option 
+            to still run the original way is left for now, in case we find need for it. Note, right now ONLY PS method 
+            does the chunking method. I have not tried to apply it to RK method until we find specific needs.
+            """
+
+            # === PS ===
+            if USE_PS and "ps" in cached:
+                ps_group = cached["ps"]
+
+                if PS_CHUNKING:
+                    solution_ps = None
+                    orders_used = None
+                else:  # this is memory intensive for long PS runs, I recommend working in PS_CHUNKING from the start
+                    solution_ps = ps_group["y"][()]
+                    orders_used = ps_group["orders"][()] if "orders" in ps_group else None
+
+            # === RK4 ===
+            if USE_RK4 and "rk4" in cached:
+                solution_rk4 = cached["rk4"]["y"][()]
+
+            # === RK45 ===
+            if USE_RK45 and "rk45" in cached:
+                class _Obj: pass
+                solution_rk45 = _Obj()
+                solution_rk45.t = cached["rk45"]["t"][()]
+                solution_rk45.y = cached["rk45"]["y"][()]
+                solution_rk45.sol = None
+
+            # === RKG ===
+            if USE_RKG and "rkg" in cached:
+                solution_rkg = cached["rkg"]["y"][()]
+
 # for file/plot naming
 if mass_si == m_e: particle_type = "Electron"
 elif mass_si == m_p: particle_type = "Proton"
@@ -103,7 +216,7 @@ tau_time = gamma * mass_si / (abs(q_e) * abs(B_0))  # this is tau0 from paper
 v_tau = v_si * tau_time / RE                        # dimensionless velocity
 
 physical_time = norm_time * abs(tau_time)           # actual physical time, t; normalized time =t/tau_time
-window_duration = window_time/tau_time              # converting to dimensionless time
+window_duration = window_time/tau_time              # converting window_time to dimensionless time
 tol = npfloat(tol) * tau_time                       # convert tolerance to normalized units    
 
 # === Velocity Config based on INput Angles ===
@@ -134,7 +247,7 @@ if DEBUG:
 # --- Initial invariants for E0 and mu0 for h5 file ---
 """
 To streamline memory for large files, rather than loading everything, we are often slicing out what we need
-directly from the h5 file, this establishes the E0 and mu0 values for those calculations
+directly from the h5 file, this just establishes the E0 and mu0 values for those calculations
 """
 vx0, vy0, vz0 = initial_pos_vel[3:6]
 E0_ps = npfloat(0.5) * (vx0*vx0 + vy0*vy0 + vz0*vz0)
@@ -148,13 +261,16 @@ y0_ps[15, 0] = -3 * y0 * z0 * r5inv
 y0_ps[16, 0] = -(3*z0*z0 - r2) * r5inv
 mu0_ps = compute_mu_ps(y0_ps, mass)[0]
 
+
 # === Build parameter tracer & check cache ===
 """
-this is scanning the files already stored to see if we already have the data, beware that these files can 
-be GB size for dipole. Similarly it saves a filebased on these specific parameters so if you toggle one 
-right now, even save chunking or decimate it will run as a new file with a new name
+This first part is scanning the files already stored in 'run_storage' based on your input parameters (not specifically
+lodaded legacy files) in the test particle script to see if we already have the data. If it finds the data, it will 
+load relevant parameters. If it does not find a file, it will start running the solvers to get the needed data. 
+Beware that these files can be GB size for dipole.
 """
-if not USE_LEGACY_FILE:
+if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
+    print(FLAG)
     params = get_run_params(USE_RK45, USE_RK4, USE_RKG, USE_PS, PS_decimate, PS_CHUNKING,   # parameters it is scanning
                     mass_si, q_e, B_0, gamma, user_min_phase,
                     x_initial, y_initial, z_initial,
@@ -162,7 +278,6 @@ if not USE_LEGACY_FILE:
                     norm_time, ps_step, rk4_step, rkg_step,
                     PS_order, tol, qoverm, rtol_rk45, atol_rk45)
     cache_path = h5_path_for(params, run_storage)
-
     if os.path.exists(cache_path) and READ_DATA:
         print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
 
@@ -370,6 +485,7 @@ if not USE_LEGACY_FILE:
                 "z0": npfloat(z_initial),
                 "B0_T": npfloat(B_0),
                 "gyroperiods": npfloat(gyroperiods),
+                "tau0": npfloat(tau_time),
                 "dtype": npfloat.__name__,  
             }
         }
@@ -461,6 +577,7 @@ if not USE_LEGACY_FILE:
                     "percent_c": float(v_si/spdlight),
                     "qoverm": float(qoverm),
                     "dtype": npfloat.__name__,
+                    "tau0": tau_time,
                     "timing": results["meta"]["timing"],
                 },
                 "ps": {
@@ -505,11 +622,21 @@ if not USE_LEGACY_FILE:
                 save_results_h5(cache_path, results, summary)
                 print(f"Saved results → {os.path.basename(cache_path)}")
 
-
 if DEBUG: 
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     logger.info(f"Peak memory usage for load/write h5: {peak / 1024**2:.2f} MB\n")
+    logger.debug(check_time_grids(
+    norm_time=norm_time,
+    ps_step=ps_step if USE_PS else None,
+    steps_ps=steps_ps if USE_PS else None,
+    rk4_step=rk4_step if USE_RK4 else None,
+    steps_rk4=steps_rk4 if USE_RK4 else None,
+    rkg_step=rkg_step if USE_RKG else None,
+    steps_rkg=steps_rkg if USE_RKG else None,
+    rk45_t=solution_rk45.t if USE_RK45 else None,
+))
+
 
 # ==================================
 # ==== Dictionary of run params ====
@@ -553,7 +680,7 @@ if USE_RK45:
 # =====================================================
 tracemalloc.start()
 
-ps_order_label = None
+ps_order_label = None # for plotting later
 
 if USE_PS:
     if not PS_CHUNKING:
@@ -729,7 +856,6 @@ else:
 
 # =========== PS Window Load ===============
 
-
 if USE_PS:
     # --- map physical time → PS indices ---
     i0_phys = int(np.floor(t_start / ps_step))
@@ -799,9 +925,50 @@ if DEBUG:
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     logger.info(f"Peak memory usage for slice analysis: {peak / 1024**2:.2f} MB")
-    # if USE_PS: x_end_time = j1 * ps_store_stride * ps_step
-    # logger.debug(f"[Window] mode={slice_mode}, t_start={t_start:.6e}, t_end={t_end:.6e}")
-    # if USE_PS: logger.debug(f"[PS] x_start={y_win[0,0]:.6e}, x_end={y_win[0,-1]:.6e}")
+    tol_factor = 1.5  # allow ~1 timestep mismatch
+
+    def _check_window(label, t0, t1, dt):
+        if t0 is None or t1 is None or dt is None:
+            return
+        dt_tol = tol_factor * dt
+        if abs(t0 - t_start) > dt_tol or abs(t1 - t_end) > dt_tol:
+            logger.warning(
+                f"[SLICE MISMATCH] {label}: "
+                f"[{t0:.6e}, {t1:.6e}] vs "
+                f"expected [{t_start:.6e}, {t_end:.6e}] "
+                f"(dt≈{dt:.2e})"
+            )
+        else:
+            logger.debug(
+                f"[SLICE OK] {label}: "
+                f"[{t0:.6e}, {t1:.6e}]"
+            )
+
+    # ---- PS ----
+    if USE_PS:
+        t_ps_start = j0 * ps_store_stride * ps_step
+        t_ps_end   = j1 * ps_store_stride * ps_step
+        _check_window("PS", t_ps_start, t_ps_end, ps_step)
+
+    # ---- RK4 ----
+    if USE_RK4:
+        t_rk4_start = t_rk4[0] if len(t_rk4) else None
+        t_rk4_end   = t_rk4[-1] if len(t_rk4) else None
+        _check_window("RK4", t_rk4_start, t_rk4_end, rk4_step)
+
+    # ---- RKG ----
+    if USE_RKG:
+        t_rkg_start = t_rkg[0] if len(t_rkg) else None
+        t_rkg_end   = t_rkg[-1] if len(t_rkg) else None
+        _check_window("RKG", t_rkg_start, t_rkg_end, rkg_step)
+
+    # ---- RK45 ----
+    if USE_RK45:
+        t_rk45_start = t_rk45[0] if len(t_rk45) else None
+        t_rk45_end   = t_rk45[-1] if len(t_rk45) else None
+        _check_window("RK45", t_rk45_start, t_rk45_end, ps_step)
+
+
 
 # =====================================================
 # ================ 2D Trajectory Slice ================
@@ -897,23 +1064,28 @@ if USE_EXTERNAL_H5_ps:
     ext_ps = external["ps"]
 
     y_ext = ext_ps["y"]
-    if "t" in ext_ps and ext_ps["t"] is not None:
-        t_ext = np.asarray(ext_ps["t"])
+    n_store = y_ext.shape[1]
 
-    elif "dt" in ext_ps and "steps" in ext_ps:
-        t_ext = ext_ps["dt"] * np.arange(ext_ps["steps"] + 1, dtype=npfloat)
-        PS_order_ext = ext_ps["max_ps"]
-    else:
-        raise ValueError(
-            "External PS H5 file has no time information "
-            "(no 't', no 'time', no 'dt/steps').")
+    ps_step_ext = ext_ps["dt"]
+    ps_decimate_ext = ext_ps.get("decimate", 1)
+    dt_store_ext = ps_step_ext * ps_decimate_ext
 
-    vxe = y_ext[3].astype(np.float64)
-    vye = y_ext[4].astype(np.float64)
-    vze = y_ext[5].astype(np.float64)
+    energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS)
+    idx = np.arange(0, n_store, energy_stride_ext)
 
-    E_ext = 0.5 * (vxe**2 + vye**2 + vze**2)
-    rel_drift_ext = (E_ext - E_ext[0]) / E_ext[0]
+    # ---- plot-ready time axis ----
+    t_eval_rk4_ps_ext = idx * dt_store_ext
+
+    # ---- strided energy ----
+    vxe = y_ext[3, idx].astype(np.float64)
+    vye = y_ext[4, idx].astype(np.float64)
+    vze = y_ext[5, idx].astype(np.float64)
+
+    E_ext = 0.5 * (vxe*vxe + vye*vye + vze*vze)
+    rel_drift_ps_ext = (E_ext - E_ext[0]) / E_ext[0]
+
+    PS_order_ext = ext_ps.get("max_ps", None)
+
 
 
 if USE_EXTERNAL_H5_rk4:
@@ -944,18 +1116,36 @@ if USE_EXTERNAL_H5_rk4:
 if USE_EXTERNAL_H5_rk45:
     externalb = load_results_h5(external_h5_rk45)
     ext_rk45 = externalb["rk45"]
-    t_eval_rk45_ext = ext_rk45["t"]
-    y_rk45_ext = ext_rk45["y"]   
 
-    # ensure shape consistency 
+    y_rk45_ext = ext_rk45["y"]
+
+    # ensure shape consistency
     if y_rk45_ext.shape[0] != 6:
         y_rk45_ext = y_rk45_ext.T
 
-    # velocity, energy, drift 
-    v_rk45_ext = y_rk45_ext[3:6]
-    E_rk45_ext = 0.5 * np.sum(v_rk45_ext**2, axis=0)
-    rel_drift_rk45_ext = np.abs(E_rk45_ext - E_rk45_ext[0]) / E_rk45_ext[0]
+    n_store = y_rk45_ext.shape[1]
 
+    # ---- time base ----
+    if "t" in ext_rk45 and ext_rk45["t"] is not None:
+        t_ext = np.asarray(ext_rk45["t"])
+
+    else:
+        # RK45 on PS grid → respect PS decimation
+        ps_step_ext = ext_rk45.get("dt", ps_step)
+        ps_decimate_ext = ext_rk45.get("decimate", 1)
+        dt_store_ext = ps_step_ext * ps_decimate_ext
+        t_ext = dt_store_ext * np.arange(n_store, dtype=npfloat)
+
+    # ---- energy stride (plot-only) ----
+    energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS)
+    idx = np.arange(0, n_store, energy_stride_ext)
+
+    t_eval_rk45_ext = t_ext[idx]
+
+    # ---- velocity, energy ----
+    v = y_rk45_ext[3:6, idx].astype(np.float64)
+    E = 0.5 * np.sum(v*v, axis=0)
+    rel_drift_rk45_ext = (E - E[0]) / E[0]
 
 if USE_EXTERNAL_H5_rkg:
     external_rkg = load_results_h5(external_h5_rkg)
@@ -1043,7 +1233,7 @@ if USE_RK4:
     rel_drift_rk4 = np.abs(E_rk4 - E_rk4_0) / E_rk4_0
 
 if USE_EXTERNAL_H5_ps:
-    ln_ext, = ax.semilogy((t_ext[1:]) * time_factor, np.abs(rel_drift_ext[1:]), alpha=0.8, color='#009E73', linestyle=':')
+    ln_ext, = ax.semilogy((t_eval_rk4_ps_ext[1:]) * time_factor, np.abs(rel_drift_ps_ext[1:]), alpha=0.8, color='#009E73', linestyle=':')
 if USE_EXTERNAL_H5_rk4:
     ln_extrk4, = ax.semilogy((t_eval_rk4_ext[1:]) * time_factor, np.abs(rel_drift_rk4_ext[1:]), alpha=0.8, color='#CC79A7', linestyle='-.')
 if USE_EXTERNAL_H5_rk45:
@@ -1108,7 +1298,7 @@ if USE_RK45:
 
 
 if USE_EXTERNAL_H5_ps:
-    endpoints.append((t_ext[-1]*time_factor, np.abs(rel_drift_ext[-1]), f"PS{PS_order_ext}", ln_ext.get_color()))
+    endpoints.append((t_eval_rk4_ps_ext[-1]*time_factor, np.abs(rel_drift_ps_ext[-1]), f"PS{PS_order_ext}", ln_ext.get_color()))
 if USE_EXTERNAL_H5_rk4:
     endpoints.append((t_eval_rk4_ext[-1]*time_factor, np.abs(rel_drift_rk4_ext[-1]), f"RK4", ln_extrk4.get_color()))
 if USE_EXTERNAL_H5_rk45:
@@ -1180,7 +1370,7 @@ if DEBUG:
 if DEBUG: tracemalloc.start()
 
 if USE_RK4:
-    window_steps_rk4 = N_GYRO * N_STEPS_PER_GYRO_rk4
+    window_steps_rk4 = int(round(N_GYRO * N_STEPS_PER_GYRO_rk4))
     mu0_rk4 = compute_mu_rk(solution_rk4[:, 0:1].T, mass)[0]
 
     if gyro_window == "last":
@@ -1200,7 +1390,7 @@ if USE_RK4:
     t_rk4_plot = (i0_rk4 + np.arange(mudrift_rk4.size, dtype=npfloat)) * rk4_step * time_factor
 
 if USE_RKG:
-    window_steps_rkg = N_GYRO * N_STEPS_PER_GYRO_rkg
+    window_steps_rkg = int(round(N_GYRO * N_STEPS_PER_GYRO_rkg))
     r0 = solution_rkg[0, 0:3]
     p0 = solution_rkg[0, 3:6]
     A0 = vector_potential_dipole(r0)
@@ -1234,7 +1424,7 @@ if USE_RKG:
 
 
 if USE_RK45:
-    window_steps_ps = N_GYRO * N_STEPS_PER_GYRO_ps
+    window_steps_ps = int(round(N_GYRO * N_STEPS_PER_GYRO_ps))
     y0 = y_rk45_common[:, 0:1]   
     mu0_rk45 = compute_mu_rk(y0.T, mass)[0]
 
@@ -1255,7 +1445,7 @@ if USE_RK45:
     t_rk45_plot = (i0_rk45 + np.arange(mudrift_rk45.size, dtype=npfloat)) * ps_step * time_factor
 
 if USE_PS and not PS_CHUNKING:
-    window_steps_ps = N_GYRO * N_STEPS_PER_GYRO_ps
+    window_steps_ps = int(round(N_GYRO * N_STEPS_PER_GYRO_ps))
     if gyro_window == "last":
         i1_phys = steps_ps
         i0_phys = max(0, i1_phys - window_steps_ps)
@@ -1292,8 +1482,8 @@ elif USE_PS and PS_CHUNKING:
         raise ValueError("gyro_window must be 'first', 'last', or 'all'")
 
     ps_store_stride = PS_decimate if (PS_decimate > 1) else 1
-    j0 = int(np.ceil(i0_phys / ps_store_stride))
-    j1 = int(np.floor(i1_phys / ps_store_stride))
+    j0 = int(np.floor(i0_phys / ps_store_stride))
+    j1 = int(np.ceil(i1_phys / ps_store_stride))
 
     with h5py.File(cache_path, "r") as ps_h5:
         ps_grp = ps_h5["ps"]
@@ -1301,10 +1491,10 @@ elif USE_PS and PS_CHUNKING:
         ps_order_label = int(ps_grp.attrs["max_ps"])
         n_store = ps_y.shape[1]
 
-        j0 = max(0, min(j0, n_store - 1))
-        j1 = max(0, min(j1, n_store - 1))
+        j0 = max(0, min(j0, n_store))
+        j1 = max(0, min(j1, n_store))
 
-        if j1 < j0:
+        if j1 <= j0:
             raise RuntimeError("Empty PS μ window (chunked)")
 
         y_ps_win = ps_y[:, j0:j1]
@@ -1413,6 +1603,12 @@ if DEBUG:
     if USE_RK45: 
         logger.debug(f"[RK45] mu rel drift initial ={mudrift_rk45[0]:.2e}, mu rel drift mid ={mudrift_rk45[mumidpoint_rk45]:.2e}, mu rel drift final ={mudrift_rk45[-1]:.2e}")
         logger.debug(f"[RK45 Slice] t_start={t_rk45[0]:.3e}, t_end={t_rk45[-1]:.3e}, len={len(t_rk45)}")
+
+    if USE_RK4: logger.debug(f"mu-window RK4  : {window_steps_rk4 * rk4_step:.6e}")
+    if USE_RKG: logger.debug(f"mu-window RKG  : {window_steps_rkg * rkg_step:.6e}")
+    if USE_RK45: logger.debug(f"mu-window RK45 : {window_steps_ps * ps_step:.6e}")
+    if USE_PS: logger.debug(f"mu-window PS   : {window_steps_ps * ps_step:.6e}")
+
 
 # ===================================================
 # ================ Mirror and Drift  ================

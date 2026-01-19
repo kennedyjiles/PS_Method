@@ -27,7 +27,7 @@ if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000
 else: mpl.rcParams['agg.path.chunksize'] = 1000
 
 
-MAX_PLOT_POINTS= 200000 # cap number of points on each graph to speed things up
+MAX_PLOT_POINTS= 500000 # cap number of points on each graph to speed things up
 PS_chunk_steps = int(1e4)
 
 run_storage = "outputs_rawdata"       # where raw trajectory files go when USE_WRITE_DATA = True
@@ -85,17 +85,56 @@ def load_params(run):
         else: print("Running DEMO simulation...this takes just few seconds\n")
         output_folder = "outputs_demo"
         os.makedirs(output_folder, exist_ok=True)
+        
+        READ_DATA = True
+        WRITE_DATA = True
+
+        # -------- physics parameters -------
+        """
+        Note, changing these parameters will results in a new h5 file creation. H5 files are constructed
+        and named based on these entries and altering them changes the structure/physics of the data.
+        """
+
         USE_RK45 = True  
         USE_RK4 = True
         USE_RKG = False  # does not work for electrons, see paper
         USE_PS = True
-        USE_PLOT_TITLES = True
-        READ_DATA = True
-        WRITE_DATA = True
-        USE_FULL_PLOT = False
-        PS_decimate = 1
-        PS_CHUNKING = False
+        PS_decimate = 1    # only works with chunking
+        PS_CHUNKING = True
 
+        pitch_deg = npfloat(60.0)              
+        phi_deg = npfloat(90.0)
+        x_initial = npfloat(5)                 
+        y_initial = npfloat(0)
+        z_initial = npfloat(0)
+        KE_particle = npfloat(100e6) 
+        B_0 = npfloat(3.12e-5)  
+        mass_si = m_e   
+        T_gyro = 2.0 * np.pi * (x_initial**3)  
+
+        N_STEPS_PER_GYRO_rk4= 65
+        N_STEPS_PER_GYRO_ps=65
+        N_STEPS_PER_GYRO_rkg=65
+        rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
+        ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
+        rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))                       
+        gyroperiods = 4.1e2
+        norm_time = npfloat(gyroperiods) * T_gyro
+
+        # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
+
+        USE_PLOT_TITLES = True
+        USE_FULL_PLOT = False
+
+        window_time = npfloat(11.6) # only interested in one drift period, SI units
+        slice_mode = "first"  
+        N_GYRO = 75
+        gyro_window = "last"     
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -108,47 +147,62 @@ def load_params(run):
         external_h5_rk45 = "outputs_rawdata/" 
         external_h5_rkg = "outputs_rawdata/" 
 
-
-        pitch_deg = npfloat(60.0)              
-        phi_deg = npfloat(90.0)
-        x_initial = npfloat(5)                 
-        y_initial = npfloat(0)
-        z_initial = npfloat(0)
-        KE_particle = npfloat(100e6) 
-        B_0 = npfloat(3.12e-5)  
-        mass_si = m_e   
-        T_gyro = 2.0 * np.pi * (x_initial**3)  
-
-        window_time = npfloat(11.6) # only interested in one drift period, SI units
-        slice_mode = "first"  
-        N_GYRO = 75
-        gyro_window = "last"            
-
-        N_STEPS_PER_GYRO_rk4= 65
-        N_STEPS_PER_GYRO_ps=65
-        N_STEPS_PER_GYRO_rkg=65
-        rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
-        ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
-        rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))                       
-        gyroperiods = 4.1e2
-        norm_time = npfloat(gyroperiods) * T_gyro
-
     elif run == "paper1": #100 keV proton, 30deg pitch, 5RE, B0 at Earth surface
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
         output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
+
+        READ_DATA = True 
+        WRITE_DATA = True
+
+        # -------- physics parameters -------
+        """
+        Note, changing these parameters will results in a new h5 file creation. H5 files are constructed
+        and named based on these entries and altering them changes the structure/physics of the data.
+        """
         USE_RK45 = True  
         USE_RK4 = True  # removed from paper plots due to failure
         USE_RKG = True
         USE_PS = True
-        USE_PLOT_TITLES = False
-        READ_DATA = True 
-        WRITE_DATA = True
-        USE_FULL_PLOT = False
-        PS_decimate = 1
-        PS_CHUNKING = False
+        PS_decimate = 1 # only works with chunking
+        PS_CHUNKING = True
 
+        pitch_deg = npfloat(30.0)              
+        phi_deg = npfloat(90.0)
+        x_initial = npfloat(5)                 
+        y_initial = npfloat(0)
+        z_initial = npfloat(0)
+        KE_particle = npfloat(100e3)              
+        B_0 = npfloat(3.12e-5)  
+        mass_si = m_p   
+        T_gyro = 2.0 * np.pi * (x_initial**3)    
+
+        # used for paper only, see "tinker" for cleaner approach
+        N_STEPS_PER_GYRO_rk4= 65
+        N_STEPS_PER_GYRO_ps=65
+        N_STEPS_PER_GYRO_rkg=65
+        rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
+        ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
+        rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))  
+        totatl_integration_steps = 1e7
+        norm_time = npfloat(totatl_integration_steps) * ps_step
+        gyroperiods= npfloat(totatl_integration_steps) * ps_step / T_gyro
+
+        # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
+
+        USE_PLOT_TITLES = False
+        USE_FULL_PLOT = False
+
+        window_time = npfloat(6209.0) # only interested in ~one drift period so same as slice
+        slice_mode = "last"   
+        N_GYRO = 150
+        gyro_window = "last"   
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
@@ -161,60 +215,26 @@ def load_params(run):
         external_h5_rk45 = "outputs_rawdata/" 
         external_h5_rkg = "outputs_rawdata/run_2710a82210ebb716.h5"
 
-        pitch_deg = npfloat(30.0)              
-        phi_deg = npfloat(90.0)
-        x_initial = npfloat(5)                 
-        y_initial = npfloat(0)
-        z_initial = npfloat(0)
-        KE_particle = npfloat(100e3)              
-        B_0 = npfloat(3.12e-5)  
-        mass_si = m_p   
-        T_gyro = 2.0 * np.pi * (x_initial**3)  
-
-        window_time = npfloat(6209.0) # only interested in ~one drift period so same as slice
-        slice_mode = "last"   
-        N_GYRO = 150
-        gyro_window = "last"   
-
-        # used for paper only, see "tinker" for better approach
-        N_STEPS_PER_GYRO_rk4= 65
-        N_STEPS_PER_GYRO_ps=65
-        N_STEPS_PER_GYRO_rkg=65
-        rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
-        ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
-        rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))  
-        totatl_integration_steps = 1e7
-        norm_time = npfloat(totatl_integration_steps) * ps_step
-        gyroperiods= npfloat(totatl_integration_steps) * ps_step / T_gyro
-
     elif run == "paper2": #100 MeV electron, 60 degree pitch, 5RE, B0 at Earth surface
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_troubleshoot"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True  
-        USE_RK4 = True
-        USE_RKG = False  # does not work for electrons, see paper
-        USE_PS = True
-        USE_PLOT_TITLES = True
+
         READ_DATA = True
         WRITE_DATA = True
-        USE_FULL_PLOT = False
-        PS_decimate = 1
+
+        # -------- physics parameters -------
+        """
+        Note, changing these parameters will results in a new h5 file creation. H5 files are constructed
+        and named based on these entries and altering them changes the structure/physics of the data.
+        """
+        USE_RK45 = True  
+        USE_RK4 = True
+        USE_RKG = True  # does not work for electrons, see paper
+        USE_PS = True
+        PS_decimate = 1   # only works with chunking
         PS_CHUNKING = True
-
-
-        USE_EXTERNAL_H5_ps = False
-        USE_EXTERNAL_H5_rk4 = False
-        USE_EXTERNAL_H5_rk45 = False
-        USE_EXTERNAL_H5_rkg = False
-
-        external_h5_ps = "outputs_rawdata/run_5f2698f4194712e0.h5" #big PS run
-        PS_order_ext = 1    # pull from text file for old runs, new h5 files should grab it
-        external_h5_rk4 = "outputs_rawdata/" 
-        external_h5_rk45 = "outputs_rawdata/" 
-        external_h5_rkg = "outputs_rawdata/" 
-
 
         pitch_deg = npfloat(60.0)              
         phi_deg = npfloat(90.0)
@@ -226,12 +246,7 @@ def load_params(run):
         mass_si = m_e   
         T_gyro = 2.0 * np.pi * (x_initial**3)  
 
-        window_time = npfloat(11.6) # only interested in one drift period, SI units 
-        slice_mode = "last"  
-        N_GYRO = 75
-        gyro_window = "last"            
-
-
+        # used for paper, see "tinker" for cleaner approach
         N_STEPS_PER_GYRO_rk4= 65
         N_STEPS_PER_GYRO_ps=65
         N_STEPS_PER_GYRO_rkg=65
@@ -242,33 +257,51 @@ def load_params(run):
         norm_time = npfloat(totatl_integration_steps) * ps_step
         gyroperiods= npfloat(totatl_integration_steps) * ps_step / T_gyro
 
-    elif run == "paper3": #paper1 simulation at larger ps_step and smaller rk4_step
-        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
-        else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_paper_FIXME"
-        os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = False  
-        USE_RK4 = True 
-        USE_RKG = False  
-        USE_PS = True
-        USE_PLOT_TITLES = False
-        READ_DATA = True
-        WRITE_DATA = True
-        USE_FULL_PLOT = False
-        PS_decimate = 1
-        PS_CHUNKING = False  
+        # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
 
+        USE_PLOT_TITLES = True
+        USE_FULL_PLOT = False
+
+        window_time = npfloat(11.6) # only interested in one drift period, SI units 
+        slice_mode = "last"  
+        N_GYRO = 75
+        gyro_window = "last"      
 
         USE_EXTERNAL_H5_ps = False
         USE_EXTERNAL_H5_rk4 = False
         USE_EXTERNAL_H5_rk45 = False
         USE_EXTERNAL_H5_rkg = False
 
-        external_h5_ps = "outputs_rawdata/" 
-        PS_order_ext = 1    
+        external_h5_ps = "outputs_rawdata/run_5f2698f4194712e0.h5" #big PS run
         external_h5_rk4 = "outputs_rawdata/" 
-        external_h5_rk45 = "outputs_rawdata/"
-        external_h5_rkg = "outputs_rawdata/" 
+        external_h5_rk45 = "outputs_rawdata/" 
+        external_h5_rkg = "outputs_rawdata/"       
+
+    elif run == "paper3": #paper1 simulation at larger ps_step and smaller rk4_step
+        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
+        else: print("Running full PAPER simulation...this can take a few minutes\n")
+        output_folder = "outputs_paper"
+        os.makedirs(output_folder, exist_ok=True)
+
+        READ_DATA = True
+        WRITE_DATA = True
+
+      # -------- physics parameters -------
+        """
+        Note, changing these parameters will results in a new h5 file creation. H5 files are constructed
+        and named based on these entries and altering them changes the structure/physics of the data.
+        """
+        USE_RK45 = False  
+        USE_RK4 = True 
+        USE_RKG = False  
+        USE_PS = True
+        PS_decimate = 100  # only works with chunking
+        PS_CHUNKING = True  
 
         pitch_deg = npfloat(30.0)              
         phi_deg = npfloat(90.0)
@@ -280,94 +313,20 @@ def load_params(run):
         mass_si = m_p   
         T_gyro = 2.0 * np.pi * (x_initial**3)  
 
-        window_time = npfloat(6220.0) # only interested in one drift period so same as slice
-        slice_mode = "last"   
-        N_GYRO = 150
-        gyro_window = "first"   
 
-        rk4_step = npfloat(.5)                
-        ps_step = npfloat(78.5)
-        PS_order = 30
-        rkg_step = rk4_step  # doesn't matter since USE_RKG = False but needs a value for h5 consistency                    
-        norm_time = npfloat(6206.0) # only interested in one drift period so same as slice
-
-    elif run == "tinker": # using this one to play with parameters 
-        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
-        else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_tinker"
-        os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = True  
-        USE_RK4 = True # removed from paper plots due to failure
-        USE_RKG = True
-        USE_PS = True
-        USE_PLOT_TITLES = False
-        READ_DATA = True 
-        WRITE_DATA = True
-        USE_FULL_PLOT = True
-        PS_decimate = 1
-        PS_CHUNKING = False
-
-        pitch_deg = npfloat(30.0)              
-        phi_deg = npfloat(90.0)
-        x_initial = npfloat(5)                 
-        y_initial = npfloat(0)
-        z_initial = npfloat(0)
-        KE_particle = npfloat(100e3)              
-        B_0 = npfloat(3.12e-5)  
-        mass_si = m_e   
-        T_gyro = 2.0 * np.pi * (x_initial**3)  
-
-        N_STEPS_PER_GYRO_rk4 = 65
-        N_STEPS_PER_GYRO_ps = 65
+        N_STEPS_PER_GYRO_rk4= 1570.8 #1570.796327
+        N_STEPS_PER_GYRO_ps= 17.8 #17.8
         N_STEPS_PER_GYRO_rkg = 65
         rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
         ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
         rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))  
-        gyroperiods = 4.1e2
-        norm_time = npfloat(gyroperiods) * T_gyro
+        norm_time = npfloat(6206.0/.00033464094804535314)      # only interested in one drift period so same as slice
+        gyroperiods= npfloat(norm_time) / T_gyro
 
 
-                # -------- plotting parameters -------
-        """
-        Note, changing these parameters will not change the physics of the above parameters and will
-        not cause a new h5 file creation. They will be captured in the summary text file associated with 
-        the run.
-        """
-
-        window_time = npfloat(6209.0)
-        slice_mode = "last"   
-        N_GYRO = 150
-        gyro_window = "last"   
-
-        USE_EXTERNAL_H5_ps = False
-        USE_EXTERNAL_H5_rk4 = False
-        USE_EXTERNAL_H5_rk45 = False
-        USE_EXTERNAL_H5_rkg = False
-
-        USE_EXTERNAL_H5_ps = False
-        USE_EXTERNAL_H5_rk4 = False
-        USE_EXTERNAL_H5_rk45 = False
-        USE_EXTERNAL_H5_rkg = False
-
-        external_h5_ps = "outputs_rawdata/run_70fbbb1af469ba4c.h5" # big PS run
-        # fix external loaded h5 files with decimation
-        external_h5_rk4 = "outputs_rawdata/" 
-        external_h5_rk45 = "outputs_rawdata/" 
-        external_h5_rkg = "outputs_rawdata/run_2710a82210ebb716.h5"
-
-    elif run == "legacy": # using this one to play with parameters 
-        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
-        else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_tinker"
-        os.makedirs(output_folder, exist_ok=True)
-        USE_PLOT_TITLES = False
-        READ_DATA = False 
-        WRITE_DATA = False
-        PS_CHUNKING = True
-        USE_FULL_PLOT = True
-
-        legacy_h5_path = "outputs_rawdata/run_70fbbb1af469ba4c.h5"
-
+        # rk4_step = npfloat(0.5)                
+        # ps_step = npfloat(44.0)
+        PS_order = 16
 
         # -------- plotting parameters -------
         """
@@ -375,7 +334,113 @@ def load_params(run):
         not cause a new h5 file creation. They will be captured in the summary text file associated with 
         the run.
         """
-        
+
+        USE_PLOT_TITLES = False
+        USE_FULL_PLOT = False
+
+        window_time = npfloat(6206.0) # only interested in one drift period so same as slice
+        slice_mode = "last"   
+        N_GYRO = 150
+        gyro_window = "first"  
+
+        USE_EXTERNAL_H5_ps = False
+        USE_EXTERNAL_H5_rk4 = False
+        USE_EXTERNAL_H5_rk45 = False
+        USE_EXTERNAL_H5_rkg = False
+
+        external_h5_ps = "outputs_rawdata/" 
+        external_h5_rk4 = "outputs_rawdata/" 
+        external_h5_rk45 = "outputs_rawdata/"
+        external_h5_rkg = "outputs_rawdata/"
+
+    elif run == "tinker": # using this one to play with parameters 
+        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
+        else: print("Running full PAPER simulation...this can take a few minutes\n")
+        output_folder = "outputs_tinker"
+        os.makedirs(output_folder, exist_ok=True)
+
+        READ_DATA = True 
+        WRITE_DATA = True   
+
+        # -------- physics parameters -------
+        """
+        Note, changing these parameters will results in a new h5 file creation. H5 files are constructed
+        and named based on these entries and altering them changes the structure/physics of the data.
+        """
+        USE_RK45 = True  
+        USE_RK4 = True
+        USE_RKG = True
+        USE_PS = True
+        PS_decimate = 1  # only works with chunking
+        PS_CHUNKING = True
+
+        pitch_deg = npfloat(60.0)              
+        phi_deg = npfloat(90.0)
+        x_initial = npfloat(5)                 
+        y_initial = npfloat(0)
+        z_initial = npfloat(0)
+        KE_particle = npfloat(100e3)              
+        B_0 = npfloat(3.12e-5)  
+        mass_si = m_p   
+        T_gyro = 2.0 * np.pi * (x_initial**3)  
+
+        N_STEPS_PER_GYRO_rk4= 100
+        N_STEPS_PER_GYRO_ps=25
+        N_STEPS_PER_GYRO_rkg=65
+        rk4_step = npfloat(T_gyro/N_STEPS_PER_GYRO_rk4)              
+        ps_step = npfloat(T_gyro/N_STEPS_PER_GYRO_ps)                                  
+        rkg_step = npfloat(T_gyro/N_STEPS_PER_GYRO_rkg)  
+        gyroperiods = 1e3
+        norm_time = npfloat(gyroperiods) * T_gyro
+   
+        # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
+
+        USE_PLOT_TITLES = True
+        USE_FULL_PLOT = True
+
+        window_time = npfloat(6209.0)
+        slice_mode = "last"   
+        N_GYRO = 75
+        gyro_window = "last"   
+
+        USE_EXTERNAL_H5_ps = True
+        USE_EXTERNAL_H5_rk4 = False
+        USE_EXTERNAL_H5_rk45 = True
+        USE_EXTERNAL_H5_rkg = True
+
+        external_h5_ps = "outputs_rawdata/run_60a0558ebec9f956.h5" 
+        external_h5_rk4 = "outputs_rawdata/run_60a0558ebec9f956.h5" 
+        external_h5_rk45 = "outputs_rawdata/run_60a0558ebec9f956.h5" 
+        external_h5_rkg = "outputs_rawdata/run_60a0558ebec9f956.h5"
+
+    elif run == "legacy": # using this one to play with parameters 
+        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
+        else: print("Running full PAPER simulation...this can take a few minutes\n")
+        output_folder = "outputs_tinker"
+        os.makedirs(output_folder, exist_ok=True)
+        """
+        This allows legacy files to be loaded directly through the 'legacy' run in the test particle function.
+        Early runs didn't have all the parameters we are now tracking, so the scanning doesn't work properly.
+        The functions take the old h5 files we did have and reconstruct a dictionary in the format we are using now.
+        """
+
+
+        legacy_h5_path = "outputs_rawdata/run_98a2efbd7550732a-1.h5"
+
+        # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
+        USE_FULL_PLOT = False
+        USE_PLOT_TITLES = False
+
         window_time = npfloat(6209.0)
         slice_mode = "last"   
         N_GYRO = 150
@@ -386,26 +451,67 @@ def load_params(run):
         USE_EXTERNAL_H5_rk45 = False
         USE_EXTERNAL_H5_rkg = False
 
-        external_h5_ps = "outputs_rawdata/run_669e61bd5c4a6f40.h5" # big PS run
+        external_h5_ps = "outputs_rawdata/" 
         external_h5_rk4 = "outputs_rawdata/" 
         external_h5_rk45 = "outputs_rawdata/" 
-        external_h5_rkg = "outputs_rawdata/run_2710a82210ebb716.h5"  
+        external_h5_rkg = "outputs_rawdata/"  
+
+    elif run == "manual": # using this one to play with parameters 
+        if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
+        else: print("Running full PAPER simulation...this can take a few minutes\n")
+        output_folder = "outputs_tinker"
+        os.makedirs(output_folder, exist_ok=True)
+
+        "This allows manual file load if needed. Must be in current format though"
+
+        manual_h5_path = "outputs_rawdata/run_629d309a81305d16.h5"
+
+        # -------- plotting parameters -------
+        """
+        Note, changing these parameters will not change the physics of the above parameters and will
+        not cause a new h5 file creation. They will be captured in the summary text file associated with 
+        the run.
+        """
+
+        USE_FULL_PLOT = False
+        USE_PLOT_TITLES = False
+
+        window_time = npfloat(5.0)
+        slice_mode = "last"   
+        N_GYRO = 150
+        gyro_window = "last"   
+
+        USE_EXTERNAL_H5_ps = False
+        USE_EXTERNAL_H5_rk4 = False
+        USE_EXTERNAL_H5_rk45 = False
+        USE_EXTERNAL_H5_rkg = False
+
+        external_h5_ps = "outputs_rawdata/" 
+        external_h5_rk4 = "outputs_rawdata/" 
+        external_h5_rk45 = "outputs_rawdata/" 
+        external_h5_rkg = "outputs_rawdata/"  
 
     elif run == "monster_ps": #100 keV proton, 30deg pitch, 5RE, B0 at Earth surface
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
         output_folder = "outputs_giant_runs"
         os.makedirs(output_folder, exist_ok=True)
+
+        READ_DATA = True 
+        WRITE_DATA = True
+
+       # -------- physics parameters -------
+        """
+        Note, changing these parameters will results in a new h5 file creation. H5 files are constructed
+        and named based on these entries and altering them changes the structure/physics of the data.
+        """
+
         USE_RK45 = False   
         USE_RK4 = False  
         USE_RKG = False
         USE_PS = True
-        USE_PLOT_TITLES = True
-        READ_DATA = True 
-        WRITE_DATA = True
-        USE_FULL_PLOT = False
-        PS_decimate = 1
-        PS_CHUNKING = True   
+        PS_decimate = 1   # only works with chunking
+        PS_CHUNKING = True
 
         pitch_deg = npfloat(30.0)              
         phi_deg = npfloat(90.0)
@@ -423,7 +529,7 @@ def load_params(run):
         rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
         ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
         rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))                         
-        gyroperiods = 1e7
+        gyroperiods = 1e4
         norm_time = npfloat(gyroperiods) * T_gyro
 
         # -------- plotting parameters -------
@@ -432,6 +538,9 @@ def load_params(run):
         not cause a new h5 file creation. They will be captured in the summary text file associated with 
         the run.
         """
+
+        USE_PLOT_TITLES = True
+        USE_FULL_PLOT = False
 
         window_time = npfloat(6209.0)
         slice_mode = "last"   
@@ -449,7 +558,8 @@ def load_params(run):
         external_h5_rk45 = "outputs_rawdata/" 
         external_h5_rkg = "outputs_rawdata/" 
 
+
     else:
         raise ValueError("run must be 'demo', 'paper1', 'paper2', or 'paper3'")
 
-    return locals()    
+    return locals()
