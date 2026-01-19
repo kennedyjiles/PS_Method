@@ -734,6 +734,7 @@ def drift_period_from_PS(final_coeff_matrix, dt_tau,
 # ========================
 # === Write Functions ===
 # ========================
+
 def _to_serializable(x):
     if isinstance(x, (np.floating, np.float32, np.float64)):
         return float(x)
@@ -883,23 +884,16 @@ def load_results_h5(h5_path):
 def append_results_h5(h5_path, results, summary):
     """
     Append non-PS solver results and metadata to an existing HDF5 file.
-    Ensures params_json is written exactly once (for streaming PS files).
+    Ensures dictionary is written exactly once (for streaming PS files).
     """
 
     with h5py.File(h5_path, "a") as f:
 
-        # -------------------------------------------------
         # Root-level metadata (FINALIZE STREAMED FILE)
-        # -------------------------------------------------
-        # if "params_json" not in f.attrs:
-        #     f.attrs["params_json"] = json.dumps(params)
-        
         if "summary_json" not in f.attrs:
             f.attrs["summary_json"] = json.dumps(summary)
 
-        # -------------------------------------------------
         # Meta group
-        # -------------------------------------------------
         if "meta" not in f:
             gmeta = f.create_group("meta")
         else:
@@ -1105,6 +1099,15 @@ def load_legacy_file(h5_path):
 
     return summary, datasets, params, f
 
+
+def write_dict(f, d, indent=0):
+    pad = " " * indent
+    for k, v in d.items():
+        if isinstance(v, dict):
+            f.write(f"{pad}{k}:\n")
+            write_dict(f, v, indent + 2)
+        else:
+            f.write(f"{pad}{k} = {v}\n")
 
 # ===================================
 # === Decimate/Chunking Functions ===

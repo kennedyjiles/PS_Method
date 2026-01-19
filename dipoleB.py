@@ -1,20 +1,4 @@
-import numpy as np
-import builtins
-import os
-os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
-import test_particles.dipoleB_testparticles as tp
-builtins.npfloat = np.float128 if tp.USE_FLOAT128 else np.float64
-from test_particles.dipoleB_testparticles import *
-import pandas as pd 
-from datetime import datetime
-import os, time, sys, tracemalloc, logging, h5py, gc, json
-import matplotlib.pyplot as plt
-from scipy.integrate import solve_ivp
-from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
-from functions.functions_library_universal_chunk import rk4_fixed_step, plt_config, sparse_labels, data_to_fig
-from functions.functions_library_dipole import PS_dipoleB, lorentz_force_dipole, compute_mu_ps, compute_mu_rk, vector_potential_dipole, rkgl4_hamiltonian, hamiltonian_rhs, summarize, slice_solution, append_results_h5, compute_energy_ps_chunked, load_legacy_file, init_drift_stream_state
-from functions.functions_library_dipole import mirror_times_from_PS, bounce_summary, drift_period_from_PS, get_run_params, h5_path_for, save_results_h5, load_results_h5, summarize_error, run_ps_streaming_with_decimation, build_figure_filename, process_bounce_and_drift_chunk, init_bounce_stream_state, finalize_drift_stream
-from logger_util import setup_logger
+from project_setup import * 
 logger = setup_logger("dipole_logger", "dipole_chunk.log", level=logging.DEBUG)
 
 legacy_h5_path = None  # hard disable for most runs,
@@ -1433,7 +1417,12 @@ if DEBUG:
 # ===================================================
 # ================ Mirror and Drift  ================
 # ===================================================
-
+"""
+Similar to other sections of code, this is currently retaining the original (i.e. load from RAM) approach to
+calculating drift and bounce as well as the new way utilizing chunking. Once we are certain that we do not need the original
+method, the first part of 'if' statement can go and this can be reduced to "if USE_PS'. Note that drift and bounce are
+only calcualted for PS method. 
+"""
 bounce_results = None
 drift_results  = None
 
@@ -1577,12 +1566,18 @@ elif USE_PS and PS_CHUNKING:
     }
 
 
-# ====================================
-# === Write Summary Output to File ===
-# ====================================
-if DEBUG: tracemalloc.start()
-"This is determining the last fraction of the run to report some average numbers on"
+# ==================================================
+# ========= Write Summary Output to File ==========
+# ==================================================
+"""
+The Write Summary Output file contains some averaging over the last points of the run for E and mu errors/deviations.
+This first part is setting a max fraction to look at an eventually capping the number of points that are looked at so
+that there is not a memory issue with the large files. 
+"""
 
+if DEBUG: tracemalloc.start()
+
+# ------  Define tail for last fraction of invariants -------
 if gyroperiods < 1e6:
     TAIL_FRAC = 0.01        # last 1%
 else:
@@ -1611,9 +1606,7 @@ def make_tail_mask(n_points, step_size, label=None):
 
     return mask, j0
 
-# ============================================================
-# Build tail masks for last fraction of invariants
-# ============================================================
+# ------  Build tail masks for last fraction of invariants -------
 
 if USE_PS:
     step_ps = ps_store_stride * ps_step
@@ -1628,25 +1621,14 @@ if USE_RK4:
 if USE_RKG:
     tail_masks["RKG"], j0_rkg = make_tail_mask(len(rel_drift_rkg), rkg_step, "RKG")
 
-# ============================================================
-# Write summary file
-# ============================================================
+# ============ Write summary file ==============
 
 output_filename = build_figure_filename( summary , output_folder , stem , figure_tag="simulation_summary", ext="txt")
 
-def write_dict(f, d, indent=0):
-    pad = " " * indent
-    for k, v in d.items():
-        if isinstance(v, dict):
-            f.write(f"{pad}{k}:\n")
-            write_dict(f, v, indent + 2)
-        else:
-            f.write(f"{pad}{k} = {v}\n")
 
 with open(output_filename, "w") as f:
-
     f.write("=== Simulation Summary ===\n")
-    write_dict(f, summary)
+    write_dict(f, summary)    # dumps the dictionary in as text
     f.write("\n")
 
     f.write("\n=== |delta E|/E0 (tail average) ===\n")
@@ -1761,8 +1743,6 @@ if DEBUG:
 # === Shared metadata ===
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 x_0, y_0, z_0 = x_initial, y_initial, z_initial
-
-
 
 # === Shared metadata ===
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
