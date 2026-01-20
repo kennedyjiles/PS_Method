@@ -387,7 +387,7 @@ def load_params(run):
         rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
         ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
         rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))                         
-        gyroperiods = 1e5
+        gyroperiods = 5e7
         norm_time = npfloat(gyroperiods) * T_gyro
     else:
         raise ValueError("run must be 'demo', 'paper1', 'paper2', or 'paper3'")
