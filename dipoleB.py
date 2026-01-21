@@ -18,7 +18,7 @@ from logger_util import setup_logger
 logger = setup_logger("dipole_logger", "dipole_chunk.log", level=logging.DEBUG)
 
 
-DEBUG = True
+DEBUG = False
 
 if DEBUG: tracemalloc.start()
 
