@@ -11,7 +11,7 @@ import sys
 import time
 import signal
 import subprocess
-
+import psutil
 
 PID_FILE = "/tmp/dipole_script.pid"
 
@@ -113,38 +113,73 @@ def start_script(cfg):
     return None
 
 
+# def resume_script(pid):
+#   """Resume (SIGCONT) a paused process."""
+#   try:
+#     msg = f"{now_str()} - Resuming script (PID {pid})..."
+#     print(msg)
+#     os.kill(pid, signal.SIGCONT)
+#     print(f"Script resumed (PID {pid})")
+#   except OSError as e:
+#     print(f"Error resuming script: {e}", file=sys.stderr)
+
 def resume_script(pid):
   """Resume (SIGCONT) a paused process."""
   try:
+    proc = psutil.Process(pid)
     msg = f"{now_str()} - Resuming script (PID {pid})..."
     print(msg)
-    os.kill(pid, signal.SIGCONT)
+    proc.resume()
     print(f"Script resumed (PID {pid})")
-  except OSError as e:
+  except psutil.NoSuchProcess:
+    print(f"Process {pid} no longer exists.")
+  except Exception as e:
     print(f"Error resuming script: {e}", file=sys.stderr)
 
 
+# def pause_script(pid):
+#     """Pause (SIGSTOP) a running process."""
+
+#     try:
+#       with open(f"/proc/{pid}/status", 'r') as f:
+#         status = f.read()
+#       if "State:\tT (stopped)" in status:
+#         print(f"Script is already paused (PID {pid})")
+#         return
+#     except (FileNotFoundError, IOError):
+#       print(f"Could not read /proc/{pid}/status to check if process is paused.")
+#       exit(1)
+
+#     try:
+#         # Check if process is already paused
+#       msg = f"{now_str()} - Pausing script (PID {pid})..."
+#       print(msg)
+#       os.kill(pid, signal.SIGSTOP)
+#       print(f"Script paused (PID {pid})")
+#     except OSError as e:
+#       print(f"Error pausing script: {e}", file=sys.stderr)
+
+
 def pause_script(pid):
-    """Pause (SIGSTOP) a running process."""
-
+    """Pause (SIGSTOP) a running process using psutil for macOS/Linux compatibility."""
     try:
-      with open(f"/proc/{pid}/status", 'r') as f:
-        status = f.read()
-      if "State:\tT (stopped)" in status:
-        print(f"Script is already paused (PID {pid})")
-        return
-    except (FileNotFoundError, IOError):
-      print(f"Could not read /proc/{pid}/status to check if process is paused.")
-      exit(1)
-
-    try:
+        proc = psutil.Process(pid)
         # Check if process is already paused
-      msg = f"{now_str()} - Pausing script (PID {pid})..."
-      print(msg)
-      os.kill(pid, signal.SIGSTOP)
-      print(f"Script paused (PID {pid})")
-    except OSError as e:
-      print(f"Error pausing script: {e}", file=sys.stderr)
+        if proc.status() == psutil.STATUS_STOPPED:
+            print(f"Script is already paused (PID {pid})")
+            return
+
+        msg = f"{now_str()} - Pausing script (PID {pid})..."
+        print(msg)
+        
+        # Send pause signal
+        proc.suspend() 
+        print(f"Script paused (PID {pid})")
+        
+    except psutil.NoSuchProcess:
+        print(f"Process {pid} no longer exists.")
+    except Exception as e:
+        print(f"Error pausing script: {e}", file=sys.stderr)
 
 
 def cleanup():
@@ -186,27 +221,34 @@ def main(cfg):
       msg = f"{now_str()} - In window: {in_window}; "
       msg += f"Process running: {process_running}"
       print(msg)
-
       if in_window:
-        # We should be running
-        if not process_running:
-          # Start the script
-          start_script(cfg)
-        else:
-          # Process exists, make sure it's not paused (try to resume)
-          # Note: There's no reliable way to check if a process is paused,
-          # so we just send SIGCONT which is harmless if already running
-          print(f"{now_str()} - Process is already running (PID {pid}).")
+          # We should be running
+          if not process_running:
+              # Start the script
+              start_script(cfg)
+          else:
+              # Process exists; check if it's paused and resume if needed
+              # Note: There's no reliable way to check if a process is paused,
+              # so we just send SIGCONT which is harmless if already running
+              try:
+                  proc = psutil.Process(pid)
+                  if proc.status() == psutil.STATUS_STOPPED:
+                      resume_script(pid)
+                  else:
+                      print(f"{now_str()} - Process is already running (PID {pid}).")
+              except psutil.NoSuchProcess:
+                  print(f"{now_str()} - Process (PID {pid}) no longer exists. Cleaning up PID file.")
+                  cleanup()
       else:
-        # We should NOT be running
-        if process_running:
-          # Pause the script
-          pause_script(pid)
-        else:
-          print(f"{now_str()} - Outside time window and no process to pause.")
+          # We should NOT be running
+          if process_running:
+              pause_script(pid)
+          else:
+              print(f"{now_str()} - Outside time window and no process to pause.")
 
       print(f"{now_str()} - Sleeping for {cfg['sleep']} seconds...\n")
       time.sleep(cfg["sleep"])
+      
 
   except KeyboardInterrupt:
     print("\nKeyboard interrupt. Shutting down...")
@@ -230,4 +272,4 @@ def main(cfg):
 if __name__ == "__main__":
   #main(config())
   # Start process now and run for 20 seconds.
-  main(config(test=True))
+  main(config())
