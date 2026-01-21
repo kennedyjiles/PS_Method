@@ -188,7 +188,7 @@ def load_params(run):
     elif run == "paper2": #100 MeV electron, 60 degree pitch, 5RE, B0 at Earth surface
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_troubleshoot"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True  
         USE_RK4 = True
@@ -242,7 +242,7 @@ def load_params(run):
     elif run == "paper3": #paper1 simulation at larger ps_step and smaller rk4_step
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_paper_FIXME"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = False  
         USE_RK4 = True 
