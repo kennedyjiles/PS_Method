@@ -2,33 +2,39 @@
 """
 Script to run or continue a Python process within a specified time window.
 Usage:
-  python run_at_night.py "/path/to/your_script.py"
+  python run_at_night.py "python /path/to/your_script.py"
 Start and end times can be configured in the config() function.
+
+Testing and debugging this script:
+  python run_at_night.py test
+This will run a test script (test.py) that prints iterations every second. The
+time window will be set to start immediately and end after 10 seconds.
 """
 
 import os
 import sys
 import time
-import signal
 import subprocess
 import psutil
 
-PID_FILE = "/tmp/dipole_script.pid"
+PID_FILE = "/tmp/run_at_night.pid"
 
-def config(test=False):
+def config():
   from datetime import datetime
   default = {
     "start": "18:00:00",
     "end": "08:00:00",
-    "sleep": 1,
+    "sleep": 60,
     "command": sys.argv[1]
   }
 
-  if test:
+  if sys.argv[1] == "test":
     now = datetime.now()
     default["start"] = now.strftime("%H:%M:%S")
-    end_time = now.timestamp() + 20
+    end_time = now.timestamp() + 10
     default["end"] = datetime.fromtimestamp(end_time).strftime("%H:%M:%S")
+    default["command"] = "python test.py"
+    default["sleep"] = 1
 
   return default
 
@@ -90,7 +96,7 @@ def is_process_running(pid):
 
 def start_script(cfg):
   """Start the script as a background process."""
-  print(f"{now_str()} - Starting script with {cfg['command']}...")
+  print(f"{now_str()} - Starting script using '{cfg['command']}' ...")
 
   try:
     # Start the process in the background
@@ -113,16 +119,6 @@ def start_script(cfg):
     return None
 
 
-# def resume_script(pid):
-#   """Resume (SIGCONT) a paused process."""
-#   try:
-#     msg = f"{now_str()} - Resuming script (PID {pid})..."
-#     print(msg)
-#     os.kill(pid, signal.SIGCONT)
-#     print(f"Script resumed (PID {pid})")
-#   except OSError as e:
-#     print(f"Error resuming script: {e}", file=sys.stderr)
-
 def resume_script(pid):
   """Resume (SIGCONT) a paused process."""
   try:
@@ -137,36 +133,13 @@ def resume_script(pid):
     print(f"Error resuming script: {e}", file=sys.stderr)
 
 
-# def pause_script(pid):
-#     """Pause (SIGSTOP) a running process."""
-
-#     try:
-#       with open(f"/proc/{pid}/status", 'r') as f:
-#         status = f.read()
-#       if "State:\tT (stopped)" in status:
-#         print(f"Script is already paused (PID {pid})")
-#         return
-#     except (FileNotFoundError, IOError):
-#       print(f"Could not read /proc/{pid}/status to check if process is paused.")
-#       exit(1)
-
-#     try:
-#         # Check if process is already paused
-#       msg = f"{now_str()} - Pausing script (PID {pid})..."
-#       print(msg)
-#       os.kill(pid, signal.SIGSTOP)
-#       print(f"Script paused (PID {pid})")
-#     except OSError as e:
-#       print(f"Error pausing script: {e}", file=sys.stderr)
-
-
 def pause_script(pid):
     """Pause (SIGSTOP) a running process using psutil for macOS/Linux compatibility."""
     try:
         proc = psutil.Process(pid)
         # Check if process is already paused
         if proc.status() == psutil.STATUS_STOPPED:
-            print(f"Script is already paused (PID {pid})")
+            print(f"{now_str()} - Script is paused (PID {pid})")
             return
 
         msg = f"{now_str()} - Pausing script (PID {pid})..."
@@ -174,12 +147,12 @@ def pause_script(pid):
         
         # Send pause signal
         proc.suspend() 
-        print(f"Script paused (PID {pid})")
+        print(f"{now_str()} - Script paused (PID {pid})")
         
     except psutil.NoSuchProcess:
-        print(f"Process {pid} no longer exists.")
+        print(f"{now_str()} - Process {pid} no longer exists.")
     except Exception as e:
-        print(f"Error pausing script: {e}", file=sys.stderr)
+        print(f"{now_str()} - Error pausing script: {e}", file=sys.stderr)
 
 
 def cleanup():
@@ -194,7 +167,7 @@ def cleanup():
 def main(cfg):
   """Main loop to manage the script based on time window."""
 
-  msg = f"Command\n  {' '.join(cfg['command'])}\nconfigured to run between "
+  msg = f"Command\n  {cfg['command']}\nconfigured to run between "
   msg += f"{cfg['start']} and {cfg['end']}"
   msg += " and paused outside this window."
   print(msg)
@@ -246,7 +219,7 @@ def main(cfg):
           else:
               print(f"{now_str()} - Outside time window and no process to pause.")
 
-      print(f"{now_str()} - Sleeping for {cfg['sleep']} seconds...\n")
+      print(f"{now_str()} - Waiting {cfg['sleep']} seconds for next check if script should be paused or unpaused ...\n")
       time.sleep(cfg["sleep"])
       
 
@@ -256,11 +229,12 @@ def main(cfg):
     if pid and is_process_running(pid):
       print(f"Stopping process (PID {pid})...")
       try:
-        os.kill(pid, signal.SIGTERM)
+        proc = psutil.Process(pid)
+        proc.terminate()
         time.sleep(1)
-        if is_process_running(pid):
-          os.kill(pid, signal.SIGKILL)
-      except OSError:
+        if proc.is_running():
+          proc.kill()
+      except Exception as e:
         pass
 
     cleanup()
@@ -270,6 +244,4 @@ def main(cfg):
 
 
 if __name__ == "__main__":
-  #main(config())
-  # Start process now and run for 20 seconds.
   main(config())
