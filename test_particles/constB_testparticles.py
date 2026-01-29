@@ -58,7 +58,7 @@ norm_time -- this should be some multiple of gyroperiods desired (norm_time/2π 
 def load_params(run):
     if run == "paper": 
         print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs_paper/ConstB"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = False
         USE_RK4 = True
@@ -94,15 +94,21 @@ def load_params(run):
 
     elif run == "demo":
         print("Running DEMO simulation...this should be done in a couple seconds\n")
-        output_folder = "outputs_demo"
+        output_folder = "outputs_demo/ConstB"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True
         USE_RK4 = True
         USE_ANALYTICAL = True
         USE_PLOT_TITLES = True
         USE_FULL_PLOT = True
-        READ_DATA = True      
+        READ_DATA = False      
         WRITE_DATA = True 
+        USE_EXTERNAL_H5 = False
+        USE_EXTERNAL_H5b = False
+
+        external_h5 = None
+        external_h5b = None
+
         pitch_deg = npfloat(45.0)              
         phi_deg = npfloat(45.0)
         x_initial = npfloat(0.0)               
