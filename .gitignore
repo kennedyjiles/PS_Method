@@ -10,3 +10,4 @@ test.py
 *.txt
 Archive/ 
 outputs_*
+*log
