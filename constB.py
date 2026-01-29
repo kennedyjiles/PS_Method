@@ -235,8 +235,8 @@ if USE_FULL_PLOT:
     ax.plot(solution_ps[0], solution_ps[1], color='#009E73', linestyle=':', label=f"PS{orders_used.max()}")
 
     # === Labels and Legend ===
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
     if USE_PLOT_TITLES: ax.set_title(f'2D {particle_type} Trajectory in Constant B Field')
     ax.legend(loc="upper right")
     ax.axis('equal')
@@ -264,9 +264,9 @@ if USE_FULL_PLOT:
     ax.plot(solution_ps[0], solution_ps[1], solution_ps[2], label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
 
     # === Labels and Legend ===
-    ax.set_xlabel('x (m)')
-    ax.set_ylabel('y (m)')
-    ax.set_zlabel('z (m)')
+    ax.set_xlabel('x ')
+    ax.set_ylabel('y ')
+    ax.set_zlabel('z ')
     if USE_PLOT_TITLES: ax.set_title(f'3D {particle_type} Trajectory in Constant B Field')
     ax.legend(loc="upper right")
 
@@ -400,8 +400,8 @@ if USE_FULL_PLOT:
         ax.plot(rk4_x, rk4_y, label=f"RK4", color='#CC79A7', linestyle='-.')
     ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
 
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
+    ax.set_xlabel("x ")
+    ax.set_ylabel("y ")
     if USE_PLOT_TITLES: ax.set_title(f'2D Trajectory of Final {particle_type} Orbits in Constant B Field')
     ax.legend(loc="upper right")
     ax.axis('equal')
@@ -676,9 +676,9 @@ if USE_ANALYTICAL:
                                label='RK4', linestyle='-.', color='#CC79A7')    
     lineps, = ax.semilogy(t_eval_ps*time_factor, np.abs(rel_err_ps),
                            label=f"PS{orders_used.max()}", linestyle=':', color='#009E73')
-    # if USE_EXTERNAL_H5:
-    #     lineps_ext, = ax.semilogy(t_ext*time_factor, np.abs(rel_err_ps_ext),
-    #                              label=f"PS{PS_order_ext}*", linestyle='-.', color='black')
+    if USE_EXTERNAL_H5:
+        lineps_ext, = ax.semilogy(t_ext*time_factor, np.abs(rel_err_ps_ext),
+                                 label=f"PS{PS_order_ext}*", linestyle='-.', color='black')
 
     ax.margins(x=0.01)
     ax.set_yscale('log')
@@ -718,9 +718,9 @@ if USE_ANALYTICAL:
         endpoints.append((t_eval_rk45[-1], np.abs(rel_err_rk45[-1]), "RK45", linerk45.get_color()))
     if USE_RK4:
         endpoints.append((t_eval_rk4[-1],  np.abs(rel_err_rk4[-1]),  "RK4",  linerk4.get_color()))
-    # if USE_EXTERNAL_H5:
-    #     endpoints.append((t_ext[-1], np.abs(rel_err_ps_ext[-1]),
-    #                       f"PS{PS_order_ext}*", lineps_ext.get_color()))
+    if USE_EXTERNAL_H5:
+        endpoints.append((t_ext[-1], np.abs(rel_err_ps_ext[-1]),
+                          f"PS{PS_order_ext}*", lineps_ext.get_color()))
 
     endpoints.append((t_eval_ps[-1], np.abs(rel_err_ps[-1]),
                       f"PS{orders_used.max()}", lineps.get_color()))
