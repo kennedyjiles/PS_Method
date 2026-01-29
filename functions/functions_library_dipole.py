@@ -1,6 +1,6 @@
 import numpy as np
 import os
-import json, hashlib, h5py
+import json, hashlib, h5py, time, re
 from numba import njit
 from functions.functions_library_universal_chunk import npfloat, maybe_njit
 
@@ -398,6 +398,147 @@ def mirror_times_from_PS(final_coeff_matrix, dt, idx_map=None, interp=True, min_
 
     return np.asarray(crossings_idx, dtype=int), np.asarray(crossings_tau, dtype=float)
 
+def init_bounce_stream_state():
+    return {
+        "last_s": None,
+        "last_t": None,
+        "last_y": None,
+        "last_cross_t": -np.inf,
+        "crossing_times": [],
+    }
+
+def init_drift_stream_state():
+    return {
+        "t_samples": [],
+        "phi_samples": [],
+        "last_phi": None,
+    }
+
+def record_drift_sample_at_time(y_prev, y_curr, t_prev, t_curr, tc, state):
+    """
+    Linearly interpolate (x,y) at mirror time tc,
+    compute phi, unwrap incrementally, and store.
+    """
+    # interpolation weight
+    if t_curr == t_prev:
+        w = 0.0
+    else:
+        w = (tc - t_prev) / (t_curr - t_prev)
+
+    x = (1 - w) * y_prev[0] + w * y_curr[0]
+    y = (1 - w) * y_prev[1] + w * y_curr[1]
+
+    phi = np.arctan2(y, x)
+
+    # incremental unwrap
+    if state["last_phi"] is not None:
+        dphi = phi - state["last_phi"]
+        phi -= 2.0 * np.pi * np.round(dphi / (2.0 * np.pi))
+
+    state["last_phi"] = phi
+    state["t_samples"].append(tc)
+    state["phi_samples"].append(phi)
+
+
+def process_bounce_and_drift_chunk(
+    y_chunk,
+    t_chunk,
+    bounce_state,
+    drift_state,
+    min_gap_tau,
+    s_eps,
+    idx_map=None,
+    interp=True,
+):
+    idx = named_indices if idx_map is None else idx_map
+
+    vx = y_chunk[idx["vx"], :]
+    vy = y_chunk[idx["vy"], :]
+    vz = y_chunk[idx["vz"], :]
+    Bx = y_chunk[idx["Bx"], :]
+    By = y_chunk[idx["By"], :]
+    Bz = y_chunk[idx["Bz"], :]
+
+    s = vx*Bx + vy*By + vz*Bz
+
+    for i in range(len(s)):
+        si = s[i]
+        ti = t_chunk[i]
+
+        if bounce_state["last_s"] is not None:
+            s0, s1 = bounce_state["last_s"], si
+
+            if abs(s0) >= s_eps and abs(s1) >= s_eps:
+                if s0 * s1 < 0.0 and (ti - bounce_state["last_cross_t"]) >= min_gap_tau:
+
+                    # --- interpolate mirror time ---
+                    if interp:
+                        denom = (s1 - s0)
+                        if denom == 0.0:
+                            tc = ti
+                        else:
+                            tc = bounce_state["last_t"] + (ti - bounce_state["last_t"]) * (-s0) / denom
+                    else:
+                        tc = ti
+
+                    bounce_state["crossing_times"].append(tc)
+                    bounce_state["last_cross_t"] = tc
+
+                    # --- NEW: drift sample at mirror ---
+                    record_drift_sample_at_time_npunwrap_semantics(
+                        y_prev=bounce_state["last_y"],
+                        y_curr=y_chunk[:, i],
+                        t_prev=bounce_state["last_t"],
+                        t_curr=ti,
+                        tc=tc,
+                        state=drift_state,
+                    )
+
+        bounce_state["last_s"] = si
+        bounce_state["last_t"] = ti
+        bounce_state["last_y"] = y_chunk[:, i]
+
+
+def finalize_bounce_stream(state, time_scale_sec=None):
+    return bounce_summary(state["crossing_times"], time_scale_sec=time_scale_sec)
+
+def finalize_drift_stream(
+    drift_state,
+    time_scale_sec=None,
+    min_phase_rad=1.0,
+):
+    t = np.asarray(drift_state["t_samples"], dtype=float)
+    phi = np.asarray(drift_state["phi_samples"], dtype=float)
+
+    if t.size < 2:
+        return {
+            "period_tau_mean": None,
+            "period_tau_fit": None,
+            "period_s_mean": None,
+            "period_s_fit": None,
+            "direction": +1,
+        }
+
+    # slope-based estimate
+    a, b = np.polyfit(t, phi, 1)
+    dphi_span = phi.max() - phi.min()
+
+    period_tau_fit = None
+    if a != 0.0 and dphi_span >= min_phase_rad:
+        period_tau_fit = (2.0 * np.pi) / abs(a)
+
+    # direction
+    direction = +1 if (phi[-1] - phi[0]) >= 0 else -1
+
+    result = {
+        "period_tau_fit": period_tau_fit,
+        "period_s_fit": (period_tau_fit * time_scale_sec)
+                          if (period_tau_fit is not None and time_scale_sec is not None)
+                          else None,
+        "direction": direction,
+    }
+    return result
+
 
 def bounce_summary(crossing_times_tau, time_scale_sec=None):
     import numpy as np
@@ -430,6 +571,38 @@ def bounce_summary(crossing_times_tau, time_scale_sec=None):
 # ========================
 # === Drift Functions ===
 # ========================
+
+def record_drift_sample_at_time_npunwrap_semantics(
+    y_prev, y_curr,
+    t_prev, t_curr, tc,
+    state,
+):
+    # interpolation weight
+    w = 0.0 if t_curr == t_prev else (tc - t_prev) / (t_curr - t_prev)
+
+    # raw phi at endpoints
+    phi0 = np.arctan2(y_prev[1], y_prev[0])
+    phi1 = np.arctan2(y_curr[1], y_curr[0])
+
+    # --- LOCAL unwrap: allow multi-2π jumps ---
+    d = phi1 - phi0
+    if abs(d) > np.pi:
+        phi1 -= 2.0 * np.pi * np.round(d / (2.0 * np.pi))
+
+    # interpolate phi (NOT x,y)
+    phi_tc = (1.0 - w) * phi0 + w * phi1
+
+    # --- GLOBAL unwrap: allow multi-2π jumps relative to last stored sample ---
+    if state.get("last_phi", None) is not None:
+        d2 = phi_tc - state["last_phi"]
+        if abs(d2) > np.pi:
+            phi_tc -= 2.0 * np.pi * np.round(d2 / (2.0 * np.pi))
+
+    state["last_phi"] = phi_tc
+    state["t_samples"].append(tc)
+    state["phi_samples"].append(phi_tc)
+
+
 
 def _unwrap_phi_from_PS(final_coeff_matrix):
     """
@@ -561,6 +734,7 @@ def drift_period_from_PS(final_coeff_matrix, dt_tau,
 # ========================
 # === Write Functions ===
 # ========================
+
 def _to_serializable(x):
     if isinstance(x, (np.floating, np.float32, np.float64)):
         return float(x)
@@ -570,8 +744,8 @@ def _to_serializable(x):
         return x.tolist()
     return x
 
-def get_run_params(USE_RK45, USE_RK4, USE_RKG,
-                   mass_si, q_e, B_0, gamma,
+def get_run_params(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUNKING,
+                   mass_si, q_e, B_0, gamma, user_min_phase,
                    x_initial, y_initial, z_initial,
                    pitch_deg, phi_deg,
                    norm_time, ps_step, rk4_step, rkg_step,
@@ -583,12 +757,17 @@ def get_run_params(USE_RK45, USE_RK4, USE_RKG,
         "USE_RK45": bool(USE_RK45),
         "USE_RK4":  bool(USE_RK4),
         "USE_RKG":  bool(USE_RKG),
+        "USE_PS":  bool(USE_PS),
+        "PS_CHUNKING":  bool(PS_CHUNKING),
+
 
         # physics & normalization
+        "decimate": _to_serializable(decimate),
         "mass_si": _to_serializable(mass_si),
         "q_e": _to_serializable(q_e),
         "B_0": _to_serializable(B_0),
         "gamma": _to_serializable(gamma),
+        "user_min_phase": _to_serializable(user_min_phase),
 
         # initial conditions (positions in RE units and velocity setup)
         "x_initial": _to_serializable(x_initial),
@@ -620,58 +799,15 @@ def run_hash(params: dict) -> str:
 def h5_path_for(params, output_folder):
     return os.path.join(output_folder, f"run_{run_hash(params)}.h5")
 
-# def save_results_h5(h5_path, params, results):
-#     """
-#     results expects keys like:
-#       'ps': {'y': solution_ps, 'orders': orders_used, ...}
-#       'rk4': {'y': solution_rk4, ...}
-#       'rk45': {'t': solution_rk45.t, 'y': solution_rk45.y}
-#       'rkg': {'y': solution_rkg, ...}
-#       'meta': {'timing': {...}, 'physical_time': physical_time, ...}
-#     """
-#     with h5py.File(h5_path, "w") as f:
-#         # store params as a single JSON attribute on root
-#         f.attrs["params_json"] = json.dumps(
-#             params, sort_keys=True, default=_to_serializable
-#         )
-
-#         # === Solver results ===
-#         for k in ("ps", "rk4", "rk45", "rkg"):
-#             if k in results and results[k] is not None:
-#                 grp = f.create_group(k)
-#                 for name, arr in results[k].items():
-#                     if arr is None:
-#                         continue
-#                     # >>> FIX: only store numeric arrays <<<
-#                     if not isinstance(arr, np.ndarray):
-#                         continue
-#                     grp.create_dataset(
-#                         name,
-#                         data=arr,
-#                         compression="gzip",
-#                         compression_opts=2
-#                     )
-
-#         # === Meta info ===
-#         meta = results.get("meta", {})
-#         gmeta = f.create_group("meta")
-
-#         # timing dict → attrs
-#         for mk, mv in meta.get("timing", {}).items():
-#             gmeta.attrs[f"timing_{mk}"] = float(mv)
-
-#         # scalar attrs
-#         for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
-#             if sk in meta:
-#                 gmeta.attrs[sk] = meta[sk]
-
-def save_results_h5(h5_path, params, results):
+def save_results_h5(h5_path, results, summary):
     with h5py.File(h5_path, "w") as f:
 
-        # --- params ---
-        f.attrs["params_json"] = json.dumps(
-            params, sort_keys=True, default=_to_serializable
-        )
+        # # --- params ---
+        # f.attrs["params_json"] = json.dumps(
+        #     params, sort_keys=True, default=_to_serializable
+        # )
+
+        f.attrs["summary_json"] = json.dumps(summary)
 
         # --- solver groups ---
         for k in ("ps", "rk4", "rk45", "rkg"):
@@ -745,6 +881,56 @@ def load_results_h5(h5_path):
 
         return loaded
 
+def append_results_h5(h5_path, results, summary):
+    """
+    Append non-PS solver results and metadata to an existing HDF5 file.
+    Ensures dictionary is written exactly once (for streaming PS files).
+    """
+
+    with h5py.File(h5_path, "a") as f:
+
+        # Root-level metadata (FINALIZE STREAMED FILE)
+        if "summary_json" not in f.attrs:
+            f.attrs["summary_json"] = json.dumps(summary)
+
+        # Meta group
+        if "meta" not in f:
+            gmeta = f.create_group("meta")
+        else:
+            gmeta = f["meta"]
+
+        # Timing
+        for mk, mv in results["meta"]["timing"].items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+
+        # Other meta
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in results["meta"]:
+                gmeta.attrs[sk] = results["meta"][sk]
+
+        # -------------------------------------------------
+        # RK solvers
+        # -------------------------------------------------
+        for k in ("rk4", "rk45", "rkg"):
+            if results.get(k) is None:
+                continue
+
+            if k in f:
+                del f[k]
+
+            grp = f.create_group(k)
+            for name, val in results[k].items():
+                if isinstance(val, np.ndarray):
+                    grp.create_dataset(
+                        name,
+                        data=val,
+                        compression="gzip",
+                        compression_opts=2,
+                    )
+                else:
+                    grp.attrs[name] = val
+
+
 def summarize_error(label, err, f):
     mean_val = np.mean(err)
     max_val  = np.max(np.abs(err))
@@ -763,6 +949,165 @@ def summarize(err):
         "rms":  np.sqrt(np.mean(err**2))
     }
 
+def load_legacy_file(h5_path):
+    """
+    loader for legacy HDF5 files
+    """
+
+    f = h5py.File(h5_path, "r") 
+
+    # -------------------------------------------------
+    # Params (legacy)
+    # -------------------------------------------------
+    params = {}
+    if "params_json" in f.attrs:
+        params = json.loads(f.attrs["params_json"])
+
+    # -------------------------------------------------
+    # Meta
+    # -------------------------------------------------
+    meta = f["meta"]
+    timing = {
+        k.replace("timing_", ""): float(v)
+        for k, v in meta.attrs.items()
+        if k.startswith("timing_")
+    }
+
+    particle_label = meta.attrs.get("particle_label", "")
+    label_l = particle_label.lower()
+
+    # Reconstruct Particle type
+    if "proton" in label_l:
+        particle = "Proton"
+    elif "electron" in label_l:
+        particle = "Electron"
+    else:
+        particle = "Unknown"
+
+    # Reconstruct Energy (eV)
+    m = re.search(r"([0-9.+\-eE]+)\s*ev", label_l)
+    if m:
+        KE_particle = float(m.group(1))
+    else:
+        raise RuntimeError(f"Could not parse energy from particle_label: '{particle_label}'")
+    
+    # Reconstruct gyroperiods from legacy files
+    x_initial = params["x_initial"]
+    ps_step = params.get("ps_step",0)
+    rk4_step = params.get("rk4_step", 0)
+    rkg_step = params.get("rkg_step", 0)
+    norm_time = params["norm_time"]
+    T_gyro = 2.0 * np.pi * (x_initial**3)  
+    gyroperiods= norm_time / T_gyro
+    npfloat= np.float64 
+
+    summary = {
+        "meta": {
+            "stem": h5_path.split("/")[-1].replace(".h5", ""),
+            "legacy": True,
+            "particle": particle,
+            "mass_si": params["mass_si"],
+            "q_e": params["q_e"],
+            "energy_eV": npfloat(KE_particle),   
+            "pitch_deg": params["pitch_deg"],
+            "phi_deg": params["phi_deg"],
+            "x0": params["x_initial"],
+            "y0": params["y_initial"],
+            "z0": params["z_initial"],
+            "B0_T": params["B_0"],
+            "gyroperiods": gyroperiods,
+            "norm_time": float(meta.attrs.get("norm_time")),
+            "physical_time": float(meta.attrs.get("physical_time")),
+            "percent_c": float(meta.attrs.get("percent_c")),
+            "qoverm": params["qoverm"],
+            "dtype": npfloat.__name__,  
+            "timing": timing,
+
+        },
+        "ps": {"enabled": False},
+        "rk4": {"enabled": False},
+        "rk45": {"enabled": False},
+        "rkg": {"enabled": False},
+    }
+
+    datasets = {}
+
+    # ======= PS ========
+    if "ps" in f:
+        g = f["ps"]
+        streaming = bool(g.attrs.get("streaming", False))
+
+        # IMPORTANT: dataset handles only (lazy access)
+        datasets["ps_y"] = g["y"] if "y" in g else None
+        datasets["ps_orders"] = g["orders"] if "orders" in g else None
+
+        # Authoritative max order (safe for large files)
+        max_ps_used = (
+            int(g.attrs["max_ps"])
+            if "max_ps" in g.attrs
+            else None
+        )
+
+        summary["ps"].update({
+            "enabled": True,
+            "dt": float(g.attrs.get("dt", ps_step)),
+            "steps": int(g.attrs.get("steps", int(norm_time / ps_step))),
+            "streaming": streaming,
+            "ordercap": params["PS_order"],
+            "max_ps": max_ps_used,              
+            "decimate": int(g.attrs.get("decimate", 1)),
+            "numberstepspergyro": int(np.round(T_gyro / g.attrs.get("dt", ps_step)) ),
+            "E0": float(g.attrs.get("E0")),
+            "mu0": float(g.attrs.get("mu0")),
+            "tol": params["tol"],
+        })
+
+   
+   
+    # ======= RK4 ========
+    if "rk4" in f:
+        g = f["rk4"]
+        summary["rk4"].update({
+            "enabled": True,
+            "dt": g.attrs.get("dt", rk4_step),
+            "steps": g.attrs.get("steps", int(norm_time/rk4_step)),
+            "numberstepspergyro": int(np.round(T_gyro/g.attrs.get("dt", rk4_step)))
+        })
+        datasets["rk4_y"] = g["y"]
+
+    # ======= RK45 ========
+    if "rk45" in f:
+        summary["rk45"].update({
+                    "enabled": True,
+                    "atol": params["atol_rk45"],
+                    "rtol": params["rtol_rk45"],
+                })
+        datasets["rk45_t"] = f["rk45"]["t"]
+        datasets["rk45_y"] = f["rk45"]["y"]
+
+    # ======= RKG ========
+    if "rkg" in f:
+        g = f["rkg"]
+        summary["rkg"].update({
+            "enabled": True,
+            "dt": g.attrs.get("dt", rkg_step),
+            "steps": g.attrs.get("steps", int(norm_time/rkg_step)),
+            "numberstepspergyro": int(np.round(T_gyro/g.attrs.get("dt", rkg_step)))
+
+        })
+        datasets["rkg_y"] = g["y"]
+
+    return summary, datasets, params, f
+
+
+def write_dict(f, d, indent=0):
+    pad = " " * indent
+    for k, v in d.items():
+        if isinstance(v, dict):
+            f.write(f"{pad}{k}:\n")
+            write_dict(f, v, indent + 2)
+        else:
+            f.write(f"{pad}{k} = {v}\n")
 
 # ===================================
 # === Decimate/Chunking Functions ===
@@ -777,14 +1122,12 @@ def run_ps_streaming_with_decimation(
     E0_ps,
     mu0_ps,
     cache_path,
-    write_data=True,
-    chunk_steps=10**6,
-    decimate=1,
+    write_data,
+    chunk_steps,
+    decimate,
+    N_STEPS_PER_GYRO_ps,  
+    user_min_phase,
 ):
-    import time
-    import h5py
-    import numpy as np
-
     start_time_ps = time.time()
 
     n_state = 17
@@ -796,16 +1139,18 @@ def run_ps_streaming_with_decimation(
     if write_data:
         f = h5py.File(cache_path, "w")
         ps_grp = f.create_group("ps")
-
-        ps_grp.attrs["dt"]        = float(ps_step)
+        ps_grp.attrs["ordercap"] = PS_order
+        ps_grp.attrs["numberstepspergyro"] = int(N_STEPS_PER_GYRO_ps)
+        ps_grp.attrs["dt"]        = npfloat(ps_step)
         ps_grp.attrs["steps"]    = int(steps_ps)
-        ps_grp.attrs["t0"]       = 0.0
+        ps_grp.attrs["streaming"] = True
+        ps_grp.attrs["chunksize"]= int(chunk_steps)
         ps_grp.attrs["decimate"] = int(decimate)
-
+        ps_grp.attrs["tol"] = npfloat(tol)
+        ps_grp.attrs["minphase"] = npfloat(user_min_phase)
         ps_grp.attrs["E0"]       = float(E0_ps)
         ps_grp.attrs["mu0"]      = float(mu0_ps)
-
-        ps_grp.attrs["streaming"] = True
+        ps_grp.attrs["t0"]       = 0.0
 
         dset_y = ps_grp.create_dataset(
             "y",
@@ -911,59 +1256,6 @@ def slice_solution(t, sol, window_duration, norm_time, mode="last"):
 
     return x, y, z
 
-def append_results_h5(h5_path, results, params):
-    """
-    Append non-PS solver results and metadata to an existing HDF5 file.
-    Ensures params_json is written exactly once (for streaming PS files).
-    """
-
-    with h5py.File(h5_path, "a") as f:
-
-        # -------------------------------------------------
-        # Root-level metadata (FINALIZE STREAMED FILE)
-        # -------------------------------------------------
-        if "params_json" not in f.attrs:
-            f.attrs["params_json"] = json.dumps(params)
-
-        # -------------------------------------------------
-        # Meta group
-        # -------------------------------------------------
-        if "meta" not in f:
-            gmeta = f.create_group("meta")
-        else:
-            gmeta = f["meta"]
-
-        # Timing
-        for mk, mv in results["meta"]["timing"].items():
-            gmeta.attrs[f"timing_{mk}"] = float(mv)
-
-        # Other meta
-        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
-            if sk in results["meta"]:
-                gmeta.attrs[sk] = results["meta"][sk]
-
-        # -------------------------------------------------
-        # RK solvers
-        # -------------------------------------------------
-        for k in ("rk4", "rk45", "rkg"):
-            if results.get(k) is None:
-                continue
-
-            if k in f:
-                del f[k]
-
-            grp = f.create_group(k)
-            for name, val in results[k].items():
-                if isinstance(val, np.ndarray):
-                    grp.create_dataset(
-                        name,
-                        data=val,
-                        compression="gzip",
-                        compression_opts=2,
-                    )
-                else:
-                    grp.attrs[name] = val
-
 
 def compute_energy_ps_chunked(
     ps_y_h5,
@@ -978,8 +1270,6 @@ def compute_energy_ps_chunked(
     Computes relative kinetic energy drift in a memory-efficient, chunked manner.
     Optionally returns decimated (stride-sampled) plot arrays only.
     """
-    import numpy as np
-
     n_store = ps_y_h5.shape[1]
 
     if return_plot_data:
@@ -1011,3 +1301,63 @@ def compute_energy_ps_chunked(
     if return_plot_data:
         return t_plot[:k], drift_plot[:k]
 
+def build_run_stem(summary, stem):
+    r = summary["meta"]
+    ps = summary["ps"]
+
+    parts = [
+        stem,
+        "DipoleB_",
+        r["particle"],
+        f"{r['energy_eV']:.1e}eV",
+        f"pitch{r['pitch_deg']}",
+        f"phi{r['phi_deg']}",
+        f"{r['norm_time']:.2e}s",
+        r["dtype"],
+    ]
+
+    if ps["enabled"]:
+        parts.insert(4, f"{ps['dt']}step_PS{ps['max_ps']}")
+
+    return "_".join(parts)
+
+def build_figure_filename(
+    summary,
+    output_folder,
+    stem,
+    figure_tag,
+    ext="png"
+):
+    run_stem = build_run_stem(summary, stem)
+
+    return (
+        f"{output_folder}/{run_stem}_{figure_tag}.{ext}"
+    )
+
+# ===================================
+# ======= Debug/Sanity Check =======
+# ===================================
+
+def check_time_grids(norm_time, ps_step=None, steps_ps=None,
+                     rk4_step=None, steps_rk4=None,
+                     rkg_step=None, steps_rkg=None,
+                     rk45_t=None):
+
+    lines = []
+
+    def _report(label, step, steps):
+        final_t = step * steps
+        lines.append(
+            f"{label}: step={step:.3e}, steps={steps}, final_time={final_t:.3e}"
+        )
+
+    if ps_step is not None and steps_ps is not None:
+        _report("PS", ps_step, steps_ps)
+    if rk4_step is not None and steps_rk4 is not None:
+        _report("RK4", rk4_step, steps_rk4)
+    if rkg_step is not None and steps_rkg is not None:
+        _report("RKG", rkg_step, steps_rkg)
+    if rk45_t is not None:
+        lines.append(f"RK45: final time = {rk45_t[-1]:.3e}")
+
+    return "\n".join(lines)

@@ -65,12 +65,13 @@ def load_params(run):
         USE_ANALYTICAL = True
         USE_PLOT_TITLES = False
         USE_FULL_PLOT = True
-        READ_DATA = False      
+        READ_DATA = True      
         WRITE_DATA = True
-        USE_EXTERNAL_H5 = False
+        USE_EXTERNAL_H5 = True
         USE_EXTERNAL_H5b = False
 
-        external_h5 = "outputs_rawdata/run_45e3b0843b9ca245.h5" 
+        external_h5 = "outputs_rawdata/run_29620be4f429e0cf.h5" 
+        PS_order_ext= 19
         external_h5b = "outputs_rawdata/run_344c6be65eafa517.h5" 
 
         pitch_deg = npfloat(45.0)              

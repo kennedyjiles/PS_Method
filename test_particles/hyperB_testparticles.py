@@ -59,9 +59,18 @@ def load_params(run):
         USE_RK45 = True        
         USE_RK4 = True         
         READ_DATA = True      
-        WRITE_DATA = False      
+        WRITE_DATA = True      
         USE_PLOT_TITLES = True 
-        USE_FULL_PLOT = True 
+        USE_FULL_PLOT = False 
+
+        USE_EXTERNAL_H5 = False
+        USE_EXTERNAL_H5b = False
+
+        external_h5 = "outputs_rawdata/" 
+        PS_order_ext = 1
+        external_h5b = "outputs_rawdata/" 
+        PS_order_ext = 1
+
         
         pitch_deg = npfloat(75.0)
         phi_deg = npfloat(45.0)
@@ -77,27 +86,28 @@ def load_params(run):
         slice_mode = "last"        
  
         rk4_step = npfloat(0.063)               
-        ps_step = rk4_step
-        norm_time = 50 * 2 * np.pi
+        ps_step = rk4_step             
+        gyroperiods = 1e2
+        norm_time = (gyroperiods) * 2 * np.pi  
 
     elif run == "paper1": # 10 keV electron, 75deg pitch, delta=500km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper_HYPER"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
         READ_DATA = True      
         WRITE_DATA = True     
         USE_PLOT_TITLES = False
-        USE_FULL_PLOT = True 
-        USE_EXTERNAL_H5 = True
-        USE_EXTERNAL_H5b = True
+        USE_FULL_PLOT = False 
+        USE_EXTERNAL_H5 = False
+        USE_EXTERNAL_H5b = False
 
         external_h5 = "outputs_rawdata/run_8d05c562f1137db2.h5" 
         PS_order_ext = "25"
         external_h5b = "outputs_rawdata/run_2e64db24ec88cb7e.h5" 
-        PS_order_ext = "10"
+        PS_order_extb = "10"
 
 
         pitch_deg = npfloat(75.0)
@@ -121,7 +131,7 @@ def load_params(run):
     elif run == "paper2": # 10 keV electron, 75deg pitch, delta=50km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper_HYPER"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True        
@@ -129,8 +139,8 @@ def load_params(run):
         WRITE_DATA = True     
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
-        USE_EXTERNAL_H5 = True
-        USE_EXTERNAL_H5b = True
+        USE_EXTERNAL_H5 = False
+        USE_EXTERNAL_H5b = False
 
     
         external_h5 = "outputs_rawdata/run_6fc9daec43008056.h5"
@@ -159,7 +169,7 @@ def load_params(run):
     elif run == "paper3": # 100 keV proton, -15deg pitch, delta=200km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper_HYPER"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
@@ -167,8 +177,8 @@ def load_params(run):
         WRITE_DATA = True      
         USE_PLOT_TITLES = False 
         USE_FULL_PLOT = False 
-        USE_EXTERNAL_H5 = True
-        USE_EXTERNAL_H5b = True
+        USE_EXTERNAL_H5 = False
+        USE_EXTERNAL_H5b = False
 
 
         external_h5 = "outputs_rawdata/run_d72c9d579dd24595.h5" 
@@ -199,14 +209,14 @@ def load_params(run):
     elif run == "paper4": # paper1 simulation at larger ps_step
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper_HYPER"
+        output_folder = "outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = False       
+        USE_RK45 = True       
         USE_RK4 = True        
         READ_DATA = True      
         WRITE_DATA = True     
         USE_PLOT_TITLES = False
-        USE_FULL_PLOT = True  
+        USE_FULL_PLOT = False  
         USE_EXTERNAL_H5 = False
         USE_EXTERNAL_H5b = False
 
@@ -227,40 +237,10 @@ def load_params(run):
         window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
         slice_mode = "last"   
 
-        rk4_step = npfloat(0.03)               
-        ps_step = npfloat(1.00)
-        gyroperiods = 1e6               
+        rk4_step = npfloat(0.063)               
+        ps_step = npfloat(0.63)
+        gyroperiods = 1e5               
         norm_time = (gyroperiods) * 2 * np.pi                
-
-    elif run == "tinker": # tinkering with things
-            if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
-            else: print("Running full PAPER simulation...this will take a few minutes\n")
-            output_folder = "outputs_paper_hyperB"
-            os.makedirs(output_folder, exist_ok=True)
-            USE_RK45 = True       
-            USE_RK4 = True        
-            READ_DATA = True      
-            WRITE_DATA = False     
-            USE_PLOT_TITLES = False
-            USE_FULL_PLOT = True  
-
-            pitch_deg = npfloat(85.0)
-            phi_deg = npfloat(1.0)
-            delta = 1                             
-            x_initial_si = npfloat(0.0)             
-            y_initial_si = npfloat(0.1 * delta)
-            z_initial_si = npfloat(0.0)
-            KE_particle = npfloat(10e3)             
-            B_0 = npfloat(10e-9)                    
-            mass_si = m_e
-
-            window_duration = npfloat(8*2*np.pi) # only interested in a couple gyroperiods
-            slice_mode = "last"   
-
-            rk4_step = npfloat(0.01)               
-            ps_step = rk4_step
-            gyroperiods = 1e4          
-            norm_time = (gyroperiods) * 2 * np.pi 
 
     else:
         raise ValueError("run must be 'demo', 'paper1', 'paper2', 'paper3', or 'paper4'")
