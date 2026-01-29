@@ -67,7 +67,7 @@ def load_params(run):
         USE_FULL_PLOT = True
         READ_DATA = True      
         WRITE_DATA = True
-        USE_EXTERNAL_H5 = True
+        USE_EXTERNAL_H5 = False
         USE_EXTERNAL_H5b = False
 
         external_h5 = "outputs_rawdata/run_29620be4f429e0cf.h5" 
