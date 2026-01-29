@@ -6,7 +6,7 @@ logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG)
 legacy_h5_path = None  # hard disable for most runs, can be overwritten with 'legacy' load
 manual_h5_path = None  # hard disable for most runs, can be overwritten with 'manual' load
 
-DEBUG = True
+DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
 if DEBUG: tracemalloc.start()
 
 """
