@@ -1,5 +1,5 @@
-from project_setup import * 
-logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG)
+from utility_scripts.project_setup import * 
+logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
 
 
 # === Misc Odds and Ends ===  
