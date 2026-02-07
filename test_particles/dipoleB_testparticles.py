@@ -493,7 +493,7 @@ def load_params(run):
     elif run == "monster_ps": #100 keV proton, 30deg pitch, 5RE, B0 at Earth surface
         if USE_FLOAT128: print("Running PAPER simulation in float128...this may take a >30 minutes\n")
         else: print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_giant_runs"
+        output_folder = "outputs_extended_runs"
         os.makedirs(output_folder, exist_ok=True)
 
         READ_DATA = True 
@@ -528,7 +528,7 @@ def load_params(run):
         rk4_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rk4,1))               
         ps_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_ps,1))                                  
         rkg_step = npfloat(round(T_gyro/N_STEPS_PER_GYRO_rkg,1))                         
-        gyroperiods = 1e9
+        gyroperiods = 5e8
         norm_time = npfloat(gyroperiods) * T_gyro
         # norm_time= 314159265358.9793 # from paper
         # gyroperiods= npfloat(norm_time) / T_gyro # for paper
@@ -555,7 +555,6 @@ def load_params(run):
         USE_EXTERNAL_H5_rkg = False
 
         external_h5_ps = "outputs_rawdata/" 
-        PS_order_ext = 16    
         external_h5_rk4 = "outputs_rawdata/" 
         external_h5_rk45 = "outputs_rawdata/" 
         external_h5_rkg = "outputs_rawdata/" 
