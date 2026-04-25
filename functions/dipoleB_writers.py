@@ -208,7 +208,6 @@ def write_master_csv(
     output_folder, stem, particle_type,
     KE_particle, x_initial, y_initial, z_initial, pitch_deg, phi_deg,
     dragt_log,
-    # Per-method data: list of (method_name, steps, dt, e_drift_arr, mu_drift_arr)
     method_records,
 ):
     """

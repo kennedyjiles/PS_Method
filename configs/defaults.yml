@@ -83,5 +83,4 @@ external_h5:
   rkg:  "outputs/outputs_rawdata/"
 
 # --- Special modes (leave null for normal runs) ---
-legacy_h5_path: null      # path to legacy h5 file for direct loading
 manual_h5_path: null      # path to specific h5 file for manual loading

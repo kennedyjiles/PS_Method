@@ -36,7 +36,7 @@ elif os.path.isfile(os.path.join(_configs_dir, f"{run}.yml")):
     print(f"Loading YAML config: {_yaml_path}\n")
     params = load_config(_yaml_path, npfloat=npfloat)
 
-# --- Always present (from _defaults + every run mode) ---
+# --- Always needed (from _defaults + every run mode) ---
 READ_DATA       = params["READ_DATA"]
 USE_RK45        = params["USE_RK45"]
 USE_RK4         = params["USE_RK4"]
@@ -83,7 +83,6 @@ N_STEPS_PER_GYRO_rkg = params.get("N_STEPS_PER_GYRO_rkg", None)
 
 # --- Optional overrides (only some modes set these) ---
 PS_order       = params.get("PS_order", PS_order)                # module default is 40
-legacy_h5_path = params.get("legacy_h5_path", None)
 manual_h5_path = params.get("manual_h5_path", None)
 
 
@@ -94,67 +93,8 @@ plt.ioff()                                 # turn off interactive mode for plots
 if USE_FLOAT128: USE_RKG = False
 
 # ======================================================
-# ============= Legacy/Manual File Load ================
+# ============= Manual File Load ================
 # ======================================================
-"""
-this allows legacy files to be loaded directly through the 'legacy' run in the test particle function, 
-early runs didn't have all the parameters we are now tracking so the scanning doesn't work properly. The 
-functions take the old h5 files we did have and reconstructs a dictionary in the format we are using now.
-"""
-USE_LEGACY_FILE = legacy_h5_path is not None and os.path.exists(legacy_h5_path)
-if USE_LEGACY_FILE:
-    cache_path = legacy_h5_path
-    print(f"You have loaded a LEGACY file: {cache_path} — loading.\n")
-    summary, datasets, params, h5_handle = load_legacy_file(cache_path)
-    
-    mass_si = summary["meta"]["mass_si"]
-    q_e = summary["meta"]["q_e"]
-    B_0 = summary["meta"]["B0_T"]
-    x_initial = summary["meta"]["x0"]
-    y_initial = summary["meta"]["y0"]
-    z_initial = summary["meta"]["z0"]
-    pitch_deg = summary["meta"]["pitch_deg"]
-    phi_deg = summary["meta"]["phi_deg"]
-    norm_time = summary["meta"]["norm_time"]
-    KE_particle = summary["meta"]["energy_eV"]
-    USE_PS= summary["ps"]["enabled"]
-    USE_RK4= summary["rk4"]["enabled"]
-    USE_RK45= summary["rk45"]["enabled"]
-    USE_RKG= summary["rkg"]["enabled"]
-
-    T_gyro = 2.0 * np.pi * (x_initial**3) 
-
-    timing = summary["meta"]["timing"]
-    stem = summary["meta"]["stem"]
-
-    if USE_PS:
-        ps_step= summary["ps"]["dt"]
-        steps_ps = summary["ps"]["steps"]
-        PS_decimate = summary["ps"]["decimate"]
-        gyroperiods= npfloat(steps_ps) / T_gyro
-        N_STEPS_PER_GYRO_ps = summary["ps"]["numberstepspergyro"]
-        PS_CHUNKING=summary["ps"]["streaming"]
-        solution_ps = expand_h5_to_full(datasets["ps_y"][()])
-        orders_used = datasets["ps_orders"][()]
-
-    if USE_RK4: 
-        solution_rk4 = datasets["rk4_y"][()]
-        steps_rk4 = summary["rk4"]["steps"]
-        rk4_step= summary["rk4"]["dt"]
-        N_STEPS_PER_GYRO_rk4 = summary["rk4"]["numberstepspergyro"]
-    if USE_RK45:
-        class _Obj: pass
-        solution_rk45 = _Obj()
-        solution_rk45.t = datasets["rk45_t"][()]
-        solution_rk45.y = datasets["rk45_y"][()]
-        solution_rk45.sol = None
-
-    if USE_RKG: 
-        solution_rkg = datasets["rkg_y"][()]
-        steps_rkg = summary["rkg"]["steps"]
-        rkg_step= summary["rkg"]["dt"]
-        if not USE_PS: gyroperiods= npfloat(steps_rkg) / T_gyro
-        N_STEPS_PER_GYRO_rkg = summary["rkg"]["numberstepspergyro"]
 
 USE_MANUAL_FILE = manual_h5_path is not None and os.path.exists(manual_h5_path)
 if USE_MANUAL_FILE:   
@@ -306,7 +246,7 @@ if DEBUG:
 
 # --- Initial invariants for E0 and mu0 for h5 file ---
 """
-To streamline memory for large files, rather than loading everything, we are often slicing out what we need
+To streamline memory for large files, we are slicing out what we need
 directly from the h5 file, this just establishes the E0 and mu0 values for those calculations
 """
 vx0, vy0, vz0 = initial_pos_vel[3:6]
@@ -324,12 +264,12 @@ mu0_ps = compute_mu_ps(y0_ps, mass)[0]
 
 # === Build parameter tracer & check cache ===
 """
-This first part is scanning the files already stored in 'run_storage' based on your input parameters (not specifically
-lodaded legacy files) in the test particle script to see if we already have the data. If it finds the data, it will 
+This first part is scanning the files already stored in 'run_storage' based on input parameters (not specifically
+lodaded legacy files) in the yml to see if we already have the data. If it finds the data, it will 
 load relevant parameters. If it does not find a file, it will start running the solvers to get the needed data. 
 Beware that these files can be GB size for dipole.
 """
-if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
+if not USE_MANUAL_FILE:
     params = get_run_params(USE_RK45, USE_RK4, USE_RKG, USE_PS, PS_decimate, PS_CHUNKING,   # parameters it is scanning
                     mass_si, q_e, B_0, gamma, user_min_phase,
                     x_initial, y_initial, z_initial,
@@ -404,7 +344,7 @@ if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
 
 
             # ---- Load solver data ------
-            # === PS (chunked — data stays on disk, read in slices later) ===
+            # === PS ===
             if USE_PS and "ps" in cached:
                 solution_ps = None
                 orders_used = None
@@ -987,18 +927,16 @@ plot_slice_3d(
 This section calculates the relative KE error plot over the entire run. This is done in chunks
 """
 
-if DEBUG:
-    tracemalloc.start()
+if DEBUG: tracemalloc.start()
 
-equatorial_r3 = x_initial**3
-time_factor = 1.0 / (2.0 * np.pi * equatorial_r3)  # to convert plots to gyroperiods
+time_factor = 1.0 / T_gyro  # to convert normalized time to gyroperiods
 
 if USE_PS: energy_stride = max(1, n_ps // MAX_PLOT_POINTS)
 # energy_stride=1 
 
 
 if USE_EXTERNAL_H5_ps:
-    # Open the file directly from the SSD to avoid loading 200GB into RAM
+    # Open the file directly from the SSD to avoid loading 200GB into RAM...it will die a horrible death
     with h5py.File(external_h5_ps, 'r') as external:
         ext_ps = external["ps"]
         

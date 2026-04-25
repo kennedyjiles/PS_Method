@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from functions.functions_library_dipole import build_figure_filename
 from functions.functions_library_universal import sparse_labels, data_to_fig
-
+import os
 
 # =====================================================
 # ============== Full 2D Trajectory Plot ==============
@@ -340,7 +340,6 @@ def plot_dragt_poincare(
     crossings: tuple (rho_dragt, rho_dot_dragt, ...) from compute_z_crossings,
                or None if no equatorial crossings found.
     """
-    import os
     fig, ax = plt.subplots(figsize=(10, 7))
 
     # --- Analytical boundary ---
@@ -377,7 +376,6 @@ def plot_dragt_poincare(
 # =============================================================
 def plot_gyrophase_mu(run_folder, gyrophase, mu_cross):
     """Scatter plot of gyrophase vs magnetic moment at equatorial crossings."""
-    import os
 
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.scatter(mu_cross, gyrophase, s=10, c='blue', alpha=0.6, edgecolors='none')
@@ -395,7 +393,6 @@ def plot_gyrophase_mu(run_folder, gyrophase, mu_cross):
 # =============================================================
 def plot_polar_phase_space(run_folder, gyrophase, mu_cross):
     """Polar plot of gyrophase vs magnetic moment."""
-    import os
 
     gyrophase_rad = np.radians(gyrophase)
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': 'polar'})
@@ -410,7 +407,6 @@ def plot_polar_phase_space(run_folder, gyrophase, mu_cross):
 # =============================================================
 def plot_meridian_plane(run_folder, rho_arr, z_arr):
     """Trajectory in the meridian plane (rho vs z) in Dragt dimensionless units."""
-    import os
 
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.plot(rho_arr, z_arr, color='blue', linewidth=0.5, alpha=0.6, label='Trajectory')
@@ -429,7 +425,6 @@ def plot_meridian_plane(run_folder, rho_arr, z_arr):
 # =============================================================
 def plot_adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max):
     """Adiabaticity parameter epsilon vs time (semilogy)."""
-    import os
 
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.semilogy(t_arr, eps_arr, color='#009E73', linewidth=0.6, alpha=0.8, label=r"$\epsilon(t)$")
@@ -450,7 +445,6 @@ def plot_adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max
 # =============================================================
 def plot_pphi_error(run_folder, t_pphi_gyro, rel_error_log, P_phi_initial, max_err, ylabel_str):
     """Log-log plot of canonical angular momentum conservation error."""
-    import os
 
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(t_pphi_gyro[1:], rel_error_log[1:], color='crimson', linewidth=1.5)
@@ -458,7 +452,7 @@ def plot_pphi_error(run_folder, t_pphi_gyro, rel_error_log, P_phi_initial, max_e
     ax.set_xscale('log')
     ax.set_yscale('log')
 
-    ax.text(0.02, 0.85, f"Initial Native $P_\\phi$: {P_phi_initial:.6f}\nMax Relative Error: {max_err:.2e}",
+    ax.text(0.02, 0.85, f"Initial $P_\\phi$: {P_phi_initial:.6f}\nMax Relative Error: {max_err:.2e}",
             transform=ax.transAxes, fontsize=11, color='black',
             bbox=dict(facecolor='white', alpha=0.9, edgecolor='black'))
 
