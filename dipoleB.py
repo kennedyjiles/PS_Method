@@ -7,15 +7,15 @@ from functions.functions_library_dragt import (
     compute_gyrophase_mu,
     DragtMonitor,
 )
-logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
+DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
+if DEBUG: 
+    logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
+    tracemalloc.start()
 
 
 # === Misc Odds and Ends ===  
 legacy_h5_path = None  # hard disable for most runs, can be overwritten with 'legacy' load
 manual_h5_path = None  # hard disable for most runs, can be overwritten with 'manual' load
-
-DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
-if DEBUG: tracemalloc.start()
 
 """
 key options: "demo", "paper1", "paper2", "paper3", unless a new input is made. Demo mode is a quick test run.
@@ -742,9 +742,11 @@ if USE_PS and USE_FULL_PLOT:
             z_ps_plot = ps_y_h5[2, ::stride]
 
             ps_order_label = int(ps_grp.attrs["max_ps"])
-current, peak = tracemalloc.get_traced_memory()
-tracemalloc.stop()
-logger.debug(f"Data access for plottings: {peak / 1024**2:.2f} MB\n")
+
+if DEBUG:
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    logger.debug(f"Data access for plottings: {peak / 1024**2:.2f} MB\n")
 
 # === paper specific adjustments for aeshetic purposes ====
 if run == "paper1": USE_RK4 = False 
