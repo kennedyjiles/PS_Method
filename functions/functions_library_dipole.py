@@ -413,6 +413,20 @@ def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
 # ========================
 named_indices = {"vx":3,"vy":4,"vz":5,"Bx":14,"By":15,"Bz":16}
 
+# Compact h5 storage: only these rows are saved (pos, vel, B-field)
+_SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
+n_save = len(_SAVE_ROWS)
+
+def expand_h5_to_full(compact_arr):
+    """Expand a 9-row compact h5 array back to 17-row full layout.
+    If the array already has 17 rows, return it unchanged."""
+    if compact_arr.shape[0] == 17:
+        return compact_arr
+    full = np.zeros((17, compact_arr.shape[1]), dtype=compact_arr.dtype)
+    for i_new, i_old in enumerate(_SAVE_ROWS):
+        full[i_old, :] = compact_arr[i_new, :]
+    return full
+
 """
 Identify mirror (bounce) times by detecting zero crossings of s = v·B,
 which is proportional to the parallel velocity v_parallel. A sign change
@@ -1196,10 +1210,7 @@ def run_ps_streaming_with_decimation(
     start_time_ps = time.time()
 
     n_state = 17
-    # Only store pos (0:3), vel (3:6), B-field (14:17) → 9 rows
-    # Auxiliary PS variables (6:14) are internal and never read back
-    _SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
-    n_save = len(_SAVE_ROWS)
+    # _SAVE_ROWS and n_save defined at module level
 
     cur_state = initial_pos_vel_ps.copy()
     remaining = steps_ps

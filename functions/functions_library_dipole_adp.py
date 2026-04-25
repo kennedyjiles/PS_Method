@@ -306,10 +306,7 @@ def run_ps_streaming_adaptive(
     """
     start_time_ps = time.time()
     n_state = 17
-    # Only store pos (0:3), vel (3:6), B-field (14:17) → 9 rows
-    # Auxiliary PS variables (6:14) are internal and never read back
-    _SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
-    n_save = len(_SAVE_ROWS)
+    # _SAVE_ROWS and n_save imported from functions_library_dipole
 
     # --- build initial 17-element state ---
     cur_state = np.zeros(n_state, dtype=npfloat)

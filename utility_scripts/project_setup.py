@@ -60,7 +60,8 @@ from functions.functions_library_dipole import (
     process_bounce_and_drift_chunk, 
     init_bounce_stream_state, 
     check_time_grids,
-    finalize_drift_stream
+    finalize_drift_stream,
+    expand_h5_to_full
 )
 
 from .logger_util import setup_logger

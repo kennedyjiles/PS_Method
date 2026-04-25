@@ -80,10 +80,10 @@ if USE_LEGACY_FILE:
         gyroperiods= npfloat(steps_ps) / T_gyro
         N_STEPS_PER_GYRO_ps = summary["ps"]["numberstepspergyro"]
         PS_CHUNKING=summary["ps"]["streaming"]
-        solution_ps = datasets["ps_y"][()]
+        solution_ps = expand_h5_to_full(datasets["ps_y"][()])
         orders_used = datasets["ps_orders"][()]
 
-    if USE_RK4: 
+    if USE_RK4:
         solution_rk4 = datasets["rk4_y"][()]
         steps_rk4 = summary["rk4"]["steps"]
         rk4_step= summary["rk4"]["dt"]
@@ -189,7 +189,7 @@ if USE_MANUAL_FILE:
                     solution_ps = None
                     orders_used = None
                 else:  # this is memory intensive for long PS runs, I recommend working in PS_CHUNKING from the start
-                    solution_ps = ps_group["y"][()]
+                    solution_ps = expand_h5_to_full(ps_group["y"][()])
                     orders_used = ps_group["orders"][()] if "orders" in ps_group else None
 
             # === RK4 ===
@@ -375,7 +375,7 @@ if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
                     solution_ps = None
                     orders_used = None
                 else:  # this is memory intensive for long PS runs, I recommend working in PS_CHUNKING from the start
-                    solution_ps = ps_group["y"][()]
+                    solution_ps = expand_h5_to_full(ps_group["y"][()])
                     orders_used = ps_group["orders"][()] if "orders" in ps_group else None
 
             # === RK4 ===
@@ -2010,7 +2010,7 @@ elif USE_PS and PS_CHUNKING:
         if j1 <= j0:
             raise RuntimeError("Empty PS μ window (chunked)")
 
-        y_ps_win = ps_y[:, j0:j1]
+        y_ps_win = expand_h5_to_full(ps_y[:, j0:j1])
         mu_ps = compute_mu_ps(y_ps_win, mass)
         mudrift_ps = np.abs(mu_ps - mu0_ps) / mu0_ps
 
@@ -2222,7 +2222,7 @@ elif USE_PS and PS_CHUNKING:
         for j0 in range(0, n_store, PS_chunk_steps):
             j1 = min(j0 + PS_chunk_steps, n_store)
 
-            y_chunk = ps_y[:, j0:j1]
+            y_chunk = expand_h5_to_full(ps_y[:, j0:j1])
             t_chunk = dt_store * np.arange(j0, j1, dtype=npfloat)
 
             process_bounce_and_drift_chunk(
@@ -2420,7 +2420,7 @@ with open(output_filename, "w") as f:
                 if n_store - j0 > MAX_TAIL_STEPS:
                     j0 = n_store - MAX_TAIL_STEPS
 
-                y_tail = ps_y[:, j0:]
+                y_tail = expand_h5_to_full(ps_y[:, j0:])
 
             mu_tail = compute_mu_ps(y_tail, mass)
             summarize_error("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
