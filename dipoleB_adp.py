@@ -7,6 +7,7 @@ from functions.functions_library_dragt import (
     compute_gyrophase_mu,
     DragtMonitor,
 )
+from functions.functions_library_dipole_adp import run_ps_streaming_adaptive
 logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
 
 
@@ -226,7 +227,11 @@ v_tau = v_si * tau_time / RE                        # dimensionless velocity
 
 physical_time = norm_time * abs(tau_time)           # actual physical time, t; normalized time =t/tau_time
 window_duration = window_time/tau_time              # converting window_time to dimensionless time
-tol = npfloat(tol) * tau_time                       # Scale tolerance by tau_0. 
+tol = npfloat(tol) * tau_time                       # Scale tolerance by tau_0. For protons (tau_0~0.3s) this
+                                                      # makes tol ~3x tighter than bare eps, squeezing more terms
+                                                      # per PS step. For electrons (tau_0~1e-7s) tol becomes ~1e-23,
+                                                      # which is below representable precision, but electrons converge
+                                                      # well before hitting the cap so it's harmless.
  
 # === Velocity Config based on INput Angles ===
 pitch_rad = npfloat(np.radians(pitch_deg))              # degrees to radians, pitch 
@@ -412,7 +417,7 @@ if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
                 dragt_mon = DragtMonitor(_L_mon, charge_sign,
                                          check_every=1, rtol=1e-4)
                 # ----------------------------------
-                max_ps, elapsed_ps = run_ps_streaming_with_decimation(
+                max_ps, elapsed_ps = run_ps_streaming_adaptive(
                     initial_pos_vel_ps=initial_pos_vel,
                     steps_ps=steps_ps,
                     ps_step=ps_step,
@@ -428,6 +433,13 @@ if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
                     N_STEPS_PER_GYRO_ps=N_STEPS_PER_GYRO_ps,
                     user_min_phase=user_min_phase,
                     dragt_monitor=dragt_mon,
+                    # --- adaptive control ---
+                    order_low=50,       # grow dt if series converges faster than this
+                    order_high=300,     # shrink dt if series needs more than this
+                    grow_factor=1.5,
+                    shrink_factor=0.5,
+                    steps_per_local_gyro=200,   # 100 substeps per local gyro in adaptive path
+                    min_fast_path_N=100,         # 20 min local gyro steps to use fast path
                 )
                 dragt_mon.summary()
                 solution_ps = None
@@ -750,10 +762,6 @@ logger.debug(f"Data access for plottings: {peak / 1024**2:.2f} MB\n")
 if run == "paper1": USE_RK4 = False 
 if run == "paper2": USE_RKG = False
 
-
-print(f"\n{'='*60}")
-print(f"  Run Statistics")
-print(f"{'='*60}")
 # === Timing Summary ===
 print(f"Particle        : {KE_particle:.1e} eV {particle_type}")
 if USE_RK45 and "rk45" in timing:
@@ -770,14 +778,14 @@ print(f"Physical Time   : {physical_time:.2e} s")
 if USE_PS and not PS_CHUNKING:
     print(f"PS Orders       : max={orders_used.max()}, mean={orders_used.mean():.1f}")
 else: print(f"PS Orders       : max={ps_order_label}")
-print(f"% of c          : {100*v_si/spdlight:.8f}")
+print(f"% of c          : {v_si/spdlight:.8f}")
 
 if DEBUG: 
     logger.debug(f"Norm Time: {norm_time:.2e} MB")
     logger.debug(f"Physical Time   : {physical_time:.2e} s")
     logger.debug(f"ps_step: {ps_step}, norm_time: {norm_time}, steps_ps: {steps_ps}")
     # logger.debug(f"t_common[0]: {t_common[0]}, t_common[-1]: {t_common[-1]}")
-print(f"{'='*60}")
+
 
 
 # === Create run-specific output subfolder ===
@@ -1522,11 +1530,7 @@ else:
     _r_init = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
     L_shell_dragt = float(_r_init**3 / _rho_init**2)
     print("  WARNING: P_phi_code indicates open/untrapped orbit, falling back to field-line L-shell")
-
-print(f"\n{'='*60}")
-print(f"  Dragt Info")
-print(f"{'='*60}")
-print(f"Dragt L-shell (from conserved canonical momentum): {L_shell_dragt:.4f} R_E")
+print(f"  Dragt L-shell (from conserved canonical momentum): {L_shell_dragt:.4f} R_E")
 
 if USE_PS:
     # --- Initial state (works for both chunked and in-memory) ---
@@ -1582,7 +1586,6 @@ if USE_PS:
             _DRAGT_DEC = max(1, N_total // 500_000)  # target ~500K pts for plots
             print(f"  Dragt chunked analysis: {N_total:,} steps, "
                   f"chunk={_DRAGT_CHUNK:,}, decimate=1/{_DRAGT_DEC}")
-
 
             _eps_initial = None
             _eps_sum     = 0.0
@@ -2133,10 +2136,6 @@ only calcualted for PS method.
 bounce_results = None
 drift_results  = None
 
-print(f"\n{'='*60}")
-print(f"  Bounce/Drift Statistics")
-print(f"{'='*60}")
-
 if USE_PS and not PS_CHUNKING:
 
     v_eps = npfloat(1e-14) * v_tau
@@ -2154,9 +2153,7 @@ if USE_PS and not PS_CHUNKING:
         s_eps=v_eps
     )
 
-
     bounce_stats = bounce_summary(crossings_tau, time_scale_sec=tau_time)
-
 
     if bounce_stats["full_mean_s"] is not None:
         print("\nMirror crossings:", bounce_stats["n_crossings"])

@@ -23,44 +23,49 @@ atol_rk45 = 1e-10                      # RK45 adapative tolerance
 if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
 else: mpl.rcParams['agg.path.chunksize'] = 1000
 
-run_storage = "outputs_rawdata"      # where trajectory files go
+run_storage = "outputs/outputs_rawdata"      # where trajectory files go
 
 # ===================================================================
 # ==============Toggle Parameters for Const B Script ================
 # ===================================================================
 """
-USE_RK45 --  Set to True to include RK45 analysis
-USE_RK4 --   Set to True to include RK4 analysis
-USE_Analytical -- Set to True to include RK4 analysis if using anything other than B_z, set USE_ANALYTICAL=False in constB.py, it was only
-set up for B_z. All other methods fine.
-USE_PLOT_TITLES -- Set to True to include plot titles
-USE_FULL_PLOT -- Set to False for paper plots only, Set to True to enable all plots (not all are useful)
-READ_DATA -- Set to True to scan for saved runs and load
-WRITE_DATA -- Set to True to write saved run data to hdf file (what READ_DATA looks for)
-USE_EXTERNAL_H5 -- Set to True to include external high-precision PS data from specified h5 file
+Toggles:
+    USE_RK45       -- Set to True to include RK45 analysis
+    USE_RK4        -- Set to True to include RK4 analysis
+    USE_ANALYTICAL -- Set to True to include analytical solution (only valid for B_z;
+                      set USE_ANALYTICAL=False in constB.py for other field orientations)
+    USE_PLOT_TITLES -- Set to True to include plot titles
+    USE_FULL_PLOT   -- Set to False for paper plots only, True for all plots
+    READ_DATA       -- Set to True to scan for saved runs and load from cache
+    WRITE_DATA      -- Set to True to write trajectory data to h5 file
+    USE_EXTERNAL_H5 -- Set to True to load external h5 for comparison
 
-pitch_deg -- (degrees)
-phi_deg  -- (degrees)
-x_initial_si -- (m)
-y_initial_si -- (m)
-z_initial_si -- (m)
-KE_particle -- (eV)
-B_0 -- (T)
-mass -- m_e or m_p, otherwise (kg)
-gyro_plot_slice -- slices last gyroperiods for visual inspection, suggest 1-10 
+Physics parameters:
+    pitch_deg       -- pitch angle (degrees)
+    phi_deg         -- gyrophase (degrees)
+    x_initial       -- initial x position (normalized, typically 0)
+    y_initial       -- initial y position (normalized, typically 0)
+    z_initial       -- initial z position (normalized, typically 0)
+    KE_particle     -- kinetic energy (eV)
+    Bfield_si       -- magnetic field vector [Bx, By, Bz] (T)
+    mass            -- particle mass: m_e or m_p, or manual (kg)
+    gyro_plot_slice -- number of gyroperiods to slice for visual inspection (suggest 1-10)
 
+Integration parameters:
+    rk4_step    -- RK4 time step: 2*pi/N where N is steps per gyroperiod
+    ps_step     -- PS time step: set equal to rk4_step for direct comparison
+    gyroperiods -- number of gyroperiods to simulate
+    norm_time   -- total integration time: gyroperiods * 2*pi
 
-rk4_step -- 2π/N where N is ~integration points per gyroperiod               
-ps_step --  set equal to rk4_step for one-to-one comparison, can be anything
-norm_time -- this should be some multiple of gyroperiods desired (norm_time/2π = gyroperiods)     
+Run modes: "demo", "paper"
 """
 
 def load_params(run):
     if run == "paper": 
         print("Running full PAPER simulation...this can take a few minutes\n")
-        output_folder = "outputs_paper/ConstB"
+        output_folder = "outputs/outputs_paper/ConstB"
         os.makedirs(output_folder, exist_ok=True)
-        USE_RK45 = False
+        USE_RK45 = True
         USE_RK4 = True
         USE_ANALYTICAL = True
         USE_PLOT_TITLES = False
@@ -70,9 +75,9 @@ def load_params(run):
         USE_EXTERNAL_H5 = False
         USE_EXTERNAL_H5b = False
 
-        external_h5 = "outputs_rawdata/run_29620be4f429e0cf.h5" 
+        external_h5 = "outputs/outputs_rawdata/run_29620be4f429e0cf.h5" 
         PS_order_ext= 19
-        external_h5b = "outputs_rawdata/run_344c6be65eafa517.h5" 
+        external_h5b = "outputs/outputs_rawdata/run_344c6be65eafa517.h5" 
 
         pitch_deg = npfloat(45.0)              
         phi_deg = npfloat(45.0)
@@ -94,7 +99,7 @@ def load_params(run):
 
     elif run == "demo":
         print("Running DEMO simulation...this should be done in a couple seconds\n")
-        output_folder = "outputs_demo/ConstB"
+        output_folder = "outputs/outputs_demo/ConstB"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True
         USE_RK4 = True
@@ -116,7 +121,7 @@ def load_params(run):
         z_initial = npfloat(0.0)
         KE_particle = npfloat(100) 
         Bfield_si = np.array([0, 0, npfloat(10e-3)]) 
-        mass = m_e
+        mass = m_p
         gyro_plot_slice = 1.5
 
         rk4_step = npfloat(0.063)              

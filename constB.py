@@ -112,6 +112,7 @@ params = get_run_params(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                    norm_time, ps_step, rk4_step,
                    PS_order, tol, qoverm)
 cache_path = h5_path_for(params, run_storage)
+os.makedirs(run_storage, exist_ok=True)
 
 if os.path.exists(cache_path) and READ_DATA:
     print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")

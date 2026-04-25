@@ -199,10 +199,11 @@ def compute_mu_rk(solution_rk, mass):
             mu[i] = 0.0
             continue
         r5inv = r2**(-2.5)
+        # Sign convention matches simulator (downward dipole moment, upward B at equator)
         B = np.array([
-            3 * x * z * r5inv,
-            3 * y * z * r5inv,
-            (3 * z**2 - r2) * r5inv
+            -3 * x * z * r5inv,
+            -3 * y * z * r5inv,
+            -(3 * z**2 - r2) * r5inv
         ])
 
         B2 = np.dot(B, B)
@@ -277,8 +278,55 @@ def hamiltonian_rhs(t, y, qoverm):
     return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=npfloat)
 
 
+# OLD rkgl4_hamiltonian_step (kept for reproducibility):
+# @maybe_njit
+# def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):
+#     sqrt3 = np.sqrt(3.0)
+#     a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
+#     a21, a22 = 0.25 + sqrt3 / 6.0, 0.25
+#     b1 = b2 = 0.5
+#     dim = len(y0)
+#     K = np.zeros((2, dim), dtype=npfloat)
+#     K[0] = func(0.0, y0, *args)
+#     K[1] = K[0].copy()
+#     for n in range(max_iter):
+#         Y1 = y0 + dt * (a11 * K[0] + a12 * K[1])
+#         Y2 = y0 + dt * (a21 * K[0] + a22 * K[1])
+#         F1 = K[0] - func(0.0, Y1, *args)
+#         F2 = K[1] - func(0.0, Y2, *args)
+#         F = np.concatenate((F1, F2))
+#         normF = np.max(np.abs(F))
+#         if normF < tol:
+#             break
+#         J = np.zeros((2 * dim, 2 * dim), dtype=npfloat)
+#         for i in range(2):
+#             for j in range(dim):
+#                 dK = np.zeros((2, dim), dtype=npfloat)
+#                 dK[i, j] = eps
+#                 Y1_pert = y0 + dt * (a11 * (K[0] + dK[0]) + a12 * (K[1] + dK[1]))
+#                 Y2_pert = y0 + dt * (a21 * (K[0] + dK[0]) + a22 * (K[1] + dK[1]))
+#                 F1_pert = K[0] + dK[0] - func(0.0, Y1_pert, *args)
+#                 F2_pert = K[1] + dK[1] - func(0.0, Y2_pert, *args)
+#                 F_pert = np.concatenate((F1_pert, F2_pert))
+#                 dF = (F_pert - F) / eps
+#                 J[:, i * dim + j] = dF
+#         try:
+#             dK_flat = np.linalg.solve(J, -F)
+#         except:
+#             raise RuntimeError("Newton step failed: singular Jacobian")
+#         K_flat = np.concatenate((K[0], K[1])) + dK_flat
+#         K[0] = K_flat[:dim]
+#         K[1] = K_flat[dim:]
+#     else:
+#         print("Newton did not converge")
+#     return y0 + dt * (b1 * K[0] + b2 * K[1])
+
 @maybe_njit
-def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):  # when using with the Lorentz force I used tol=1e-12 and eps=1e-12
+def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):
+    # Gauss-Legendre RK4 (implicit, symplectic) — njit-friendly version.
+    # Changes from old version: removed try/except (numba can't compile it,
+    # forces object mode), removed np.concatenate in hot loop, pre-allocated
+    # scratch arrays. Produces identical results.
     sqrt3 = np.sqrt(3.0)
     a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
     a21, a22 = 0.25 + sqrt3 / 6.0, 0.25
@@ -287,50 +335,66 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
     dim = len(y0)
     K = np.zeros((2, dim), dtype=npfloat)
 
-    # initial guess from explicit Euler
+    # Pre-allocate scratch arrays (avoids per-iteration allocation)
+    F = np.zeros(2 * dim, dtype=npfloat)
+    J = np.zeros((2 * dim, 2 * dim), dtype=npfloat)
+    K_save = np.zeros((2, dim), dtype=npfloat)
+    Y1 = np.zeros(dim, dtype=npfloat)
+    Y2 = np.zeros(dim, dtype=npfloat)
+
+    # Initial guess from explicit Euler
     K[0] = func(0.0, y0, *args)
     K[1] = K[0].copy()
 
     for n in range(max_iter):
-        Y1 = y0 + dt * (a11 * K[0] + a12 * K[1])
-        Y2 = y0 + dt * (a21 * K[0] + a22 * K[1])
+        # Stage values
+        for d in range(dim):
+            Y1[d] = y0[d] + dt * (a11 * K[0, d] + a12 * K[1, d])
+            Y2[d] = y0[d] + dt * (a21 * K[0, d] + a22 * K[1, d])
 
         F1 = K[0] - func(0.0, Y1, *args)
         F2 = K[1] - func(0.0, Y2, *args)
-        F = np.concatenate((F1, F2))
+        F[:dim] = F1
+        F[dim:] = F2
 
-        # convergence check
+        # Convergence check
         normF = np.max(np.abs(F))
         if normF < tol:
             break
 
-        J = np.zeros((2 * dim, 2 * dim), dtype=npfloat)
+        # Build Jacobian by finite differences
+        for d in range(dim):
+            J[:, :] = 0.0
         for i in range(2):
             for j in range(dim):
-                dK = np.zeros((2, dim), dtype=npfloat)
-                dK[i, j] = eps
-                Y1_pert = y0 + dt * (a11 * (K[0] + dK[0]) + a12 * (K[1] + dK[1]))
-                Y2_pert = y0 + dt * (a21 * (K[0] + dK[0]) + a22 * (K[1] + dK[1]))
+                # Save, perturb, evaluate, restore
+                K_save[i, j] = K[i, j]
+                K[i, j] += eps
 
-                F1_pert = K[0] + dK[0] - func(0.0, Y1_pert, *args)
-                F2_pert = K[1] + dK[1] - func(0.0, Y2_pert, *args)
-                F_pert = np.concatenate((F1_pert, F2_pert))
+                for d in range(dim):
+                    Y1[d] = y0[d] + dt * (a11 * K[0, d] + a12 * K[1, d])
+                    Y2[d] = y0[d] + dt * (a21 * K[0, d] + a22 * K[1, d])
 
-                dF = (F_pert - F) / eps
-                J[:, i * dim + j] = dF
-        try:
-            dK_flat = np.linalg.solve(J, -F)
-        except:
-            raise RuntimeError("Newton step failed: singular Jacobian")
+                F1_pert = K[0] - func(0.0, Y1, *args)
+                F2_pert = K[1] - func(0.0, Y2, *args)
 
-        K_flat = np.concatenate((K[0], K[1])) + dK_flat
-        K[0] = K_flat[:dim]
-        K[1] = K_flat[dim:]
+                for d in range(dim):
+                    J[d,       i * dim + j] = (F1_pert[d] - F1[d]) / eps
+                    J[dim + d, i * dim + j] = (F2_pert[d] - F2[d]) / eps
 
-    else:
-        print("⚠️ Newton did not converge")
+                K[i, j] = K_save[i, j]  # restore
 
-    return y0 + dt * (b1 * K[0] + b2 * K[1])
+        # Newton update (no try/except — let it crash if singular,
+        # which would indicate a bug, not a recoverable condition)
+        dK_flat = np.linalg.solve(J, -F)
+        for d in range(dim):
+            K[0, d] += dK_flat[d]
+            K[1, d] += dK_flat[dim + d]
+
+    result = np.zeros(dim, dtype=npfloat)
+    for d in range(dim):
+        result[d] = y0[d] + dt * (b1 * K[0, d] + b2 * K[1, d])
+    return result
 
 @maybe_njit
 def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
@@ -1125,16 +1189,26 @@ def run_ps_streaming_with_decimation(
     write_data,
     chunk_steps,
     decimate,
-    N_STEPS_PER_GYRO_ps,  
+    N_STEPS_PER_GYRO_ps,
     user_min_phase,
+    dragt_monitor=None,
 ):
     start_time_ps = time.time()
 
     n_state = 17
+    # Only store pos (0:3), vel (3:6), B-field (14:17) → 9 rows
+    # Auxiliary PS variables (6:14) are internal and never read back
+    _SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
+    n_save = len(_SAVE_ROWS)
+
     cur_state = initial_pos_vel_ps.copy()
     remaining = steps_ps
     global_index = 0
     max_ps = 0
+    hit_atmosphere = False
+    hit_atm_step   = -1
+    hit_atm_r      = 0.0
+    R_ATMOSPHERE   = 1.0   # in R_E; change to 1.0157 for ~100 km altitude
 
     if write_data:
         f = h5py.File(cache_path, "w")
@@ -1151,13 +1225,16 @@ def run_ps_streaming_with_decimation(
         ps_grp.attrs["E0"]       = float(E0_ps)
         ps_grp.attrs["mu0"]      = float(mu0_ps)
         ps_grp.attrs["t0"]       = 0.0
+        # Row layout: [x,y,z, vx,vy,vz, Bx,By,Bz]
+        ps_grp.attrs["save_rows"] = "pos_vel_B"
+        ps_grp.attrs["n_save"]    = n_save
 
         dset_y = ps_grp.create_dataset(
             "y",
-            shape=(n_state, 0),
-            maxshape=(n_state, None),
+            shape=(n_save, 0),
+            maxshape=(n_save, None),
             dtype=npfloat,
-            chunks=(n_state, min(chunk_steps, steps_ps + 1)),
+            chunks=(n_save, min(chunk_steps, steps_ps + 1)),
             compression="gzip",
             compression_opts=2,
         )
@@ -1208,20 +1285,42 @@ def run_ps_streaming_with_decimation(
                     old_len = dset_y.shape[1]
                     new_len = old_len + sol_keep.shape[1]
 
-                    dset_y.resize((n_state, new_len))
+                    dset_y.resize((n_save, new_len))
                     dset_orders.resize((new_len,))
 
-                    dset_y[:, old_len:new_len] = sol_keep
+                    dset_y[:, old_len:new_len] = sol_keep[_SAVE_ROWS, :]
                     dset_orders[old_len:new_len] = orders_keep
+
+            # ---- atmospheric impact check (diagnostic only, does not halt) ----
+            r_sq = sol_chunk[0]**2 + sol_chunk[1]**2 + sol_chunk[2]**2
+            below = np.where(r_sq < R_ATMOSPHERE**2)[0]
+            if len(below) > 0:
+                r_min_chunk = float(np.sqrt(r_sq[below].min()))
+                hit_atm_r = min(hit_atm_r, r_min_chunk) if hit_atmosphere else r_min_chunk
+                if not hit_atmosphere:
+                    hit_atmosphere = True
+                    hit_atm_step = global_index + below[0]
 
             cur_state = sol_chunk[0:6, -1].copy()
             global_index += this_chunk
             remaining -= this_chunk
 
+            # --- W0^2 / P_phi conservation check ---
+            if dragt_monitor is not None:
+                dragt_monitor.check(sol_chunk, step_index=global_index)
+
         if write_data:
             ps_grp.attrs["max_ps"] = max_ps
+            ps_grp.attrs["hit_atmosphere"] = hit_atmosphere
+            ps_grp.attrs["hit_atm_step"]   = hit_atm_step
+            ps_grp.attrs["hit_atm_r"]      = hit_atm_r
 
         elapsed_ps = time.time() - start_time_ps
+
+        if hit_atmosphere:
+            print(f"\n    *** ATMOSPHERE FLAG: particle crossed r < {R_ATMOSPHERE} R_E "
+                  f"at step {hit_atm_step:,} (r_min = {hit_atm_r:.4f} R_E) ***\n")
+
         return max_ps, elapsed_ps
 
     finally:

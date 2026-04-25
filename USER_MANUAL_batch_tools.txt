@@ -1,0 +1,475 @@
+================================================================================
+  USER MANUAL — Batch Simulation & Post-Processing Tools
+  PS_Method Thesis Work
+================================================================================
+
+This document covers the three scripts built for running parameter sweeps and
+producing publication-quality plots from the PS trajectory data:
+
+  1. utility_scripts/batch_flux_runner.py   — runs parameter sweeps
+  2. flux_map_builder.py                    — builds AP-8-style flux maps
+  3. michel_phase_portrait.py               — builds Michel (1971) phase portraits
+
+All three scripts live in the PS_Method directory. They do NOT modify any core
+simulation code (dipoleB.py, dipoleB_adp.py, functions_library_dragt.py, etc.).
+They only read/write config files and output data.
+
+
+================================================================================
+  1.  BATCH FLUX RUNNER
+      utility_scripts/batch_flux_runner.py
+================================================================================
+
+PURPOSE
+  Orchestrates parallel parameter sweeps across (energy, L-shell, pitch angle)
+  by launching many independent dipoleB.py or dipoleB_adp.py runs. Each worker
+  gets its own JSON config file to avoid race conditions.
+
+  Two modes:
+    - Flux map phases (1-4): systematic grid for building meridian flux maps
+    - Michel mode: pitch angle × gyrophase sweep at one (L, energy) for
+      building α vs φ phase portraits
+
+
+BASIC USAGE
+-----------
+
+  # Always start with a dry run to preview what will execute
+  python utility_scripts/batch_flux_runner.py --phase 1 --dry-run
+
+  # Run Phase 1 with 10 parallel workers
+  python utility_scripts/batch_flux_runner.py --phase 1 --workers 10
+
+  # Run a Michel sweep at L=1.5, 10 MeV
+  python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --workers 10
+
+
+FLUX MAP PHASES
+---------------
+
+  Phase 1:  10, 30 MeV  × 16 L-shells × 10 pitch angles  = 320 runs
+            Belt core, fast. Most runs finish in a few minutes.
+
+  Phase 2:  100 MeV × 16 L-shells × 10 pitch angles = 160 runs
+            Energy falloff region. Use dipoleB.py (fixed step is fine here).
+
+  Phase 3:  300 MeV × 10 L-shells × 10 pitch angles = 100 runs
+            Transition to chaotic regime. Only inner L-shells (1.2–3.0).
+            Consider switching to dipoleB_adp.py (adaptive) for this phase.
+
+  Phase 4:  1, 10 GeV × 16 L-shells × 10 pitch angles = 320 runs
+            Full Dragt/Störmer regime. Use dipoleB_adp.py. Many orbits will
+            hit the atmosphere quickly, producing small files.
+
+
+CHOOSING THE INTEGRATOR (--driver)
+----------------------------------
+
+  dipoleB.py   — Fixed-step RK4. Fast, reliable for adiabatic regime.
+                 Good for Phases 1 and 2 (≤ 100 MeV).
+
+  dipoleB_adp.py  — Adaptive-step RKF45. Smarter about step sizes when dynamics
+                 change rapidly. Better for Phases 3 and 4 (≥ 300 MeV).
+
+  The driver flag only changes which script is called; the batch runner
+  itself doesn't care. Example:
+
+    python utility_scripts/batch_flux_runner.py --phase 3 --workers 8 --driver dipoleB_adp.py
+
+
+PARALLEL EXECUTION
+------------------
+
+  --workers N sets how many simulations run simultaneously.
+
+  Recommendations:
+    M4 Max (16 cores):   --workers 10  (leave cores for OS + overhead)
+    M1/M2 (8 cores):     --workers 5
+    Single test:          --workers 1   (default, sequential)
+
+  Each worker writes to its own config file (named by PID + run key) so
+  there are no file collisions. After the batch finishes, the script
+  automatically deduplicates the master CSV log.
+
+
+RESUMING INTERRUPTED RUNS
+--------------------------
+
+  If you ctrl-C or the machine sleeps mid-batch, progress is saved to
+  utility_scripts/batch_flux_progress.json. Resume with:
+
+    python utility_scripts/batch_flux_runner.py --phase 1 --workers 10 --resume
+
+  Already-completed runs are skipped. Delete batch_flux_progress.json to
+  start fresh.
+
+
+RUNNING A SINGLE CASE
+----------------------
+
+  To test one specific parameter combination:
+
+    python utility_scripts/batch_flux_runner.py --phase 1 --single E1e+07_L2.00_P89.0
+
+  The key format is E{energy}_L{L-shell}_P{pitch}. Use --dry-run first
+  to see the exact keys for any phase.
+
+
+MICHEL MODE
+-----------
+
+  Sweeps pitch angle × gyrophase φ at a single (L, energy). This produces
+  the data needed for Michel (1971) α vs φ phase portraits.
+
+    # Default: 17 pitch angles × 12 gyrophases = 204 runs
+    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --workers 10
+
+    # More φ resolution (every 20° instead of 30°)
+    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --phi-steps 18 --workers 10
+
+    # Dry run to preview
+    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --dry-run
+
+  Michel arguments:
+    --michel              Enable Michel mode (required)
+    --L 1.5               L-shell (default: 1.5)
+    --energy 10e6         Energy in eV (default: 10 MeV)
+    --phi-steps 12        Number of gyrophase values, evenly spaced 0-360°
+                          (default: 12 = every 30°)
+    --michel-gyroperiods  Override simulation length (default: 1e5)
+
+  The φ sweep is what fills out the island structure in the portrait. With
+  only φ=0 you get a single trace per pitch angle; with 12 or 18 φ values,
+  each pitch angle produces many crossings that map out the full topology.
+
+  Michel pitch angles are denser near 90° than the flux map grid:
+    10, 20, 30, 40, 50, 60, 65, 70, 75, 80, 82, 84, 85, 86, 87, 88, 89°
+
+  Output h5 files go to outputs/outputs_rawdata/ (same as flux map runs).
+  Summary/config data goes to outputs/michel/.
+
+
+ADJUSTING PARAMETER GRIDS
+--------------------------
+
+  The grids are defined at the top of batch_flux_runner.py:
+
+    ENERGIES_EV    — dict keyed by phase number
+    L_FINE         — inner belt L-shells (1.2 to 3.0, step 0.2)
+    L_COARSE       — outer belt L-shells (3.5 to 6.0)
+    L_SHELLS       — dict keyed by phase number, combining fine + coarse
+    PITCH_ANGLES   — 10 values from 10° to 89°
+    GYROPERIODS    — simulation length per phase
+    MICHEL_PITCHES — 17 values, denser near 90°
+
+  To add a new energy, L-shell, or pitch angle, just edit these lists.
+  To change how many gyroperiods a phase runs, edit GYROPERIODS.
+
+  Examples of common adjustments:
+
+    # Add L=1.1 to the fine grid
+    L_FINE = list(np.arange(1.1, 3.1, 0.1))
+
+    # Add 45° to pitch angles
+    PITCH_ANGLES = [10, 20, 30, 40, 45, 50, 60, 70, 80, 85, 89]
+
+    # Run Phase 2 longer
+    GYROPERIODS[2] = 2e5
+
+    # Cut Phase 2 to inner belt only
+    L_SHELLS[2] = L_FINE
+
+
+WHERE OUTPUT GOES
+-----------------
+
+  h5 trajectory files:   outputs/outputs_rawdata/
+  Flux map configs/logs:  outputs/flux_map/
+  Michel configs/logs:    outputs/michel/
+  Progress tracking:      utility_scripts/batch_flux_progress.json
+  Temp worker configs:    utility_scripts/batch_tmp/  (cleaned up after batch)
+
+
+================================================================================
+  2.  FLUX MAP BUILDER
+      flux_map_builder.py
+================================================================================
+
+PURPOSE
+  Reads all h5 trajectory files from batch runs, bins each orbit's dwell
+  time onto a (ρ, z) meridian plane grid, weights by a power-law energy
+  spectrum and sin(α) pitch-angle isotropy, and produces an AP-8-style
+  proton flux heat map.
+
+
+BASIC USAGE
+-----------
+
+  # Build from all batch h5 files, protons > 10 MeV
+  python flux_map_builder.py outputs/outputs_rawdata/*.h5 --E-min 10e6
+
+  # Save to a specific location
+  python flux_map_builder.py outputs/outputs_rawdata/*.h5 --E-min 10e6 \
+      --output outputs/flux_map/meridian_gt10MeV.png
+
+  # Higher resolution grid
+  python flux_map_builder.py outputs/outputs_rawdata/*.h5 --E-min 10e6 --bins 100
+
+
+COMBINING PHASES
+----------------
+
+  The builder doesn't know or care about phases. It reads every h5 file
+  you point it at and accumulates them all. To combine Phase 1 + 2:
+
+    python flux_map_builder.py outputs/outputs_rawdata/*.h5 --E-min 10e6
+
+  To compare phases, save separate maps:
+
+    # Phase 1 only (10 + 30 MeV files)
+    python flux_map_builder.py outputs/outputs_rawdata/*.h5 \
+        --E-min 10e6 --E-max 30e6 \
+        --output outputs/flux_map/meridian_phase1.png
+
+    # Phase 1 + 2 combined
+    python flux_map_builder.py outputs/outputs_rawdata/*.h5 \
+        --E-min 10e6 \
+        --output outputs/flux_map/meridian_phase1+2.png
+
+    # Just 100 MeV contribution
+    python flux_map_builder.py outputs/outputs_rawdata/*.h5 \
+        --E-min 100e6 --E-max 100e6 \
+        --output outputs/flux_map/meridian_100MeV_only.png
+
+
+ENERGY SPECTRUM WEIGHTING
+-------------------------
+
+  Each orbit is weighted by j(E) ∝ (E / E_ref)^(-γ) where:
+    E_ref = 10 MeV (reference energy)
+    γ = spectral index (default 2.0)
+
+  This means:
+    10 MeV orbit  → weight = 1.0
+    30 MeV orbit  → weight = 0.11
+    100 MeV orbit → weight = 0.01
+    1 GeV orbit   → weight = 0.0001
+
+  Low-energy orbits dominate the flux, just like in the real radiation belt.
+
+  To adjust:
+    --spectral-index 1.5    Harder spectrum (more weight to high energies)
+    --spectral-index 3.0    Softer spectrum (low energies dominate even more)
+
+
+PITCH ANGLE WEIGHTING
+---------------------
+
+  Each orbit is also weighted by sin(α₀) where α₀ is the initial pitch
+  angle. This accounts for the solid-angle element: an isotropic
+  distribution has more particles near 90° than near 0° or 180°.
+
+  This is applied automatically. No flag to adjust it.
+
+
+GRID SETTINGS
+-------------
+
+  --bins N         Number of bins per axis (default: 80, so 80×80 grid)
+  --rho-max R      Maximum cylindrical radius ρ in R_E (default: 7.0)
+  --z-max Z        Maximum |z| in R_E (default: 3.0, grid goes -3 to +3)
+
+  For a zoomed-in view of the inner belt:
+    python flux_map_builder.py outputs/outputs_rawdata/*.h5 \
+        --E-min 10e6 --rho-max 3.5 --z-max 1.5 --bins 100
+
+
+WHAT THE PLOT SHOWS
+-------------------
+
+  - Color: relative omnidirectional proton flux on a log scale (jet colormap)
+  - White circle: Earth (1 R_E radius)
+  - Thin black lines: dipole field lines at L = 2, 3, 4, 5, 6
+  - x-axis: ρ = cylindrical radius = sqrt(x² + y²) in R_E
+  - y-axis: z = height above/below equatorial plane in R_E
+
+  The flux is "relative" — it shows the correct spatial structure and
+  energy dependence, but the absolute normalization is arbitrary because
+  we don't have a calibrated source function.
+
+
+================================================================================
+  3.  MICHEL PHASE PORTRAIT
+      michel_phase_portrait.py
+================================================================================
+
+PURPOSE
+  Produces α (pitch angle) vs φ (gyrophase) plots at equatorial crossings,
+  following Michel (1971) "Permanent Trapping" Figures 1 and 2.
+
+  At each z=0 crossing, the script computes:
+    α = arctan(v_perp / |v_parallel|)   — equatorial pitch angle
+    φ = angle of v_perp in the (v_rho, v_phi) plane — gyrophase
+        Convention: φ=0 when particle closest to dipole
+
+
+BASIC USAGE
+-----------
+
+  # Single orbit trace (Michel Fig. 1 style)
+  python michel_phase_portrait.py outputs/outputs_rawdata/run_abc123.h5
+
+  # Multiple orbits — full phase portrait (Michel Fig. 2 style)
+  python michel_phase_portrait.py outputs/outputs_rawdata/run_*L1.5*.h5
+
+  # Without connecting lines between crossings
+  python michel_phase_portrait.py outputs/outputs_rawdata/run_abc123.h5 --no-lines
+
+  The script auto-detects: one h5 file → Fig. 1 style, multiple → Fig. 2 style.
+
+
+BUILDING A MICHEL PORTRAIT FROM BATCH DATA
+-------------------------------------------
+
+  Step 1: Run the Michel sweep
+    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --workers 10
+
+  Step 2: Build the portrait from all resulting h5 files
+    python michel_phase_portrait.py outputs/outputs_rawdata/*.h5 --energy 10e6 --L 2.0
+
+  The glob pattern run_*L1.5* picks up all files at that L-shell regardless
+  of pitch angle or gyrophase. The portrait script colors each orbit by its
+  initial pitch angle automatically.
+
+
+OPTIONS
+-------
+
+  --no-lines         Don't draw lines connecting consecutive crossings.
+                     Useful when overlaying many orbits (cleaner look).
+
+  --energy E         Filter: only include h5 files with this energy (in eV).
+                     Example: --energy 10e6
+
+  --L L              Filter: only include h5 files with this L-shell.
+                     Example: --L 1.5
+
+  --max-crossings N  Limit the number of equatorial crossings plotted per
+                     orbit (default: all). Useful for very long runs.
+
+  --chunk-size N     H5 read chunk size in time steps (default: 500000).
+                     Increase if you have lots of RAM; decrease if you're
+                     running out of memory.
+
+
+WHAT THE PLOT SHOWS (PHYSICS)
+-----------------------------
+
+  Michel Fig. 1 (single orbit):
+    Shows one particle's path through (φ, α) space. Each dot is one
+    equatorial crossing. The connecting lines show the trajectory.
+    Numbered dots show the sequence. A closed loop means the orbit
+    is quasi-periodic (Region Ia — adiabatic). An open path that
+    circulates in φ means the orbit is in Region Ib or II.
+
+  Michel Fig. 2 (multiple orbits):
+    Overlays many orbits colored by initial pitch angle. The structure
+    reveals:
+      Region Ia  — elliptic fixed points (closed loops, trapped)
+      Region Ib  — librating orbits near the separatrix
+      Region II  — circulating orbits (Δφ doesn't return to zero)
+    Hyperbolic fixed points appear as X-points where separatrices cross.
+
+
+ADJUSTING THE PORTRAIT
+-----------------------
+
+  For a denser portrait, increase --phi-steps in the batch runner:
+    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --phi-steps 24
+
+  For more crossings per orbit, increase gyroperiods:
+    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --michel-gyroperiods 2e5
+
+  To compare different L-shells, run sweeps at each L and plot separately:
+    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --workers 10
+    python utility_scripts/batch_flux_runner.py --michel --L 2.0 --energy 10e6 --workers 10
+    python michel_phase_portrait.py outputs/outputs_rawdata/run_*L1.5*.h5
+    python michel_phase_portrait.py outputs/outputs_rawdata/run_*L2.0*.h5
+
+
+================================================================================
+  TYPICAL WORKFLOW (START TO FINISH)
+================================================================================
+
+  1. Preview what Phase 1 will do:
+       python utility_scripts/batch_flux_runner.py --phase 1 --dry-run
+
+  2. Test a single run:
+       python utility_scripts/batch_flux_runner.py --phase 1 \
+           --single E1e+07_L2.00_P89.0
+
+  3. Run Phase 1 in parallel:
+       python utility_scripts/batch_flux_runner.py --phase 1 --workers 10
+
+  4. Build the flux map from Phase 1 data:
+       python flux_map_builder.py outputs/outputs_rawdata/*.h5 --E-min 10e6 \
+           --output outputs/flux_map/meridian_phase1.png
+
+  5. Run Phase 2:
+       python utility_scripts/batch_flux_runner.py --phase 2 --workers 10
+
+  6. Build combined flux map:
+       python flux_map_builder.py outputs/outputs_rawdata/*.h5 --E-min 10e6 \
+           --output outputs/flux_map/meridian_phase1+2.png
+
+  7. Run Michel sweep for your advisor:
+       python utility_scripts/batch_flux_runner.py --michel --L 1.5 \
+           --energy 10e6 --workers 10
+
+  8. Build the Michel portrait:
+       python michel_phase_portrait.py outputs/outputs_rawdata/run_*L1.5*.h5
+
+
+================================================================================
+  STORAGE ESTIMATES
+================================================================================
+
+  Phase 1 (10+30 MeV, 320 runs):     ~30 GB
+  Phase 2 (100 MeV, 160 runs):        ~23 GB
+  Phase 1+2 combined:                  ~53 GB
+  Phase 3 (300 MeV, 100 runs):        ~70 GB
+  Phase 4 (1+10 GeV, 320 runs):       varies (many terminate early)
+
+  Michel sweep (204 runs at 10 MeV):  ~2-5 GB (small files, low energy)
+
+  Many high-L or low-pitch-angle orbits hit the atmosphere quickly and
+  produce small files, so actual storage is often less than estimates.
+
+
+================================================================================
+  TROUBLESHOOTING
+================================================================================
+
+  "No h5 files found"
+    Check your glob pattern. The *.h5 expansion happens in your shell,
+    so make sure you're in the right directory or use full paths.
+
+  "no PS data, skipped"
+    The h5 file was produced without Poincaré section data enabled.
+    Only runs with PS enabled contribute to the flux map.
+
+  Runs failing with import errors
+    Make sure numpy, h5py, and matplotlib are installed. The batch runner
+    and flux map builder both need them. psutil is needed by run_at_night.py
+    but NOT by these three scripts.
+
+  Out of memory
+    Reduce --chunk-size (default 1M for flux map, 500k for Michel).
+    Or reduce --workers to free up RAM.
+
+  Want to restart a batch from scratch
+    Delete utility_scripts/batch_flux_progress.json and run without --resume.
+
+  Config file collisions (shouldn't happen)
+    Each worker uses PID + run key in its config filename. If you see
+    leftover files in utility_scripts/batch_tmp/, just delete the folder.

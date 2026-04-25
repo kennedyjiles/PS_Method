@@ -22,39 +22,49 @@ atol_rk45 = 1e-14                       # RK45 adapative tolerance
 if USE_FLOAT128: mpl.rcParams['agg.path.chunksize'] = 100000  
 else: mpl.rcParams['agg.path.chunksize'] = 100
 
-run_storage = "outputs_rawdata"        # where raw trajectory files go when USE_WRITE_DATA = True
+run_storage = "outputs/outputs_rawdata"        # where raw trajectory files go when USE_WRITE_DATA = True
 
 # ===================================================================
 # ==============Toggle Parameters for Hyper B Script ================
 # ===================================================================
 """
-USE_RK45 --  Set to True to include RK45 analysis
-USE_RK4 --   Set to True to include RK4 analysis
-READ_DATA -- Set to True to scan for saved runs and load
-WRITE_DATA -- Set to True to write saved run data to hdf file (what READ_DATA looks for)
-USE_PLOT_TITLES -- Set to True to include plot titles
-USE_FULL_PLOT -- Set to True to plot entire trajectory (only useful for short runs, large runs slice last orbits)
+Toggles:
+    USE_RK45        -- Set to True to include RK45 analysis
+    USE_RK4         -- Set to True to include RK4 analysis
+    READ_DATA       -- Set to True to scan for saved runs and load from cache
+    WRITE_DATA      -- Set to True to write trajectory data to h5 file
+    USE_PLOT_TITLES -- Set to True to include plot titles
+    USE_FULL_PLOT   -- Set to True for full trajectory plot (only useful for short runs)
+    USE_EXTERNAL_H5 -- Set to True to load external h5 for comparison
 
-pitch_deg -- (degrees)
-phi_deg  -- (degrees)
-delta -- (km)
-x_initial_si -- (km)
-y_initial_si -- (km)
-z_initial_si -- (km)
-KE_particle -- (eV)
-B_0 -- (T)
-mass_si -- m_e or m_p, otherwise manual (kg)
-gyro_plot_slice -- slices last gyroperiods for visual inspection, suggest 8-15 (note gyroperiod based on B_0)
+Physics parameters:
+    pitch_deg    -- pitch angle (degrees)
+    phi_deg      -- gyrophase (degrees)
+    delta        -- current sheet half-thickness (km)
+    x_initial_si -- initial x position (km)
+    y_initial_si -- initial y position (km)
+    z_initial_si -- initial z position (km)
+    KE_particle  -- kinetic energy (eV)
+    B_0          -- asymptotic magnetic field strength (T)
+    mass_si      -- particle mass: m_e or m_p, or manual (kg)
 
-rk4_step -- 2π/N where N is ~integration points per gyroperiod               
-ps_step --  set equal to rk4_step for one-to-one comparison, can be anything
-norm_time -- this should be some multiple of gyroperiods designed (norm_time/2π = gyroperiods)     
+Integration parameters:
+    rk4_step    -- RK4 time step: 2*pi/N where N is steps per gyroperiod
+    ps_step     -- PS time step: set equal to rk4_step for direct comparison
+    gyroperiods -- number of gyroperiods to simulate
+    norm_time   -- total integration time: gyroperiods * 2*pi
+
+Plotting parameters:
+    window_duration -- time window (normalized) for trajectory slice inspection
+    slice_mode      -- "last" or "first", slices from end or beginning of simulation
+
+Run modes: "demo", "paper1", "paper2", "paper3", "paper4"     
 """
 
 def load_params(run):
     if run == "demo": #paper1 simulation at reduced norm time for quick demo
         print("Running DEMO simulation...this should be done in a couple seconds\n")
-        output_folder = "outputs_demo"
+        output_folder = "outputs/outputs_demo"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
@@ -66,9 +76,9 @@ def load_params(run):
         USE_EXTERNAL_H5 = False
         USE_EXTERNAL_H5b = False
 
-        external_h5 = "outputs_rawdata/" 
+        external_h5 = "outputs/outputs_rawdata/" 
         PS_order_ext = 1
-        external_h5b = "outputs_rawdata/" 
+        external_h5b = "outputs/outputs_rawdata/" 
         PS_order_ext = 1
 
         
@@ -93,7 +103,7 @@ def load_params(run):
     elif run == "paper1": # 10 keV electron, 75deg pitch, delta=500km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs/outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
@@ -104,9 +114,9 @@ def load_params(run):
         USE_EXTERNAL_H5 = False
         USE_EXTERNAL_H5b = False
 
-        external_h5 = "outputs_rawdata/run_8d05c562f1137db2.h5" 
+        external_h5 = "outputs/outputs_rawdata/run_8d05c562f1137db2.h5" 
         PS_order_ext = "25"
-        external_h5b = "outputs_rawdata/run_2e64db24ec88cb7e.h5" 
+        external_h5b = "outputs/outputs_rawdata/run_2e64db24ec88cb7e.h5" 
         PS_order_extb = "10"
 
 
@@ -131,7 +141,7 @@ def load_params(run):
     elif run == "paper2": # 10 keV electron, 75deg pitch, delta=50km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs/outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True        
@@ -143,9 +153,9 @@ def load_params(run):
         USE_EXTERNAL_H5b = False
 
     
-        external_h5 = "outputs_rawdata/run_6fc9daec43008056.h5"
+        external_h5 = "outputs/outputs_rawdata/run_6fc9daec43008056.h5"
         PS_order_ext = "40"
-        external_h5b = "outputs_rawdata/run_73287ee231150e97.h5" 
+        external_h5b = "outputs/outputs_rawdata/run_73287ee231150e97.h5" 
         PS_order_extb = "10" 
 
         pitch_deg = npfloat(75.0)
@@ -169,7 +179,7 @@ def load_params(run):
     elif run == "paper3": # 100 keV proton, -15deg pitch, delta=200km, B0=10nT
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs/outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True        
         USE_RK4 = True         
@@ -181,9 +191,9 @@ def load_params(run):
         USE_EXTERNAL_H5b = False
 
 
-        external_h5 = "outputs_rawdata/run_d72c9d579dd24595.h5" 
+        external_h5 = "outputs/outputs_rawdata/run_d72c9d579dd24595.h5" 
         PS_order_ext = "40"
-        external_h5b = "outputs_rawdata/run_bbb58e0c8a29e72f.h5"
+        external_h5b = "outputs/outputs_rawdata/run_bbb58e0c8a29e72f.h5"
         PS_order_extb = "15"
 
 
@@ -209,7 +219,7 @@ def load_params(run):
     elif run == "paper4": # paper1 simulation at larger ps_step
         if USE_FLOAT128: print("Running full PAPER simulation in float128...this may take a ~30 minutes\n")
         else: print("Running full PAPER simulation...this will take a few minutes\n")
-        output_folder = "outputs_paper"
+        output_folder = "outputs/outputs_paper"
         os.makedirs(output_folder, exist_ok=True)
         USE_RK45 = True       
         USE_RK4 = True        
@@ -220,8 +230,8 @@ def load_params(run):
         USE_EXTERNAL_H5 = False
         USE_EXTERNAL_H5b = False
 
-        external_h5 = "outputs_rawdata/" 
-        external_h5b = "outputs_rawdata/" 
+        external_h5 = "outputs/outputs_rawdata/" 
+        external_h5b = "outputs/outputs_rawdata/" 
 
 
         pitch_deg = npfloat(75.0)
