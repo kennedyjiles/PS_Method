@@ -1,6 +1,7 @@
 import numpy as np
 import warnings
 import os
+import h5py
 
 
 # ===================================================================
@@ -445,3 +446,113 @@ def calculate_w0_squared(speed, L_shell, mass_si, q_e, M_earth=8.087e15):
     w0_sq = (gamma_lorentz * speed / v_scale)**2
 
     return w0_sq
+
+
+# ===================================================================
+# === Chunked Dragt Analysis (adiabaticity, meridian, crossings) ====
+# ===================================================================
+def dragt_analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000_000):
+    """
+    Stream through an h5 trajectory file in fixed-size chunks and compute:
+      - adiabaticity parameter epsilon (decimated for plotting)
+      - meridian plane rho/L and z/L (decimated)
+      - equatorial z=0 crossings (linear interpolation)
+      - epsilon statistics (initial, mean, max)
+
+    Returns a dict with keys:
+        eps_arr, t_arr, rho_arr, z_arr   — decimated arrays for plotting
+        eps_initial, eps_mean, eps_max   — scalar statistics
+        crossings  — tuple (rho_dragt, rho_dot_dragt, x_c, y_c, vx_c, vy_c) or None
+    """
+    with h5py.File(cache_path, "r") as ps_h5:
+        ds = ps_h5["ps"]["y"]
+        N_total = ds.shape[1]
+        decimate = max(1, N_total // 500_000)  # target ~500K pts for plots
+        print(f"  Dragt chunked analysis: {N_total:,} steps, "
+              f"chunk={chunk_size:,}, decimate=1/{decimate}")
+
+        eps_initial = None
+        eps_sum     = 0.0
+        eps_count   = 0
+        eps_max     = -np.inf
+        eps_dec     = []
+        rho_dec     = []
+        z_dec       = []
+        cx_list     = []
+        cy_list     = []
+        cvx_list    = []
+        cvy_list    = []
+        prev_z      = None
+        prev_state  = None
+
+        for i0 in range(0, N_total, chunk_size):
+            i1 = min(i0 + chunk_size, N_total)
+            chunk = ds[:6, i0:i1]
+            cx, cy, cz = chunk[0], chunk[1], chunk[2]
+            cvx, cvy, cvz = chunk[3], chunk[4], chunk[5]
+
+            # --- adiabaticity ---
+            eps = calculate_adiabaticity(cx, cy, cz, cvx, cvy, cvz)
+            if eps_initial is None:
+                eps_initial = float(eps[0])
+            eps_sum   += float(np.nansum(eps))
+            eps_count += int(np.sum(np.isfinite(eps)))
+            cm = float(np.nanmax(eps))
+            if cm > eps_max:
+                eps_max = cm
+            eps_dec.append(eps[::decimate])
+
+            # --- meridian plane (decimated) ---
+            rho_dec.append(np.sqrt(cx**2 + cy**2)[::decimate] / L_shell)
+            z_dec.append(cz[::decimate] / L_shell)
+
+            # --- z-crossings: chunk boundary ---
+            if prev_z is not None and prev_z * cz[0] < 0:
+                t_f = abs(prev_z) / (abs(prev_z) + abs(float(cz[0])))
+                ps = prev_state
+                cx_list.append(np.array([ps[0] + t_f * (float(cx[0]) - ps[0])]))
+                cy_list.append(np.array([ps[1] + t_f * (float(cy[0]) - ps[1])]))
+                cvx_list.append(np.array([ps[3] + t_f * (float(cvx[0]) - ps[3])]))
+                cvy_list.append(np.array([ps[4] + t_f * (float(cvy[0]) - ps[4])]))
+
+            # --- z-crossings: within chunk ---
+            mask = cz[:-1] * cz[1:] < 0
+            idx  = np.where(mask)[0]
+            if len(idx) > 0:
+                t_f = np.abs(cz[idx]) / (np.abs(cz[idx]) + np.abs(cz[idx+1]))
+                cx_list.append(cx[idx]  + t_f * (cx[idx+1]  - cx[idx]))
+                cy_list.append(cy[idx]  + t_f * (cy[idx+1]  - cy[idx]))
+                cvx_list.append(cvx[idx] + t_f * (cvx[idx+1] - cvx[idx]))
+                cvy_list.append(cvy[idx] + t_f * (cvy[idx+1] - cvy[idx]))
+
+            prev_z     = float(cz[-1])
+            prev_state = tuple(float(v) for v in (cx[-1], cy[-1], cz[-1],
+                                                    cvx[-1], cvy[-1], cvz[-1]))
+            del chunk, cx, cy, cz, cvx, cvy, cvz, eps
+
+    # --- consolidate ---
+    eps_arr = np.concatenate(eps_dec)
+    rho_arr = np.concatenate(rho_dec)
+    z_arr   = np.concatenate(z_dec)
+    t_arr   = ps_step * np.arange(len(eps_arr), dtype=float) * decimate * time_factor
+
+    if cx_list:
+        cx_all  = np.concatenate(cx_list)
+        cy_all  = np.concatenate(cy_list)
+        cvx_all = np.concatenate(cvx_list)
+        cvy_all = np.concatenate(cvy_list)
+        rs      = np.sqrt(cx_all**2 + cy_all**2)
+        rd_sim  = (cx_all * cvx_all + cy_all * cvy_all) / rs
+        crossings = (rs / L_shell,
+                     rd_sim * L_shell**2,
+                     cx_all, cy_all, cvx_all, cvy_all)
+    else:
+        crossings = None
+
+    return dict(
+        eps_arr=eps_arr, t_arr=t_arr, rho_arr=rho_arr, z_arr=z_arr,
+        eps_initial=eps_initial if eps_initial is not None else 0.0,
+        eps_mean=eps_sum / eps_count if eps_count > 0 else 0.0,
+        eps_max=eps_max,
+        crossings=crossings,
+    )

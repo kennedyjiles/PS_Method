@@ -2,15 +2,13 @@ import numpy as np
 import os
 import matplotlib.pyplot as mpl
 import json as _json
+from constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
 
 
 USE_FLOAT128 = False  # RKG Will be diabled if this is True
 
 if USE_FLOAT128: npfloat = np.float128
 else: npfloat = np.float64
-
-# ===== Physical Constants (from shared module) =====
-from constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
 
 
 # ===== Tolerances/Truncations =====
@@ -41,10 +39,8 @@ Toggles:
     USE_RK4         -- Set to True to include RK4 analysis
     USE_RKG         -- Set to True to include RKG analysis (protons only)
     USE_PS          -- Set to True to include PS analysis
-    PS_CHUNKING     -- Set to True to stream PS data to disk in chunks (recommended for long runs)
     PS_decimate     -- Save every Nth PS step to reduce file size (1 = save all)
     READ_DATA       -- Set to True to scan for saved runs and load from cache
-    WRITE_DATA      -- Set to True to write trajectory data to h5 file
     USE_PLOT_TITLES -- Set to True to include plot titles
     USE_FULL_PLOT   -- Set to False for paper plots only, True for all diagnostic plots
 
@@ -95,7 +91,6 @@ def _defaults():
     """Baseline parameters shared by most run modes. Each mode overrides what differs."""
     return dict(
         READ_DATA  = True,
-        WRITE_DATA = True,
 
         USE_RK45     = False,
         USE_RK4      = False,
@@ -103,13 +98,12 @@ def _defaults():
         USE_PS       = True,
         USE_ADAPTIVE = False,   # True = adaptive PS stepping, False = fixed-step
         PS_decimate  = 1,
-        PS_CHUNKING  = True,
 
         y_initial = npfloat(0),
         z_initial = npfloat(0),
 
         USE_PLOT_TITLES = False,
-        USE_FULL_PLOT   = False,
+        USE_FULL_PLOT   = True,
         slice_mode  = "last",
         gyro_window = "last",
 
@@ -170,7 +164,7 @@ def load_params(run):
         else: print("Running DEMO simulation...this takes just few seconds\n")
 
         p = _defaults()
-        p["output_folder"] = "outputs/outputs_demo"
+        p["output_folder"] = "outputs/demo"
         os.makedirs(p["output_folder"], exist_ok=True)
 
         # Solvers
@@ -190,7 +184,7 @@ def load_params(run):
         ps_step, rk4_step, rkg_step, N_ps, N_rk4, N_rkg = _compute_steps(T_gyro)
         p.update(ps_step=ps_step, rk4_step=rk4_step, rkg_step=rkg_step,
                  N_STEPS_PER_GYRO_ps=N_ps, N_STEPS_PER_GYRO_rk4=N_rk4, N_STEPS_PER_GYRO_rkg=N_rkg)
-        p["gyroperiods"] = 4.1e2
+        p["gyroperiods"] = 4.5e2
         p["norm_time"]   = npfloat(p["gyroperiods"]) * T_gyro
 
         # Plotting
@@ -208,7 +202,6 @@ def load_params(run):
         p = _defaults()
         p["output_folder"] = "outputs/paper"
         os.makedirs(p["output_folder"], exist_ok=True)
-        p["READ_DATA"] = False
 
         # Solvers
         p["USE_RK45"] = True

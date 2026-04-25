@@ -1,0 +1,87 @@
+# ===================================================================
+# Default configuration for dipoleB simulations
+# ===================================================================
+# These are the baseline values. A run config only needs to specify
+# the values it wants to CHANGE — everything else falls back here.
+# ===================================================================
+
+# --- Particle ---
+particle: proton          # "proton" or "electron"
+energy_eV: 100.0e6        # kinetic energy in eV
+pitch_deg: 60.0           # pitch angle (degrees)
+phi_deg: 90.0             # gyrophase angle (degrees)
+L_shell: 5.0              # launch L-shell (x_initial in R_E)
+y_initial: 0.0            # initial y position (R_E), usually 0
+z_initial: 0.0            # initial z position (R_E), usually 0
+
+# --- Integration ---
+gyroperiods: 450          # number of gyroperiods to simulate
+use_gyroradius_L_correction: false  # Shifts L_shell by the particle's gyroradius to get the
+                                    # guiding-center L_eff, then computes T_gyro from that.
+                                    # Only matters when gyroradius is a significant fraction of
+                                    # L_shell (e.g. 210 MeV protons at L~3). Safe to leave false
+                                    # for low-energy particles or electrons.
+
+# --- Solvers ---
+solvers:
+  ps: true
+  rk4: false
+  rk45: false
+  rkg: false
+  adaptive: false         # true = adaptive PS stepping
+
+# --- PS Settings ---
+ps_decimate: 1            # save every Nth PS step (1 = save all)
+ps_order: 40              # max power series order (system will truncate)
+
+# --- Steps per gyroperiod (used to compute step sizes from T_gyro) ---
+# Set to null to use defaults (65 for all). Override individually as needed.
+steps_per_gyro:
+  ps: 65
+  rk4: 65
+  rkg: 65
+
+# --- Step size overrides (optional) ---
+# If set, these OVERRIDE the computed step sizes from steps_per_gyro.
+# Leave as null to let the code compute them.
+step_overrides:
+  ps: null
+  rk4: null
+  rkg: null
+
+# --- Step rounding ---
+round_steps: true         # round step sizes to 1 decimal place
+
+# --- Plotting ---
+plotting:
+  titles: false           # show plot titles
+  full_plot: true         # true = all diagnostic plots, false = paper plots only
+  slice_mode: last        # "first" or "last" — which gyro window to slice
+  gyro_window: last       # "first" or "last" — which gyro window for detailed view
+  n_gyro: 75              # number of gyroperiods in slice window
+
+# --- Window ---
+window_time: 11.6         # time window for slice plots (normalized units)
+
+# --- Output ---
+output_folder: outputs/runs
+read_data: true           # scan for cached runs and load from disk
+
+# --- External H5 files (for energy comparison across runs) ---
+# Set use_external_h5 to true AND provide the path to enable comparison.
+# Having a path alone does NOT enable it — the toggle must be explicit.
+use_external_h5:
+  ps:   false
+  rk4:  false
+  rk45: false
+  rkg:  false
+
+external_h5:
+  ps:   "outputs/outputs_rawdata/"
+  rk4:  "outputs/outputs_rawdata/"
+  rk45: "outputs/outputs_rawdata/"
+  rkg:  "outputs/outputs_rawdata/"
+
+# --- Special modes (leave null for normal runs) ---
+legacy_h5_path: null      # path to legacy h5 file for direct loading
+manual_h5_path: null      # path to specific h5 file for manual loading

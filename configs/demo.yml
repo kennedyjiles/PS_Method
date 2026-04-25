@@ -1,0 +1,23 @@
+# ===================================================================
+# Demo run — quick test with paper2 physics at reduced gyroperiods
+# ===================================================================
+
+particle: electron
+energy_eV: 100.0e6
+pitch_deg: 60.0
+phi_deg: 90.0
+L_shell: 5.0
+gyroperiods: 450
+
+solvers:
+  ps: true
+  rk4: true
+  rk45: true
+
+plotting:
+  titles: true
+  slice_mode: first
+  n_gyro: 75
+
+window_time: 11.6
+output_folder: outputs/demo

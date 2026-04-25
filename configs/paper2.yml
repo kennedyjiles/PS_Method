@@ -1,0 +1,27 @@
+# ===================================================================
+# Paper 2 — 100 MeV electron, 60° pitch, 5 R_E
+# ===================================================================
+
+particle: electron
+energy_eV: 100.0e6
+pitch_deg: 60.0
+phi_deg: 90.0
+L_shell: 5.0
+
+solvers:
+  ps: true
+  rk4: true
+  rk45: true
+  rkg: true
+
+total_steps: 1.0e7
+
+plotting:
+  titles: true
+  n_gyro: 75
+
+window_time: 11.6
+output_folder: outputs/paper
+
+external_h5:
+  ps: "outputs/outputs_rawdata/run_5f2698f4194712e0.h5"

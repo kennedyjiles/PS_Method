@@ -1,0 +1,34 @@
+# ===================================================================
+# Dragt — high-energy proton with relativistic L_eff
+# ===================================================================
+
+particle: proton
+energy_eV: 210.5306105318196e6
+pitch_deg: 67.61877044327187
+phi_deg: -90.0
+L_shell: 3.34483896
+gyroperiods: 1.0e5
+use_gyroradius_L_correction: true
+
+solvers:
+  ps: true
+  adaptive: true
+
+ps_order: 1000
+round_steps: false
+
+plotting:
+  titles: true
+  full_plot: true
+  slice_mode: first
+  gyro_window: first
+  n_gyro: 175
+
+window_time: 5.0
+output_folder: outputs/dragt
+
+external_h5:
+  ps:   "outputs/outputs_rawdata/run_304603211ada647c.h5"
+  rk4:  "outputs/outputs_rawdata/run_60a0558ebec9f956.h5"
+  rk45: "outputs/outputs_rawdata/run_60a0558ebec9f956.h5"
+  rkg:  "outputs/outputs_rawdata/run_60a0558ebec9f956.h5"

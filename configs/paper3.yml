@@ -1,0 +1,41 @@
+# ===================================================================
+# Paper 3 — paper1 physics with mismatched step sizes
+#           PS takes huge steps, RK4 takes tiny steps
+# ===================================================================
+
+particle: proton
+energy_eV: 100.0e3
+pitch_deg: 30.0
+phi_deg: 90.0
+L_shell: 5.0
+
+solvers:
+  ps: true
+  rk4: true
+
+ps_order: 16
+
+# Manually override step sizes (not computed from steps_per_gyro)
+step_overrides:
+  ps: 54.0
+  rk4: 0.5
+
+# These are informational — the step overrides take precedence
+steps_per_gyro:
+  ps: 14.5
+  rk4: 1570.8
+
+# norm_time set explicitly (not from gyroperiods × T_gyro)
+# Original expression: 6206.0 * 4 / 0.00033464094804535314
+norm_time_override: 74180999.50110008
+
+plotting:
+  full_plot: true
+  n_gyro: 150
+
+window_time: 6209.0
+output_folder: outputs/paper
+
+external_h5:
+  ps:  "outputs/outputs_rawdata/run_36f4c2c523cdbb17.h5"
+  rk4: "outputs/outputs_rawdata/run_7b2f03f027541ae1.h5"

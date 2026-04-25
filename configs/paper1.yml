@@ -1,0 +1,30 @@
+# ===================================================================
+# Paper 1 — 100 keV proton, 30° pitch, 5 R_E
+# ===================================================================
+
+particle: proton
+energy_eV: 100.0e3
+pitch_deg: 30.0
+phi_deg: 90.0
+L_shell: 5.0
+
+solvers:
+  ps: true
+  rk4: true
+  rk45: true
+  rkg: true
+
+# Integration defined by total steps rather than gyroperiods.
+# 1e7 steps × ps_step gives norm_time; gyroperiods is derived.
+gyroperiods: null         # computed from total_steps below
+total_steps: 1.0e7        # total integration steps (norm_time = total_steps × ps_step)
+
+plotting:
+  n_gyro: 150
+
+window_time: 6209.0
+output_folder: outputs/paper
+
+external_h5:
+  ps:  "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_1f911496e90d7c4b.h5"
+  rkg: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_ae2d63d764f68d00.h5"

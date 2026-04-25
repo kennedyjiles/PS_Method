@@ -33,35 +33,56 @@ from functions.functions_library_universal_chunk import (
 )
 
 from functions.functions_library_dipole import (
-    PS_dipoleB, 
-    lorentz_force_dipole, 
-    compute_mu_ps, 
+    lorentz_force_dipole,
+    compute_mu_ps,
     compute_mu_rk,
-    vector_potential_dipole, 
-    rkgl4_hamiltonian, 
+    vector_potential_dipole,
+    rkgl4_hamiltonian,
     hamiltonian_rhs,
-    summarize, 
-    slice_solution, 
-    append_results_h5, 
+    summarize,
+    slice_solution,
+    append_results_h5,
     compute_energy_ps_chunked,
-    load_legacy_file, 
-    init_drift_stream_state, 
+    load_legacy_file,
+    init_drift_stream_state,
     write_dict,
-    mirror_times_from_PS, 
-    bounce_summary, 
-    drift_period_from_PS,
-    get_run_params, 
-    h5_path_for, 
-    save_results_h5, 
+    bounce_summary,
+    get_run_params,
+    h5_path_for,
+    save_results_h5,
     load_results_h5,
-    summarize_error, 
-    run_ps_streaming_with_decimation, 
+    summarize_error,
+    run_ps_streaming_with_decimation,
     build_figure_filename,
-    process_bounce_and_drift_chunk, 
-    init_bounce_stream_state, 
+    process_bounce_and_drift_chunk,
+    init_bounce_stream_state,
     check_time_grids,
     finalize_drift_stream,
-    expand_h5_to_full
+    expand_h5_to_full,
 )
 
+from functions.functions_library_dragt import (
+    calculate_adiabaticity,
+    compute_dragt_params,
+    compute_dragt_boundary,
+    compute_z_crossings,
+    compute_gyrophase_mu,
+    dragt_analysis_chunked,
+    DragtMonitor,
+)
+
+from functions.functions_library_dipole_adp import run_ps_streaming_adaptive
+
+from functions.dipoleB_plots import (
+    plot_full_2d, plot_full_3d, plot_slice_2d, plot_slice_3d,
+    plot_ke_error,
+    plot_dragt_poincare, plot_gyrophase_mu, plot_polar_phase_space,
+    plot_meridian_plane, plot_adiabaticity, plot_pphi_error,
+    plot_mu_deviation,
+)
+
+from functions.dipoleB_writers import write_summary_txt, write_master_csv
+
 from .logger_util import setup_logger
+
+from configs.config_loader import load_config
