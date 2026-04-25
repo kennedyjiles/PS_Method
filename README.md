@@ -34,14 +34,14 @@ Each of these drivers can be run in **demo** or **paper** modes, depending on wh
 .
 ├── constB.py                   # Main simulation driver (uniform field)
 ├── hyperB.py                   # Main simulation driver (hyperbolic/current-sheet field)
-├── dipoleB.py                  # Main simulation driver (dipole field, fixed step)
-├── dipoleB_adp.py              # Dipole driver with adaptive PS time stepping
+├── dipoleB.py                  # Main simulation driver (dipole field, fixed + adaptive step)
+├── constants.py                # Shared physical constants (q_e, m_e, m_p, RE, B_0, etc.)
 │
 ├── functions/
 │   ├── functions_library_constB.py
 │   ├── functions_library_hyper.py
 │   ├── functions_library_dipole.py      # PS dipole integrator (fixed step, streaming)
-│   ├── functions_library_dipole_adp.py     # PS dipole integrator (adaptive step, streaming)
+│   ├── functions_library_dipole_adp.py  # PS dipole integrator (adaptive step, streaming)
 │   ├── functions_library_dragt.py       # Dragt diagnostics (W₀², P_φ, adiabaticity, Poincaré)
 │   ├── functions_library_universal.py   # Shared numerical + plotting utilities
 │   └── functions_library_universal_chunk.py  # Chunked energy/mu computation for large runs
@@ -197,7 +197,7 @@ By default, all scripts are set to use `float64`. For the uniform field (`constB
 
 When using `float128`, make sure your platform supports it (Linux/macOS only; Windows typically maps it to `longdouble`).
 
-> **Note:** The `float128` option is currently only functional for the `constB` and `hyperB` cases. The dipole integrators (`dipoleB`, `dipoleB_adp`) use `float64` exclusively. 
+> **Note:** The `float128` option is currently only functional for the `constB` and `hyperB` cases. The dipole integrator (`dipoleB`) uses `float64` exclusively. 
 
 ### Adaptive PS-order truncation
 The Parker–Sochacki expansion is truncated dynamically based on term magnitude:
@@ -288,7 +288,7 @@ As noted, the dipole analysis involved a significant number of simulations. For 
 
 ## Running Custom Dipole Simulations
 
-The dipole test particle file (`test_particles/dipoleB_testparticles.py`) serves as the central configuration for both the fixed-step (`dipoleB.py`) and adaptive (`dipoleB_adp.py`) drivers. To run a custom simulation, add a new run mode to the `load_params()` function with your desired parameters.
+The dipole test particle file (`test_particles/dipoleB_testparticles.py`) serves as the central configuration for `dipoleB.py`. Fixed-step vs adaptive integration is controlled by the `USE_ADAPTIVE` flag in each run mode. To run a custom simulation, add a new run mode to the `load_params()` function with your desired parameters.
 
 ### Adding a New Run Mode
 
@@ -349,17 +349,13 @@ elif run == "my_run":
     external_h5_rkg  = "outputs_rawdata/"
 ```
 
-Then execute with either driver:
+Then execute:
 
 ```bash
-# Fixed-step PS integrator
 python dipoleB.py my_run
-
-# Adaptive PS integrator (recommended for high energy or low pitch angle)
-python dipoleB_adp.py my_run
 ```
 
-Both drivers call `load_params()` from the same test particle file, so the same run mode works with either. Use `dipoleB_adp.py` when the adiabaticity parameter ε is large (high energy, large L, or low pitch angle) - the adaptive stepper will automatically adjust the time step based on the local magnetic field strength.
+To enable adaptive stepping (recommended for high energy or low pitch angle), set `USE_ADAPTIVE = True` in your run mode's parameter dictionary. The adaptive stepper will automatically adjust the time step based on the local magnetic field strength.
 
 ### Key Parameters
 
@@ -379,15 +375,15 @@ Dragt (1965) showed that charged-particle trapping in a dipole is governed by tw
 
 Michel (1980) extended this analysis to show that the phase-space topology of trapped particles contains islands of permanent stability (KAM islands) around elliptic fixed points, explaining why particles with high pitch angles near 90° can remain trapped indefinitely even in the non-adiabatic regime.
 
-### Adaptive PS Time Stepping (dipoleB_adp)
+### Adaptive PS Time Stepping
 
-`dipoleB_adp.py` extends the fixed-step `dipoleB.py` driver with an **adaptive PS time stepper** (`functions_library_dipole_adp.py`). The adaptive integrator uses a hybrid approach: a fast path with fixed time step for regions where the PS series converges easily, and a slow path that computes the local gyroperiod from |B| and subdivides accordingly (200 steps per local gyroperiod) when the field gradient is steep. The integrator automatically switches between paths based on PS series order convergence.
+`dipoleB.py` supports both fixed-step and adaptive PS integration, selected by the `USE_ADAPTIVE` flag in each run mode. The adaptive integrator (`functions_library_dipole_adp.py`) uses a hybrid approach: a fast path with fixed time step for regions where the PS series converges easily, and a slow path that computes the local gyroperiod from |B| and subdivides accordingly (200 steps per local gyroperiod) when the field gradient is steep. The integrator automatically switches between paths based on PS series order convergence.
 
 Key features include NaN/Inf guards (rollback to pre-chunk state if the auxiliary tether variables diverge), atmosphere impact detection (flags when the orbit radius drops below 1 R_E), and streaming-to-disk via HDF5. Both integrators save only position, velocity, and B-field components to h5 (9 channels), omitting the 8 internal PS auxiliary variables (r², a, b, c, d, e, f, g) that are only needed during integration. This reduces file sizes by ~47% compared to saving the full 17-element state vector.
 
 ### Dragt Diagnostics
 
-Both `dipoleB.py` and `dipoleB_adp.py` compute and log the following Dragt diagnostics for each simulation run:
+`dipoleB.py` computes and logs the following Dragt diagnostics for each simulation run:
 
 - *W*₀² (dimensionless energy) and *P*_φ (canonical angular momentum) from initial conditions
 - Trapping boundary status: CLOSED (*W*₀² < *P*_φ⁴/16) or OPEN

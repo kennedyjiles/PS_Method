@@ -306,7 +306,7 @@ def run_ps_streaming_adaptive(
     """
     start_time_ps = time.time()
     n_state = 17
-    # _SAVE_ROWS and n_save imported from functions_library_dipole
+    # SAVE_ROWS and n_save imported from functions_library_dipole
 
     # --- build initial 17-element state ---
     cur_state = np.zeros(n_state, dtype=npfloat)
@@ -509,7 +509,7 @@ def run_ps_streaming_adaptive(
                     new_len = old_len + sol_keep.shape[1]
                     dset_y.resize((n_save, new_len))
                     dset_orders.resize((new_len,))
-                    dset_y[:, old_len:new_len]   = sol_keep[_SAVE_ROWS, :]
+                    dset_y[:, old_len:new_len]   = sol_keep[SAVE_ROWS, :]
                     dset_orders[old_len:new_len] = orders_keep
 
             global_index += this_chunk

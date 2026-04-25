@@ -87,7 +87,7 @@ Run modes:
     manual       -- load specific h5 file
     monster_ps   -- extended PS-only run
 
-This file is shared by both dipoleB.py (fixed-step) and dipoleB_adp.py (adaptive).
+This file is shared by dipoleB.py, which handles both fixed-step and adaptive modes via USE_ADAPTIVE.
 """
 
 # ===================================================================
@@ -97,12 +97,13 @@ def _defaults():
         READ_DATA  = True,
         WRITE_DATA = True,
 
-        USE_RK45    = False,
-        USE_RK4     = False,
-        USE_RKG     = False,
-        USE_PS      = True,
-        PS_decimate = 1,
-        PS_CHUNKING = True,
+        USE_RK45     = False,
+        USE_RK4      = False,
+        USE_RKG      = False,
+        USE_PS       = True,
+        USE_ADAPTIVE = False,   # True = adaptive PS stepping, False = fixed-step
+        PS_decimate  = 1,
+        PS_CHUNKING  = True,
 
         y_initial = npfloat(0),
         z_initial = npfloat(0),
@@ -331,6 +332,7 @@ def load_params(run):
         p = _defaults()
         p["output_folder"] = "outputs/dragt"
         os.makedirs(p["output_folder"], exist_ok=True)
+        p["USE_ADAPTIVE"] = True
 
         # Physics
         p["pitch_deg"]   = npfloat(67.61877044327187)
@@ -348,7 +350,7 @@ def load_params(run):
         ps_step, rk4_step, rkg_step, N_ps, N_rk4, N_rkg = _compute_steps(T_gyro, rounding=False)
         p.update(ps_step=ps_step, rk4_step=rk4_step, rkg_step=rkg_step,
                  N_STEPS_PER_GYRO_ps=N_ps, N_STEPS_PER_GYRO_rk4=N_rk4, N_STEPS_PER_GYRO_rkg=N_rkg)
-        p["gyroperiods"] = 5e6
+        p["gyroperiods"] = 1e5
         p["norm_time"]   = npfloat(p["gyroperiods"]) * T_gyro
         p["PS_order"]    = 1000
 
@@ -376,6 +378,7 @@ def load_params(run):
         p["output_folder"] = "outputs/walt"
         os.makedirs(p["output_folder"], exist_ok=True)
         p["READ_DATA"] = False
+        p["USE_ADAPTIVE"] = True
 
         # Physics
         p["pitch_deg"]   = npfloat(89.0)
@@ -434,6 +437,7 @@ def load_params(run):
         p = _defaults()
         p["output_folder"] = _cfg.get("output_folder", "outputs/flux_map")
         os.makedirs(p["output_folder"], exist_ok=True)
+        p["USE_ADAPTIVE"] = _cfg.get("use_adaptive", True)
 
         # Physics
         p["pitch_deg"]   = npfloat(_cfg["pitch_deg"])

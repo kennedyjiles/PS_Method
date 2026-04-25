@@ -7,6 +7,8 @@ from functions.functions_library_dragt import (
     compute_gyrophase_mu,
     DragtMonitor,
 )
+from functions.functions_library_dipole_adp import run_ps_streaming_adaptive
+
 DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
 if DEBUG: 
     logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
@@ -226,7 +228,7 @@ v_tau = v_si * tau_time / RE                        # dimensionless velocity
 
 physical_time = norm_time * abs(tau_time)           # actual physical time, t; normalized time =t/tau_time
 window_duration = window_time/tau_time              # converting window_time to dimensionless time
-tol = npfloat(tol) * tau_time                       # Scale tolerance by tau_0. 
+tol = npfloat(tol) * tau_time                       # Scale tolerance by tau_0
  
 # === Velocity Config based on INput Angles ===
 pitch_rad = npfloat(np.radians(pitch_deg))              # degrees to radians, pitch 
@@ -412,7 +414,7 @@ if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
                 dragt_mon = DragtMonitor(_L_mon, charge_sign,
                                          check_every=1, rtol=1e-4)
                 # ----------------------------------
-                max_ps, elapsed_ps = run_ps_streaming_with_decimation(
+                _stream_args = dict(
                     initial_pos_vel_ps=initial_pos_vel,
                     steps_ps=steps_ps,
                     ps_step=ps_step,
@@ -429,6 +431,18 @@ if not (USE_LEGACY_FILE or USE_MANUAL_FILE):
                     user_min_phase=user_min_phase,
                     dragt_monitor=dragt_mon,
                 )
+                if USE_ADAPTIVE:
+                    _stream_args.update(
+                        order_low=50,
+                        order_high=300,
+                        grow_factor=1.5,
+                        shrink_factor=0.5,
+                        steps_per_local_gyro=200,
+                        min_fast_path_N=100,
+                    )
+                    max_ps, elapsed_ps = run_ps_streaming_adaptive(**_stream_args)
+                else:
+                    max_ps, elapsed_ps = run_ps_streaming_with_decimation(**_stream_args)
                 dragt_mon.summary()
                 solution_ps = None
                 orders_used = None

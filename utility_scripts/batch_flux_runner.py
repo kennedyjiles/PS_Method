@@ -2,19 +2,20 @@
 """
 Batch Flux Map Runner
 =====================
-Orchestrates a parameter sweep of dipoleB_adp.py across (energy, L-shell, pitch angle)
+Orchestrates a parameter sweep of dipoleB.py across (energy, L-shell, pitch angle)
 to generate the trajectory data needed for an AP-8-comparable meridian-plane flux map.
 
 Supports parallel execution on multi-core machines (e.g. M4 Max with 16 cores).
 Each worker gets its own JSON config file to avoid race conditions.
 
-This script does NOT modify dipoleB_adp.py or any core library files. It writes a
-JSON config per run, then calls `python dipoleB_adp.py batch:/path/to/config.json`.
+This script does NOT modify dipoleB.py or any core library files. It writes a
+JSON config per run, then calls `python dipoleB.py batch:/path/to/config.json`.
 The "batch" run mode in dipoleB_testparticles.py reads from that config.
+Adaptive vs fixed stepping is controlled via the USE_ADAPTIVE flag in the config.
 
 Usage:
     python utility_scripts/batch_flux_runner.py --phase 1 --workers 10              # fixed-step (default)
-    python utility_scripts/batch_flux_runner.py --phase 3 --workers 8 --driver dipoleB_adp.py  # adaptive
+    python utility_scripts/batch_flux_runner.py --phase 3 --workers 8 --adaptive    # adaptive stepping
     python utility_scripts/batch_flux_runner.py --phase 1 --workers 10 --dry-run
     python utility_scripts/batch_flux_runner.py --phase 1 --workers 10 --resume
 
@@ -67,9 +68,9 @@ BATCH_TMP_DIR = os.path.join(SCRIPT_DIR, "batch_tmp")
 #                    10 GeV = 1e10 eV
 #
 # AP-8 covers 0.1–400 MeV. We split into phases by physics regime:
-#   Phase 1: 0.1–30 MeV   (deeply adiabatic, dipoleB.py)
-#   Phase 2: 50–400 MeV   (transition regime, dipoleB.py or dipoleB_adp.py)
-#   Phase 3: 1–10 GeV     (Dragt/Störmer, dipoleB_adp.py)
+#   Phase 1: 0.1–30 MeV   (deeply adiabatic, fixed-step)
+#   Phase 2: 50–400 MeV   (transition regime, adaptive)
+#   Phase 3: 1–10 GeV     (Dragt/Stormer, adaptive)
 #
 ENERGIES_EV = {
     1: [0.1e6, 0.3e6, 1e6, 3e6, 10e6, 30e6],   # 0.1–30 MeV  (AP-8 core)
@@ -213,11 +214,12 @@ def write_config(run, config_path):
     """Write per-worker JSON config file."""
     is_michel = (run.get("phase") == "michel")
     config = {
-        "energy_eV":   run["energy_eV"],
-        "L_shell":     run["L_shell"],
-        "pitch_deg":   run["pitch_deg"],
-        "phi_deg":     run.get("phi_deg", 0.0),
-        "gyroperiods": run["gyroperiods"],
+        "energy_eV":     run["energy_eV"],
+        "L_shell":       run["L_shell"],
+        "pitch_deg":     run["pitch_deg"],
+        "phi_deg":       run.get("phi_deg", 0.0),
+        "gyroperiods":   run["gyroperiods"],
+        "use_adaptive":  run.get("use_adaptive", False),
         "output_folder": "outputs/michel" if is_michel else "outputs/flux_map",
         "run_storage":   "outputs/outputs_rawdata",
         "particle":      "Proton",
@@ -232,10 +234,10 @@ def execute_single_run(run):
     Called by worker processes — must be a top-level function for pickling.
     Returns (run_key, status, elapsed_min, error_msg).
 
-    The run dict must include a "driver" key ("dipoleB.py" or "dipoleB_adp.py").
+    The run dict may include a "use_adaptive" key (True/False) which is passed
+    through the JSON config to dipoleB.py's USE_ADAPTIVE toggle.
     """
     key = run_key(run)
-    driver = run.get("driver", "dipoleB.py")
 
     # Each worker gets its own config file (PID-based to avoid collisions)
     config_path = os.path.join(BATCH_TMP_DIR, f"batch_config_{os.getpid()}_{key}.json")
@@ -244,7 +246,7 @@ def execute_single_run(run):
     start = time.time()
     try:
         result = subprocess.run(
-            [sys.executable, driver, f"batch:{config_path}"],
+            [sys.executable, "dipoleB.py", f"batch:{config_path}"],
             cwd=PROJECT_ROOT,
             timeout=3600 * 24,   # 24-hour timeout
             capture_output=True,
@@ -391,13 +393,13 @@ def run_sequential(runs, dry_run=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Batch flux map runner for dipoleB_adp.py",
+        description="Batch flux map runner for dipoleB.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s --phase 1 --dry-run                        Preview Phase 1
   %(prog)s --phase 1 --workers 10                     Phase 1, fixed-step, 10 cores
-  %(prog)s --phase 3 --workers 8 --driver dipoleB_adp.py Phase 3, adaptive-step
+  %(prog)s --phase 3 --workers 8 --adaptive           Phase 3, adaptive stepping
   %(prog)s --phase 1 --workers 10 --resume            Resume interrupted Phase 1
   %(prog)s --single E1e+07_L2.00_P89.0                Run one specific case
 
@@ -411,11 +413,9 @@ Examples:
     parser.add_argument("--workers", type=int, default=1,
                         help="Number of parallel workers (default: 1 = sequential). "
                              "Recommended: 8-10 for M4 Max, 4-6 for M1/M2.")
-    parser.add_argument("--driver", type=str, default="dipoleB.py",
-                        choices=["dipoleB.py", "dipoleB_adp.py"],
-                        help="Which driver script to use (default: dipoleB.py). "
-                             "Use dipoleB.py for fixed-step (fast, adiabatic regime). "
-                             "Use dipoleB_adp.py for adaptive-step (high energy, chaotic).")
+    parser.add_argument("--adaptive", action="store_true",
+                        help="Use adaptive PS stepping (default: fixed-step). "
+                             "Phases 2 & 3 and low pitch angles always use adaptive.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print run plan without executing")
     parser.add_argument("--resume", action="store_true",
@@ -481,8 +481,9 @@ Examples:
     total_est = sum(estimate_time(r) for r in runs)
     parallel_est = total_est / max(args.workers, 1)
 
+    stepping_label = "adaptive" if args.adaptive else "fixed-step"
     print(f"{'='*65}")
-    print(f"  {mode_label}  [{args.driver}]")
+    print(f"  {mode_label}  [{stepping_label}]")
     print(f"  Runs: {len(runs)}   Workers: {args.workers}")
     print(f"  Estimated time: {total_est/60:.1f} hrs sequential, "
           f"~{parallel_est/60:.1f} hrs with {args.workers} workers")
@@ -492,10 +493,10 @@ Examples:
     if args.michel:
         print(f"  Gyrophase φ: {sorted(set(r['phi_deg'] for r in runs))}°")
         print(f"  Total: {len(MICHEL_PITCHES)} pitches × {args.phi_steps} φ values")
-    # Show driver split info
+    # Show adaptive info
     n_adaptive = sum(1 for r in runs if r.get("pitch_deg", 90) < 30.0)
     if n_adaptive > 0 and not args.michel:
-        print(f"  Note: {n_adaptive} runs with pitch < 30° will use dipoleB_adp.py (adaptive)")
+        print(f"  Note: {n_adaptive} runs with pitch < 30° will use adaptive stepping")
     print(f"{'='*65}")
     if args.dry_run:
         print("  *** DRY RUN — no simulations will execute ***\n")
@@ -508,17 +509,17 @@ Examples:
 
     progress["started"] = datetime.now().isoformat()
 
-    # Inject driver into each run dict so workers know which script to call
-    # Phase 2 & 3: always use adaptive integrator (dipoleB_adp.py) — non-adiabatic
-    # Phase 1: use adaptive for low pitch angles (< 30°), user-chosen otherwise
+    # Set use_adaptive flag for each run (passed through JSON config to dipoleB.py)
+    # Phase 2 & 3: always adaptive (non-adiabatic regime)
+    # Phase 1: adaptive for low pitch angles (< 30°), user-chosen otherwise
     ADAPTIVE_PITCH_THRESHOLD = 30.0
     for r in runs:
         if args.phase in (2, 3):
-            r["driver"] = "dipoleB_adp.py"
+            r["use_adaptive"] = True
         elif r["pitch_deg"] < ADAPTIVE_PITCH_THRESHOLD:
-            r["driver"] = "dipoleB_adp.py"
+            r["use_adaptive"] = True
         else:
-            r["driver"] = args.driver
+            r["use_adaptive"] = args.adaptive
 
     # Execute
     if args.workers > 1:

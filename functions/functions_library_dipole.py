@@ -414,8 +414,8 @@ def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
 named_indices = {"vx":3,"vy":4,"vz":5,"Bx":14,"By":15,"Bz":16}
 
 # Compact h5 storage: only these rows are saved (pos, vel, B-field)
-_SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
-n_save = len(_SAVE_ROWS)
+SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
+n_save = len(SAVE_ROWS)
 
 def expand_h5_to_full(compact_arr):
     """Expand a 9-row compact h5 array back to 17-row full layout.
@@ -423,7 +423,7 @@ def expand_h5_to_full(compact_arr):
     if compact_arr.shape[0] == 17:
         return compact_arr
     full = np.zeros((17, compact_arr.shape[1]), dtype=compact_arr.dtype)
-    for i_new, i_old in enumerate(_SAVE_ROWS):
+    for i_new, i_old in enumerate(SAVE_ROWS):
         full[i_old, :] = compact_arr[i_new, :]
     return full
 
@@ -1210,7 +1210,7 @@ def run_ps_streaming_with_decimation(
     start_time_ps = time.time()
 
     n_state = 17
-    # _SAVE_ROWS and n_save defined at module level
+    # SAVE_ROWS and n_save defined at module level
 
     cur_state = initial_pos_vel_ps.copy()
     remaining = steps_ps
@@ -1299,7 +1299,7 @@ def run_ps_streaming_with_decimation(
                     dset_y.resize((n_save, new_len))
                     dset_orders.resize((new_len,))
 
-                    dset_y[:, old_len:new_len] = sol_keep[_SAVE_ROWS, :]
+                    dset_y[:, old_len:new_len] = sol_keep[SAVE_ROWS, :]
                     dset_orders[old_len:new_len] = orders_keep
 
             # ---- atmospheric impact check (diagnostic only, does not halt) ----

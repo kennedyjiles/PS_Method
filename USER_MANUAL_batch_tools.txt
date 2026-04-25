@@ -11,7 +11,7 @@ producing publication-quality plots from the PS trajectory data:
   3. michel_phase_portrait.py               — builds Michel (1971) phase portraits
 
 All three scripts live in the PS_Method directory. They do NOT modify any core
-simulation code (dipoleB.py, dipoleB_adp.py, functions_library_dragt.py, etc.).
+simulation code (dipoleB.py, functions_library_dragt.py, etc.).
 They only read/write config files and output data.
 
 
@@ -22,8 +22,9 @@ They only read/write config files and output data.
 
 PURPOSE
   Orchestrates parallel parameter sweeps across (energy, L-shell, pitch angle)
-  by launching many independent dipoleB.py or dipoleB_adp.py runs. Each worker
-  gets its own JSON config file to avoid race conditions.
+  by launching many independent dipoleB.py runs. Each worker gets its own JSON
+  config file to avoid race conditions. Adaptive vs fixed stepping is controlled
+  via the --adaptive flag.
 
   Two modes:
     - Flux map phases (1-4): systematic grid for building meridian flux maps
@@ -51,30 +52,33 @@ FLUX MAP PHASES
             Belt core, fast. Most runs finish in a few minutes.
 
   Phase 2:  100 MeV × 16 L-shells × 10 pitch angles = 160 runs
-            Energy falloff region. Use dipoleB.py (fixed step is fine here).
+            Energy falloff region. Fixed step is fine here.
 
   Phase 3:  300 MeV × 10 L-shells × 10 pitch angles = 100 runs
             Transition to chaotic regime. Only inner L-shells (1.2–3.0).
-            Consider switching to dipoleB_adp.py (adaptive) for this phase.
+            Consider using --adaptive for this phase.
 
   Phase 4:  1, 10 GeV × 16 L-shells × 10 pitch angles = 320 runs
-            Full Dragt/Störmer regime. Use dipoleB_adp.py. Many orbits will
+            Full Dragt/Störmer regime. Use --adaptive. Many orbits will
             hit the atmosphere quickly, producing small files.
 
 
-CHOOSING THE INTEGRATOR (--driver)
-----------------------------------
+CHOOSING FIXED vs ADAPTIVE STEPPING (--adaptive)
+-------------------------------------------------
 
-  dipoleB.py   — Fixed-step RK4. Fast, reliable for adiabatic regime.
+  By default, dipoleB.py uses fixed-step PS integration. Adding --adaptive
+  enables adaptive stepping, which adjusts the time step based on the local
+  magnetic field strength.
+
+  Fixed step:    Fast, reliable for the adiabatic regime.
                  Good for Phases 1 and 2 (≤ 100 MeV).
 
-  dipoleB_adp.py  — Adaptive-step RKF45. Smarter about step sizes when dynamics
-                 change rapidly. Better for Phases 3 and 4 (≥ 300 MeV).
+  Adaptive:      Smarter about step sizes when dynamics change rapidly.
+                 Better for Phases 3 and 4 (≥ 300 MeV).
 
-  The driver flag only changes which script is called; the batch runner
-  itself doesn't care. Example:
+  Example:
 
-    python utility_scripts/batch_flux_runner.py --phase 3 --workers 8 --driver dipoleB_adp.py
+    python utility_scripts/batch_flux_runner.py --phase 3 --workers 8 --adaptive
 
 
 PARALLEL EXECUTION
