@@ -6,17 +6,11 @@ import json as _json
 
 USE_FLOAT128 = False  # RKG Will be diabled if this is True
 
-if USE_FLOAT128: npfloat = np.float128 
+if USE_FLOAT128: npfloat = np.float128
 else: npfloat = np.float64
 
-# ===== System Constants =====
-q_e = npfloat(-1.602176634e-19)        # C
-m_e = npfloat(9.1093837139e-31)        # kg
-m_p = npfloat(1.67262192595e-27)       # kg
-evtoj = npfloat(1.602176634e-19)       # eV to J
-spdlight = npfloat(299792458.0)
-RE = npfloat(6378137.0)                # m, Radius of Earth
-B_0 = npfloat(3.12e-5)  
+# ===== Physical Constants (from shared module) =====
+from constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
 
 
 # ===== Tolerances/Truncations =====
