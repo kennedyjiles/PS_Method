@@ -59,6 +59,7 @@ from functions.functions_library_dipole import (
     check_time_grids,
     finalize_drift_stream,
     expand_h5_to_full,
+    compute_pphi_error_chunked,
 )
 
 from functions.functions_library_dragt import (

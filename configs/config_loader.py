@@ -21,7 +21,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _deep_merge(base, override):
-    """Recursively merge override into base. override wins on conflicts."""
+    """merge override into base. override wins on conflicts."""
     merged = base.copy()
     for key, val in override.items():
         if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
@@ -55,7 +55,7 @@ def _compute_steps(T_gyro, N_ps=65, N_rk4=65, N_rkg=65, rounding=True):
     return ps_step, rk4_step, rkg_step, N_ps, N_rk4, N_rkg
 
 
-def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial):
+def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial): #namely for dragt work or where gyroradius is large
     """Relativistic gyro-physics: effective L-shell, gamma, physics-based T_gyro."""
     E_kinetic = KE_eV * abs(q_e)
     E_rest    = mass_si * (spdlight ** 2)
@@ -76,7 +76,7 @@ def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial):
 
 
 # ---------------------------------------------------------------------------
-# Main loader
+# Main loader- this essentialy is doing what the old dipoleb_testparticles was doing.
 # ---------------------------------------------------------------------------
 
 def load_config(run_config_path, npfloat=np.float64):

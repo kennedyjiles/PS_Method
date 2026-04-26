@@ -6,10 +6,6 @@ if DEBUG:
     tracemalloc.start()
 
 
-# === Misc Odds and Ends ===
-PS_CHUNKING = True     # PS data always streamed to disk in chunks (no in-memory option)
-WRITE_DATA  = True     # always write h5 (required by chunked streaming)
-
 """
 Run selection:
     python dipoleB.py demo                  # named config  → configs/demo.yml
@@ -19,12 +15,12 @@ Defaults to "demo" if nothing is selected.
 """
 
 run = "demo"
-if len(sys.argv) > 1:
-    run = sys.argv[1]
+if len(sys.argv) > 1:       # this is scanning for the argument after dipoleb.py in the ternminal
+    run = sys.argv[1]       # if it finds somethin thing it rewrites run as that argument
     print(f"Run mode set from command line: {run}\n")
 else: print(f"Using default run mode: {run}\n")
 
-_configs_dir = os.path.join(os.path.dirname(__file__), "configs")
+_configs_dir = os.path.join(os.path.dirname(__file__), "configs") # _file_ is built-in variable that contains the path to the current script
 
 if run.endswith((".yml", ".yaml")) and os.path.isfile(run):
     # Direct path to a YAML file
@@ -35,6 +31,10 @@ elif os.path.isfile(os.path.join(_configs_dir, f"{run}.yml")):
     _yaml_path = os.path.join(_configs_dir, f"{run}.yml")
     print(f"Loading YAML config: {_yaml_path}\n")
     params = load_config(_yaml_path, npfloat=npfloat)
+
+# =========================================================
+# ============= Assign YML file parameters ================
+# =========================================================
 
 # --- Always needed (from _defaults + every run mode) ---
 READ_DATA       = params["READ_DATA"]
@@ -63,7 +63,7 @@ external_h5_rk4      = params["external_h5_rk4"]
 external_h5_rk45     = params["external_h5_rk45"]
 external_h5_rkg      = params["external_h5_rkg"]
 
-# --- Physics (set by all modes except legacy/manual, which load from h5) ---
+# --- Physics (set by all modes except manual, which load from h5) ---
 pitch_deg    = params.get("pitch_deg",    None)
 phi_deg      = params.get("phi_deg",      None)
 x_initial    = params.get("x_initial",    None)
@@ -82,19 +82,22 @@ N_STEPS_PER_GYRO_rk4 = params.get("N_STEPS_PER_GYRO_rk4", None)
 N_STEPS_PER_GYRO_rkg = params.get("N_STEPS_PER_GYRO_rkg", None)
 
 # --- Optional overrides (only some modes set these) ---
-PS_order       = params.get("PS_order", PS_order)                # module default is 40
+PS_order       = params.get("PS_order", PS_order)             
 manual_h5_path = params.get("manual_h5_path", None)
 
-
+# === Misc Odds and Ends ===
+PS_CHUNKING = True     # PS data always streamed to disk in chunks (no in-memory option)
+WRITE_DATA  = True     # always write h5 (required by chunked streaming)
 plt_config(scale=1)                        # config file for setting plot sizes and fonts (from Dr. W)
 os.makedirs(run_storage, exist_ok=True)    # ensures file for the storagae for raw data exists
 os.makedirs(output_folder, exist_ok=True)  # ensures file for the storagae for images and text file exists
 plt.ioff()                                 # turn off interactive mode for plots
 if USE_FLOAT128: USE_RKG = False
 
-# ======================================================
+
+# ===============================================
 # ============= Manual File Load ================
-# ======================================================
+# ===============================================
 
 USE_MANUAL_FILE = manual_h5_path is not None and os.path.exists(manual_h5_path)
 if USE_MANUAL_FILE:   
@@ -222,7 +225,6 @@ pitch_rad = npfloat(np.radians(pitch_deg))              # degrees to radians, pi
 phi_rad = npfloat(np.radians(phi_deg))                  # degrees to radians, phi 
 v_par = npfloat(v_tau) * npfloat(np.cos(pitch_rad))     # parallel velocity component
 v_perp = npfloat(v_tau) * npfloat(np.sin(pitch_rad))    # perpendicular velocity component 
-
 
 
 vx_initial = npfloat(v_perp * np.cos(phi_rad))          
@@ -767,7 +769,7 @@ if USE_FULL_PLOT:
 # ========================================================================
 """
 Generally only interested in a specific window of time for a run, like 'first' and 'last' parts of the run. Test particle
-file lets you specify in physical seconds how big you want this window to be via window_time. Generally looking at a drift
+yml file lets you specify in physical seconds how big you want this window to be via window_time. Generally looking at a drift
 or several bounce periods is useful. If you don't know or have these numbers, they are an output of the calculations and after
 completing the initial run, you can use this information to adjust plotting (no impact to h5 file creation).
 """
@@ -953,7 +955,7 @@ if USE_EXTERNAL_H5_ps:
         
         # ---- plot-ready time axis ----
         idx = np.arange(0, n_store, energy_stride_ext)
-        t_eval_rk4_ps_ext = idx * dt_store_ext
+        t_eval_ps_ext = idx * dt_store_ext
 
         # ---- strided energy ----
         # The ::stride syntax pulls ONLY the needed points directly from the SSD
@@ -1027,10 +1029,7 @@ if USE_EXTERNAL_H5_rk45:
 
 
 if USE_EXTERNAL_H5_rkg:
-    # ⬇️ THE DOOR OPENS (Indent Level 1)
     with h5py.File(external_h5_rkg, 'r') as external_file:
-        
-        # ⬇️ INSIDE THE ROOM (Indent Level 2)
         ext_rkg = external_file["rkg"]
         y_dataset = ext_rkg["y"]   
 
@@ -1052,13 +1051,10 @@ if USE_EXTERNAL_H5_rkg:
                 if hasattr(dt_rkg, 'value'): dt_rkg = dt_rkg[()]
                 idx = np.arange(0, n_steps, rkg_stride)
                 
-                # Note: Assuming npfloat is defined in your script (e.g., npfloat = np.float64)
                 t_ext_rkg = dt_rkg * idx.astype(npfloat) 
             else:
                 raise ValueError("External RKG H5 file has no time info.")
 
-        # ---- Handle Data Slicing ----
-        # STILL INSIDE THE ROOM: Slicing must happen here while the file is open!
         if is_transposed:
             y_ext_rkg = y_dataset[:, ::rkg_stride].T 
         else:
@@ -1135,7 +1131,7 @@ _ke_rk4  = (t_rk4, rel_drift_rk4) if USE_RK4 else None
 _ke_rk45 = (t_rk45, rel_drift_rk45) if USE_RK45 else None
 _ke_rkg  = (t_rkg, rel_drift_rkg) if USE_RKG else None
 
-_ke_ext_ps   = (t_eval_rk4_ps_ext, rel_drift_ps_ext, PS_order_ext) if USE_EXTERNAL_H5_ps else None
+_ke_ext_ps   = (t_eval_ps_ext, rel_drift_ps_ext, PS_order_ext) if USE_EXTERNAL_H5_ps else None
 _ke_ext_rk4  = (t_eval_rk4_ext, rel_drift_rk4_ext) if USE_EXTERNAL_H5_rk4 else None
 _ke_ext_rk45 = (t_eval_rk45_ext, rel_drift_rk45_ext) if USE_EXTERNAL_H5_rk45 else None
 _ke_ext_rkg  = (t_ext_rkg, rel_drift_ext_rkg) if USE_EXTERNAL_H5_rkg else None
@@ -1173,7 +1169,7 @@ dragt_log = {
     "eps_initial": None, "eps_mean": None, "eps_max": None,
     "hit_atmosphere": False, "hit_atm_r": None,
 }
-
+# ==================================================
 # ======== Dragt Poincaré Surface of Section =======
 # ==================================================
 plt.close('all')
@@ -1299,47 +1295,10 @@ plt.close('all')
 # PLOT RELATIVE ERROR OF CANONICAL ANGULAR MOMENTUM
 # =========================================================
 
-# P_phi_initial from the initial state (_y0 set earlier in Dragt section)
-_rho0 = np.sqrt(_y0[0]**2 + _y0[1]**2)
-_r0   = np.sqrt(_y0[0]**2 + _y0[1]**2 + _y0[2]**2)
-_vphi0 = (_y0[0]*_y0[4] - _y0[1]*_y0[3]) / _rho0
-P_phi_initial = (_rho0 * _vphi0) - charge_sign * (_rho0**2 / _r0**3)
-
-_PPHI_CHUNK = 1_000_000
-with h5py.File(cache_path, "r") as _h5pp:
-    ds = _h5pp["ps"]["y"]
-    N_pp = ds.shape[1]
-    _PPHI_DEC = max(1, N_pp // 500_000)
-    _pphi_err_dec = []
-    _pphi_max_err = 0.0
-
-    for i0 in range(0, N_pp, _PPHI_CHUNK):
-        i1 = min(i0 + _PPHI_CHUNK, N_pp)
-        ch = ds[:6, i0:i1]
-        _rho = np.sqrt(ch[0]**2 + ch[1]**2)
-        _r   = np.sqrt(ch[0]**2 + ch[1]**2 + ch[2]**2)
-        _vp  = (ch[0]*ch[4] - ch[1]*ch[3]) / _rho
-        _pp  = (_rho * _vp) - charge_sign * (_rho**2 / _r**3)
-        if P_phi_initial == 0:
-            _err = np.abs(_pp)
-        else:
-            _err = np.abs((_pp - P_phi_initial) / P_phi_initial)
-        _cm = float(np.max(_err))
-        if _cm > _pphi_max_err:
-            _pphi_max_err = _cm
-        _pphi_err_dec.append(_err[::_PPHI_DEC])
-        del ch, _rho, _r, _vp, _pp, _err
-
-rel_error_log = np.where(np.concatenate(_pphi_err_dec) == 0, 1e-16,
-                         np.concatenate(_pphi_err_dec))
-t_pphi_gyro = ps_step * np.arange(len(rel_error_log), dtype=npfloat) \
-              * _PPHI_DEC * time_factor
-max_err = _pphi_max_err
-ylabel_str = (r"Absolute Error $|\Delta P_\phi|$" if P_phi_initial == 0
-              else r"Relative Error $|(P_\phi - P_{\phi,0}) / P_{\phi,0}|$")
-del _pphi_err_dec
-
-plot_pphi_error(run_folder, t_pphi_gyro, rel_error_log, P_phi_initial, max_err, ylabel_str)
+# _y0 is the initial state vector set earlier in the Dragt section
+pphi = compute_pphi_error_chunked(cache_path, _y0, charge_sign, ps_step, time_factor)
+plot_pphi_error(run_folder, pphi["t_gyro"], pphi["rel_error_log"],
+                pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"])
 
 
 # ============================================================

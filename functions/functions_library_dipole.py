@@ -419,7 +419,7 @@ n_save = len(SAVE_ROWS)
 
 def expand_h5_to_full(compact_arr):
     """Expand a 9-row compact h5 array back to 17-row full layout.
-    If the array already has 17 rows, return it unchanged."""
+    If the array already has 17 rows, return it unchanged. Protects legacy"""
     if compact_arr.shape[0] == 17:
         return compact_arr
     full = np.zeros((17, compact_arr.shape[1]), dtype=compact_arr.dtype)
@@ -1471,3 +1471,92 @@ def check_time_grids(norm_time, ps_step=None, steps_ps=None,
         lines.append(f"RK45: final time = {rk45_t[-1]:.3e}")
 
     return "\n".join(lines)
+
+
+# ===================================================================
+# Compute Canonical Angular Momentum (in normalized units, not Dragt)
+# ===================================================================
+
+def compute_pphi_error_chunked(
+    cache_path, y0, charge_sign, ps_step, time_factor,
+    chunk_cols=1_000_000, max_plot_points=500_000,
+):
+    """
+    Compute the relative (or absolute) error of canonical angular momentum
+    P_phi from chunked PS h5 data.
+
+    Parameters
+    ----------
+    cache_path : str
+        Path to the PS h5 file.
+    y0 : array_like
+        Initial 17-element state vector (compact h5 rows expanded).
+        Needs positions (0-2) and velocities (3-5).
+    charge_sign : float
+        +1 for proton, -1 for electron.
+    ps_step : float
+        PS step size (normalized time units).
+    time_factor : float
+        Conversion factor from normalized time to gyroperiods (1/T_gyro).
+    chunk_cols : int
+        Number of columns to read per h5 chunk.
+    max_plot_points : int
+        Target max points for the decimated output arrays.
+
+    Returns
+    -------
+    dict with keys:
+        "t_gyro"        : 1D array, time in gyroperiods (decimated)
+        "rel_error_log" : 1D array, error with zeros replaced by 1e-16
+        "max_err"       : float, global max error
+        "P_phi_initial" : float, initial canonical angular momentum
+        "ylabel"        : str, appropriate axis label
+    """
+    # --- Initial P_phi ---
+    rho0  = np.sqrt(y0[0]**2 + y0[1]**2)
+    r0    = np.sqrt(y0[0]**2 + y0[1]**2 + y0[2]**2)
+    vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
+    P_phi_initial = (rho0 * vphi0) - charge_sign * (rho0**2 / r0**3)
+
+    # --- Chunked read ---
+    with h5py.File(cache_path, "r") as h5:
+        ds = h5["ps"]["y"]
+        N = ds.shape[1]
+        dec = max(1, N // max_plot_points)
+        err_dec = []
+        max_err = 0.0
+
+        for i0 in range(0, N, chunk_cols):
+            i1 = min(i0 + chunk_cols, N)
+            ch = ds[:6, i0:i1]
+            rho = np.sqrt(ch[0]**2 + ch[1]**2)
+            r   = np.sqrt(ch[0]**2 + ch[1]**2 + ch[2]**2)
+            vp  = (ch[0]*ch[4] - ch[1]*ch[3]) / rho
+            pp  = (rho * vp) - charge_sign * (rho**2 / r**3)
+
+            if P_phi_initial == 0:
+                err = np.abs(pp)
+            else:
+                err = np.abs((pp - P_phi_initial) / P_phi_initial)
+
+            cm = float(np.max(err))
+            if cm > max_err:
+                max_err = cm
+
+            err_dec.append(err[::dec])
+            del ch, rho, r, vp, pp, err
+
+    rel_error = np.concatenate(err_dec)
+    rel_error_log = np.where(rel_error == 0, 1e-16, rel_error)
+    t_gyro = ps_step * np.arange(len(rel_error_log), dtype=np.float64) * dec * time_factor
+
+    ylabel = (r"Absolute Error $|\Delta P_\phi|$" if P_phi_initial == 0
+              else r"Relative Error $|(P_\phi - P_{\phi,0}) / P_{\phi,0}|$")
+
+    return {
+        "t_gyro":        t_gyro,
+        "rel_error_log": rel_error_log,
+        "max_err":       max_err,
+        "P_phi_initial": P_phi_initial,
+        "ylabel":        ylabel,
+    }

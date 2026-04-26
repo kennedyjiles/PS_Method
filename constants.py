@@ -13,7 +13,7 @@ try:
 except AttributeError:
     npfloat = np.float64
 
-# ===== Physical Constants =====
+# ===== Physical Constants (SI) =====
 q_e      = npfloat(-1.602176634e-19)       # electron charge (C)
 m_e      = npfloat(9.1093837139e-31)       # electron mass (kg)
 m_p      = npfloat(1.67262192595e-27)      # proton mass (kg)
