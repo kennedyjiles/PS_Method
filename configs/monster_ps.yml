@@ -18,4 +18,3 @@ plotting:
   n_gyro: 150
 
 window_time: 6209.0
-output_folder: outputs/extended_runs

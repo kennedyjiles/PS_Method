@@ -21,7 +21,6 @@ plotting:
   n_gyro: 75
 
 window_time: 11.6
-output_folder: outputs/paper
 
 external_h5:
   ps: "outputs/outputs_rawdata/run_5f2698f4194712e0.h5"

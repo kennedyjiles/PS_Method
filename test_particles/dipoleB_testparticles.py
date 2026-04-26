@@ -2,7 +2,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as mpl
 import json as _json
-from constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
+from ps_method.constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
 
 
 USE_FLOAT128 = False  # RKG Will be diabled if this is True
@@ -411,10 +411,10 @@ def load_params(run):
     elif run.startswith("batch"):
         """
         Batch mode: reads parameters from a JSON config file.
-        Used by utility_scripts/batch_flux_runner.py for parameter sweeps.
+        Used by scripts/batch_flux_runner.py for parameter sweeps.
         Does not modify any hardcoded parameters in this file.
 
-        Accepts: "batch"  (reads default utility_scripts/batch_config.json)
+        Accepts: "batch"  (reads default scripts/batch_config.json)
                  "batch:/path/to/config.json"  (reads specified config file)
         The colon-path form allows parallel workers to each use their own
         config file without race conditions.
@@ -423,7 +423,7 @@ def load_params(run):
             _config_path = run.split(":", 1)[1]
         else:
             _config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                         "utility_scripts", "batch_config.json")
+                                         "scripts", "batch_config.json")
         with open(_config_path, "r") as _f:
             _cfg = _json.load(_f)
 

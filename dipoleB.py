@@ -22,7 +22,7 @@ specify falls back to the default value. Do NOT edit defaults.yml directly; it
 serves as the reference for all runs.
 """
 
-from utility_scripts.project_setup import *
+from ps_method.project_setup import *
 
 DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
 if DEBUG:
@@ -51,7 +51,9 @@ else:
     )
 
 print(f"Loading YAML config: {_yaml_path}\n")
-params = load_config(_yaml_path, npfloat=npfloat)
+cfg        = load_config(_yaml_path)
+_config_log = cfg.pop("_config_log", [])   # save for writing to file later
+params     = compute_derived(cfg, npfloat=npfloat)
 
 # =========================================================
 # ============= Assign YML file parameters ================
@@ -72,7 +74,7 @@ USE_FULL_PLOT   = params["USE_FULL_PLOT"]
 slice_mode      = params["slice_mode"]
 gyro_window     = params["gyro_window"]
 output_folder   = params["output_folder"]
-run_storage     = params.get("run_storage", run_storage)  # module default from testparticles
+run_storage     = params["run_storage"]
 window_time     = params["window_time"]
 N_GYRO          = params["N_GYRO"]
 
@@ -773,10 +775,22 @@ if DEBUG:
 print(f"{'='*60}")
 
 
-# === Create run-specific output subfolder ===
-# All plots and txt summaries, master CVS log will go in one folder above. Raw h5 data stays in run_storage.
+# === Create run-specific output subfolders ===
+# data/<config>/<run-hash>/figures/   ← plots
+# data/<config>/<run-hash>/output/    ← text summaries
+# data/<config>/_rawdata/             ← h5 trajectory files
 run_folder = os.path.join(output_folder, stem)
-os.makedirs(run_folder, exist_ok=True)
+fig_folder = os.path.join(run_folder, "figures")
+out_folder = os.path.join(run_folder, "output")
+os.makedirs(fig_folder, exist_ok=True)
+os.makedirs(out_folder, exist_ok=True)
+
+# --- Write config log to output folder ---
+if _config_log:
+    _config_log_path = os.path.join(out_folder, "config_log.txt")
+    with open(_config_log_path, "w") as _f:
+        _f.write("\n".join(_config_log))
+    print(f"Config log written to {_config_log_path}\n")
 
 # =====================================================
 # ============== Full Trajectory Plots ================
@@ -785,7 +799,7 @@ plotbounds = x_initial + PLOT_BOUNDARY_PAD
 
 if USE_FULL_PLOT:
     _traj_common = dict(
-        summary=summary, run_folder=run_folder, stem=stem,
+        summary=summary, run_folder=fig_folder, stem=stem,
         particle_type=particle_type, plotbounds=plotbounds,
         ps_order_label=ps_order_label, USE_PLOT_TITLES=USE_PLOT_TITLES,
         USE_RK45=USE_RK45, USE_RK4=USE_RK4, USE_RKG=USE_RKG, USE_PS=USE_PS,
@@ -930,7 +944,7 @@ if DEBUG:
 # ================ Trajectory Slice Plots =============
 # =====================================================
 _slice_common = dict(
-    summary=summary, run_folder=run_folder, stem=stem,
+    summary=summary, run_folder=fig_folder, stem=stem,
     particle_type=particle_type, ps_order_label=ps_order_label,
     USE_PLOT_TITLES=USE_PLOT_TITLES,
     USE_RK45=USE_RK45, USE_RK4=USE_RK4, USE_RKG=USE_RKG, USE_PS=USE_PS,
@@ -1168,7 +1182,7 @@ _ke_ext_rk45 = (t_eval_rk45_ext, rel_drift_rk45_ext) if USE_EXTERNAL_H5_rk45 els
 _ke_ext_rkg  = (t_ext_rkg, rel_drift_ext_rkg) if USE_EXTERNAL_H5_rkg else None
 
 plot_ke_error(
-    summary=summary, run_folder=run_folder, stem=stem,
+    summary=summary, run_folder=fig_folder, stem=stem,
     particle_type=particle_type, ps_order_label=ps_order_label,
     USE_PLOT_TITLES=USE_PLOT_TITLES, time_factor=time_factor, norm_time=norm_time,
     ps_data=_ke_ps, rk4_data=_ke_rk4, rk45_data=_ke_rk45, rkg_data=_ke_rkg,
@@ -1276,7 +1290,7 @@ if USE_PS:
 
     # --- Poincaré surface of section ---
     plot_dragt_poincare(
-        run_folder=run_folder, L_shell_dragt=L_shell_dragt, gamma=gamma,
+        run_folder=fig_folder, L_shell_dragt=L_shell_dragt, gamma=gamma,
         rho_bnd=rho_bnd, rho_dot_bnd=rho_dot_bnd,
         rho_0_sim=rho_0_sim, rho_dot_0_sim=_rho_dot_0_sim,
         crossings=crossings,
@@ -1286,14 +1300,14 @@ if USE_PS:
     if crossings is not None:
         rho_dragt, rho_dot_dragt, x_cross, y_cross, vx_cross, vy_cross = crossings
         gyrophase, mu_cross = compute_gyrophase_mu(x_cross, y_cross, vx_cross, vy_cross)
-        plot_gyrophase_mu(run_folder, gyrophase, mu_cross)
-        plot_polar_phase_space(run_folder, gyrophase, mu_cross)
+        plot_gyrophase_mu(fig_folder, gyrophase, mu_cross)
+        plot_polar_phase_space(fig_folder, gyrophase, mu_cross)
 
     # --- Meridian plane ---
-    plot_meridian_plane(run_folder, _dragt_rho_arr, _dragt_z_arr)
+    plot_meridian_plane(fig_folder, _dragt_rho_arr, _dragt_z_arr)
 
     # --- Adiabaticity parameter ---
-    plot_adiabaticity(run_folder, _dragt_t_arr, _dragt_eps_arr,
+    plot_adiabaticity(fig_folder, _dragt_t_arr, _dragt_eps_arr,
                       _dragt_eps_initial, _dragt_eps_mean, _dragt_eps_max)
 
     # --- Populate Dragt physics log ---
@@ -1326,7 +1340,7 @@ plt.close('all')
 # =========================================================
 
 pphi = compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
-plot_pphi_error(run_folder, pphi["t_gyro"], pphi["rel_error_log"],
+plot_pphi_error(fig_folder, pphi["t_gyro"], pphi["rel_error_log"],
                 pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"])
 
 
@@ -1368,7 +1382,7 @@ mu0_rkg  = mu_rkg_result["mu0"]  if mu_rkg_result  else None
 mu0_rk45 = mu_rk45_result["mu0"] if mu_rk45_result else None
 
 plot_mu_deviation(
-    summary, run_folder, stem, particle_type, ps_order_label,
+    summary, fig_folder, stem, particle_type, ps_order_label,
     USE_PLOT_TITLES,
     ps_data=(mu_ps_result["t"], mu_ps_result["mudrift_plot"]) if mu_ps_result else None,
     rk4_data=(mu_rk4_result["t"], mu_rk4_result["mudrift"]) if mu_rk4_result else None,
@@ -1492,7 +1506,7 @@ if DEBUG:
 if DEBUG: tracemalloc.start()
 
 write_summary_txt(
-    summary=summary, run_folder=run_folder, stem=stem,
+    summary=summary, run_folder=out_folder, stem=stem,
     dragt_log=dragt_log, bounce_results=bounce_results, drift_results=drift_results,
     gyroperiods=gyroperiods, norm_time=norm_time, mass=mass, cache_path=cache_path,
     USE_PS=USE_PS, USE_RK4=USE_RK4, USE_RK45=USE_RK45, USE_RKG=USE_RKG,
@@ -1538,6 +1552,8 @@ write_master_csv(
 )
 
 print(f"\nRun Complete → {run_folder}")
+print(f"  Figures → {fig_folder}")
+print(f"  Output  → {out_folder}")
 
 
 if DEBUG:

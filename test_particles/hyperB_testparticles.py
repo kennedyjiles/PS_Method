@@ -8,7 +8,7 @@ if USE_FLOAT128: npfloat = np.float128
 else: npfloat = np.float64
 
 # ===== Physical Constants (from shared module) =====
-from constants import q_e, m_e, m_p, evtoj
+from ps_method.constants import q_e, m_e, m_p, evtoj
 
 # ===== Tolerances/Truncations =====
 PS_order = 40                           # Max Power Series Order, system will truncate

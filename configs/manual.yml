@@ -8,4 +8,3 @@ plotting:
   n_gyro: 150
 
 window_time: 5.0
-output_folder: outputs/manual

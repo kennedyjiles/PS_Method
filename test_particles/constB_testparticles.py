@@ -9,7 +9,7 @@ else: npfloat = np.float64
 
 
 # ===== Physical Constants (from shared module) =====
-from constants import q_e, m_e, m_p, evtoj
+from ps_method.constants import q_e, m_e, m_p, evtoj
 
 # ========== Tolerances/Truncation =========
 PS_order = 40                          # Max Power Series Order, code will truncate  

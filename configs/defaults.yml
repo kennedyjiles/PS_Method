@@ -48,8 +48,10 @@ plotting:
 window_time: 11.6         # time window for slice plots (normalized units)
 
 # --- Output ---
-output_folder: outputs/runs
-run_storage: outputs/_rawdata  # where raw trajectory h5 files are saved
+# output_folder and run_storage are auto-derived from the config filename:
+#   output_folder → data/<config-name>/
+#   run_storage   → data/<config-name>/_rawdata/
+# Run-hash subfolders (plots, summaries) go under output_folder.
 read_data: true                # scan for cached runs and load from disk
 
 # --- Special modes (leave null for normal runs) ---

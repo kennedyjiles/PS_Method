@@ -23,7 +23,7 @@ from matplotlib.ticker import (
 
 # === Project-Specific ===
 import builtins
-from constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
+from ps_method.constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
 
 # --- System-level settings (hardcoded, not per-run) ---
 USE_FLOAT128    = False                                          # RKG will be disabled if True
@@ -33,7 +33,6 @@ tol             = 1.0 * np.finfo(npfloat).eps                    # machine epsil
 MAX_PLOT_POINTS = 1_000_000                                      # cap points per graph
 
 # --- Defaults for per-run settings (overridden by YAML config) ---
-run_storage     = "outputs/outputs_rawdata"
 PS_order        = 40
 PS_chunk_steps  = int(1e4)
 rtol_rk45       = 1e-8
@@ -49,11 +48,11 @@ plt.rcParams['agg.path.chunksize'] = 100000 if USE_FLOAT128 else 1000
 
 
 # === Functions ===
-from functions.functions_library_universal_chunk import (
+from ps_method.universal import (
     rk4_fixed_step, plt_config, sparse_labels, data_to_fig
 )
 
-from functions.functions_library_dipole import (
+from ps_method.dipole_physics import (
     lorentz_force_dipole,
     compute_mu_ps,
     compute_mu_rk,
@@ -85,7 +84,7 @@ from functions.functions_library_dipole import (
     compute_mu_deviation_ps,
 )
 
-from functions.functions_library_dragt import (
+from ps_method.dragt_physics import (
     calculate_adiabaticity,
     compute_dragt_params,
     compute_dragt_boundary,
@@ -95,9 +94,9 @@ from functions.functions_library_dragt import (
     DragtMonitor,
 )
 
-from functions.functions_library_dipole_adp import run_ps_streaming_adaptive
+from ps_method.dipole_adaptive import run_ps_streaming_adaptive
 
-from functions.dipoleB_plots import (
+from ps_method.dipole_plots import (
     plot_full_2d, plot_full_3d, plot_slice_2d, plot_slice_3d,
     plot_ke_error,
     plot_dragt_poincare, plot_gyrophase_mu, plot_polar_phase_space,
@@ -105,8 +104,8 @@ from functions.dipoleB_plots import (
     plot_mu_deviation,
 )
 
-from functions.dipoleB_writers import write_summary_txt, write_master_csv
+from ps_method.dipole_writers import write_summary_txt, write_master_csv
 
-from .logger_util import setup_logger
+from ps_method.logger_util import setup_logger
 
-from configs.config_loader import load_config
+from configs.config_loader import load_config, compute_derived

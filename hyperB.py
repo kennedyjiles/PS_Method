@@ -11,9 +11,9 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
-from functions.functions_library_hyper import PS_hyperB, lorentz_force_hyperB
-from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig, slice_solution
-from functions.functions_library_hyper import get_run_params, h5_path_for, save_results_h5, load_results_h5
+from ps_method.hyper_physics import PS_hyperB, lorentz_force_hyperB
+from ps_method.universal_legacy import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig, slice_solution
+from ps_method.hyper_physics import get_run_params, h5_path_for, save_results_h5, load_results_h5
 
 run = "demo"   # options: "demo", "paper1", "paper2", "paper3", or "paper4". Demo mode is a quick test run. Paper modes can take upwards of half or more
 

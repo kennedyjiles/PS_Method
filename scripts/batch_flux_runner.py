@@ -14,14 +14,14 @@ The "batch" run mode in dipoleB_testparticles.py reads from that config.
 Adaptive vs fixed stepping is controlled via the USE_ADAPTIVE flag in the config.
 
 Usage:
-    python utility_scripts/batch_flux_runner.py --phase 1 --workers 10              # fixed-step (default)
-    python utility_scripts/batch_flux_runner.py --phase 3 --workers 8 --adaptive    # adaptive stepping
-    python utility_scripts/batch_flux_runner.py --phase 1 --workers 10 --dry-run
-    python utility_scripts/batch_flux_runner.py --phase 1 --workers 10 --resume
+    python scripts/batch_flux_runner.py --phase 1 --workers 10              # fixed-step (default)
+    python scripts/batch_flux_runner.py --phase 3 --workers 8 --adaptive    # adaptive stepping
+    python scripts/batch_flux_runner.py --phase 1 --workers 10 --dry-run
+    python scripts/batch_flux_runner.py --phase 1 --workers 10 --resume
 
     # Michel phase portrait sweep at L=1.5, 10 MeV
-    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --workers 10
-    python utility_scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --phi-steps 12 --workers 10
+    python scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --workers 10
+    python scripts/batch_flux_runner.py --michel --L 1.5 --energy 10e6 --phi-steps 12 --workers 10
 
 Phases:
     1  — 10, 30 MeV  × 16 L-shells × 10 pitch angles  (belt core, fast)

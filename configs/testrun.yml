@@ -1,0 +1,18 @@
+particle: proton
+energy_eV: 10.0e6
+pitch_deg: 30.0
+phi_deg: 90.0
+L_shell: 5.0
+gyroperiods: 1e6
+
+solvers:
+  ps: true
+  rk4: true
+  rk45: true
+
+plotting:
+  titles: true
+  slice_mode: first
+  n_gyro: 75
+
+window_time: 3000

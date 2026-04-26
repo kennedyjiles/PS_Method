@@ -6,16 +6,18 @@ __pycache__/
 *.h5
 master_simulation_log.csv
 outputs/
+data/
 
 # Runtime/temp files
 *.log
-utility_scripts/batch_flux_progress.json
+scripts/batch_flux_progress.json
 
 # Images (generated)
 *.png
 
 # Archive
 Archive/
+
 
 # Old/removed files
 timestep.py

@@ -15,8 +15,8 @@ Tests:
 """
 import numpy as np
 import sys
-sys.path.insert(0, "/sessions/elegant-brave-darwin/mnt/code/PS_Method/functions")
-from functions_library_dragt import calculate_w0_squared, compute_dragt_params
+sys.path.insert(0, "/sessions/elegant-brave-darwin/mnt/code/PS_Method")
+from ps_method.dragt_physics import calculate_w0_squared, compute_dragt_params
 
 RE = 6378137.0; B0 = 3.12e-5; M = B0*RE**3
 q = 1.602176634e-19; m_p = 1.67262192595e-27; m_e = 9.1093837139e-31

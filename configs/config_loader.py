@@ -1,17 +1,23 @@
 """
 YAML config loader for dipoleB simulations.
 
-Reads a run config YAML, merges with defaults.yml, and computes all
-derived quantities (T_gyro, step sizes, norm_time, etc.).
+Two-stage design (following advisor's config pattern):
+  1. load_config()      — loads YAML, merges with base, validates, prints.
+                           Returns the raw merged dict (no physics computation).
+  2. compute_derived()  — takes the raw config dict, computes all derived
+                           quantities (T_gyro, step sizes, norm_time, mass, …).
+                           Returns a flat params dict ready for dipoleB.py.
 
-Returns the same params dict that load_params() currently returns,
-so dipoleB.py doesn't need to change its unpacking logic.
+Usage in dipoleB.py:
+    cfg    = load_config("configs/demo.yml")
+    params = compute_derived(cfg, npfloat=npfloat)
 """
 
 import os
+import copy
 import yaml
 import numpy as np
-from constants import q_e, m_e, m_p, spdlight, RE, B_0
+from ps_method.constants import q_e, m_e, m_p, spdlight, RE, B_0
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -21,14 +27,23 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _deep_merge(base, override):
-    """merge override into base. override wins on conflicts."""
-    merged = base.copy()
-    for key, val in override.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
-            merged[key] = _deep_merge(merged[key], val)
+    """In-place deep merge: override wins on conflicts (matches advisor pattern)."""
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
         else:
-            merged[key] = val
-    return merged
+            base[k] = v
+
+
+def _collect_keys(d, prefix=""):
+    """Recursively collect all keys from a nested dict as dot-paths."""
+    keys = set()
+    for k, v in d.items():
+        full = f"{prefix}.{k}" if prefix else k
+        keys.add(full)
+        if isinstance(v, dict):
+            keys |= _collect_keys(v, full)
+    return keys
 
 
 def _resolve_mass(particle_name):
@@ -55,8 +70,9 @@ def _compute_steps(T_gyro, N_ps=65, N_rk4=65, N_rkg=65, rounding=True):
     return ps_step, rk4_step, rkg_step, N_ps, N_rk4, N_rkg
 
 
-def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial): #namely for dragt work or where gyroradius is large
-    """Relativistic gyro-physics: effective L-shell, gamma, physics-based T_gyro."""
+def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial):
+    """Relativistic gyro-physics: effective L-shell, gamma, physics-based T_gyro.
+    Used for dragt work or where gyroradius is a significant fraction of L_shell."""
     E_kinetic = KE_eV * abs(q_e)
     E_rest    = mass_si * (spdlight ** 2)
     gamma     = 1.0 + (E_kinetic / E_rest)
@@ -76,43 +92,137 @@ def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial): 
 
 
 # ---------------------------------------------------------------------------
-# Main loader- this essentialy is doing what the old dipoleb_testparticles was doing.
+# Stage 1: Load, merge, validate, print
 # ---------------------------------------------------------------------------
 
-def load_config(run_config_path, npfloat=np.float64):
+def load_config(conf_file):
     """
-    Load a run YAML, merge with defaults, compute derived quantities.
+    Load a run YAML, merge with base config, validate keys, and print.
+
+    If the run config contains a 'base_config' key, that file is loaded as the
+    base.  Otherwise, defaults.yml (in this directory) is used.
 
     Parameters
     ----------
-    run_config_path : str
-        Path to the run config YAML (e.g. "configs/demo.yml").
-    npfloat : dtype
-        Floating-point type to use (np.float64 or np.float128).
+    conf_file : str
+        Path to the run config YAML.
 
     Returns
     -------
     dict
-        The same keys that load_params() currently returns, ready for
-        explicit unpacking in dipoleB.py.
+        The raw merged config (no derived quantities).
     """
 
-    # --- Load defaults and run config ---
-    defaults_path = os.path.join(_THIS_DIR, "defaults.yml")
-    with open(defaults_path, "r") as f:
-        defaults = yaml.safe_load(f)
+    # --- Config log (written to file later, not printed) ---
+    log = []
 
-    with open(run_config_path, "r") as f:
-        run_cfg = yaml.safe_load(f)
+    # --- Load run config ---
+    with open(conf_file, "r") as f:
+        run_cfg = yaml.safe_load(f) or {}
 
-    cfg = _deep_merge(defaults, run_cfg)
+    log.append("=" * 60)
+    log.append(f"Run config: {conf_file}")
+    log.append("=" * 60)
+    log.append(yaml.dump(run_cfg, default_flow_style=False, sort_keys=False).rstrip())
+    log.append("")
+
+    # --- Load base config ---
+    if "base_config" in run_cfg:
+        base_path = run_cfg.pop("base_config")  # consumed, not passed through
+        # resolve relative paths against the run config's directory
+        if not os.path.isabs(base_path):
+            base_path = os.path.join(os.path.dirname(os.path.abspath(conf_file)), base_path)
+    else:
+        base_path = os.path.join(_THIS_DIR, "defaults.yml")
+
+    with open(base_path, "r") as f:
+        base_cfg = yaml.safe_load(f)
+
+    log.append("=" * 60)
+    log.append(f"Base config: {base_path}")
+    log.append("=" * 60)
+    log.append(yaml.dump(base_cfg, default_flow_style=False, sort_keys=False).rstrip())
+    log.append("")
+
+    # --- Validate: warn about unknown keys ---
+    base_keys = _collect_keys(base_cfg)
+    run_keys  = _collect_keys(run_cfg)
+    unknown   = run_keys - base_keys
+    # Filter out keys that are valid overrides (e.g. total_steps, norm_time_override)
+    # These are intentionally absent from defaults because they represent alternate modes
+    _known_extras = {
+        "total_steps", "norm_time_override", "base_config",
+        "output_folder", "run_storage",  # auto-derived but allowed as overrides
+    }
+    real_unknown = {k for k in unknown if k.split(".")[0] not in _known_extras}
+    if real_unknown:
+        # Warnings still print to screen — you want to see these immediately
+        print(f"\n  WARNING: Unknown config keys (possible typos): {sorted(real_unknown)}")
+        print(f"  Valid top-level keys: {sorted(k for k in base_keys if '.' not in k)}\n")
+        log.append(f"WARNING: Unknown config keys: {sorted(real_unknown)}")
+        log.append("")
+
+    # --- Deep merge: run config overrides base ---
+    cfg = copy.deepcopy(base_cfg)
+    _deep_merge(cfg, run_cfg)
+
+    log.append("=" * 60)
+    log.append("Merged configuration")
+    log.append("=" * 60)
+    log.append(yaml.dump(cfg, default_flow_style=False, sort_keys=False).rstrip())
+    log.append("")
+
+    # --- Validate critical values ---
+    particle = cfg.get("particle", "").strip().lower()
+    if particle not in ("proton", "p", "electron", "e"):
+        raise ValueError(f"Unknown particle type: {cfg.get('particle')!r}. Use 'proton' or 'electron'.")
+
+    energy = cfg.get("energy_eV")
+    if energy is not None and float(energy) <= 0:
+        raise ValueError(f"energy_eV must be positive, got {energy}")
+
+    pitch = cfg.get("pitch_deg")
+    if pitch is not None and not (0 < float(pitch) < 180):
+        raise ValueError(f"pitch_deg must be between 0 and 180 (exclusive), got {pitch}")
+
+    # --- Inject metadata for downstream use ---
+    cfg["_config_name"] = os.path.splitext(os.path.basename(conf_file))[0]
+    cfg["_config_log"]  = log   # written to file by dipoleB.py once output dirs exist
+
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: Compute derived quantities
+# ---------------------------------------------------------------------------
+
+def compute_derived(cfg, npfloat=np.float64):
+    """
+    Take a raw merged config dict and compute all derived quantities.
+
+    Parameters
+    ----------
+    cfg : dict
+        Raw config from load_config().
+    npfloat : dtype
+        Floating-point type (np.float64 or np.float128).
+
+    Returns
+    -------
+    dict
+        Flat params dict with both raw config values and derived physics
+        quantities, ready for explicit unpacking in dipoleB.py.
+    """
 
     # --- Resolve particle mass ---
     mass_si = _resolve_mass(cfg["particle"])
 
-    # --- Output folder ---
-    output_folder = cfg["output_folder"]
+    # --- Output paths (auto-derived from config name) ---
+    config_name = cfg.get("_config_name", "default")
+    output_folder = os.path.join("data", config_name)
+    run_storage   = os.path.join(output_folder, "_rawdata")
     os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(run_storage, exist_ok=True)
 
     # --- Physics seeds ---
     pitch_deg   = npfloat(cfg["pitch_deg"])
@@ -175,7 +285,7 @@ def load_config(run_config_path, npfloat=np.float64):
     # --- Solvers ---
     solvers = cfg.get("solvers", {})
 
-    # --- Build the params dict (same keys as load_params) ---
+    # --- Build the params dict ---
     params = {
         # Toggles
         "READ_DATA":       cfg.get("read_data", True),
@@ -208,7 +318,7 @@ def load_config(run_config_path, npfloat=np.float64):
 
         # Output
         "output_folder": output_folder,
-        "run_storage":   cfg.get("run_storage", "outputs/outputs_rawdata"),
+        "run_storage":   run_storage,
 
         # Physics
         "pitch_deg":   pitch_deg,

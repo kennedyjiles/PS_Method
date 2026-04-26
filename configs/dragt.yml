@@ -25,7 +25,6 @@ plotting:
   n_gyro: 175
 
 window_time: 5.0
-output_folder: outputs/dragt
 
 external_h5:
   ps:   "outputs/outputs_rawdata/run_304603211ada647c.h5"

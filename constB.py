@@ -9,9 +9,9 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
-from functions.functions_library_constB import PS_constantB_adaptive, analytical_constantB, lorentz_force_constB
-from functions.functions_library_universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig
-from functions.functions_library_constB import get_run_params, h5_path_for, save_results_h5, load_results_h5
+from ps_method.constB_physics import PS_constantB_adaptive, analytical_constantB, lorentz_force_constB
+from ps_method.universal_legacy import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig
+from ps_method.constB_physics import get_run_params, h5_path_for, save_results_h5, load_results_h5
 
 run = "demo"   # options: "paper" or "demo"
 
