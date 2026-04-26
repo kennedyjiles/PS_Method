@@ -414,7 +414,7 @@ def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
 named_indices = {"vx":3,"vy":4,"vz":5,"Bx":14,"By":15,"Bz":16}
 
 # Compact h5 storage: only these rows are saved (pos, vel, B-field)
-SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
+SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16] #note that h5 is no longer 17 rows but for legacy purposes we keep the same indexing for the variables, just not saving the unused rows
 n_save = len(SAVE_ROWS)
 
 def expand_h5_to_full(compact_arr):

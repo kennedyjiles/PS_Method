@@ -1295,8 +1295,7 @@ plt.close('all')
 # PLOT RELATIVE ERROR OF CANONICAL ANGULAR MOMENTUM
 # =========================================================
 
-# _y0 is the initial state vector set earlier in the Dragt section
-pphi = compute_pphi_error_chunked(cache_path, _y0, charge_sign, ps_step, time_factor)
+pphi = compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
 plot_pphi_error(run_folder, pphi["t_gyro"], pphi["rel_error_log"],
                 pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"])
 
