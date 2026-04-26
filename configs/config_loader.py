@@ -243,6 +243,15 @@ def load_config(run_config_path, npfloat=np.float64):
         # Special modes
         "legacy_h5_path": cfg.get("legacy_h5_path"),
         "manual_h5_path": cfg.get("manual_h5_path"),
+
+        # Adaptive PS settings
+        "ps_adaptive": cfg.get("ps_adaptive", {}),
+
+        # Dragt monitor
+        "dragt_monitor_rtol": cfg.get("dragt_monitor_rtol", 1e-4),
+
+        # Bounce/drift detection
+        "bounce_drift": cfg.get("bounce_drift", {}),
     }
 
     return params

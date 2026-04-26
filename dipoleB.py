@@ -112,6 +112,18 @@ user_min_phase  = params.get("user_min_phase", user_min_phase)
 MAX_PLOT_POINTS = params.get("MAX_PLOT_POINTS", MAX_PLOT_POINTS)
 manual_h5_path  = params.get("manual_h5_path", None)
 
+# --- Adaptive PS settings ---
+ps_adaptive = params.get("ps_adaptive", {})
+
+# --- Dragt monitor ---
+dragt_monitor_rtol = params.get("dragt_monitor_rtol", 1e-4)
+
+# --- Bounce/drift detection ---
+bounce_drift_cfg        = params.get("bounce_drift", {})
+velocity_epsilon_scale  = bounce_drift_cfg.get("velocity_epsilon_scale", 1e-14)
+min_gap_steps           = bounce_drift_cfg.get("min_gap_steps", 3)
+gap_gyro_fraction       = bounce_drift_cfg.get("gap_gyro_fraction", 0.5)
+
 # === Misc Odds and Ends ===
 PS_CHUNKING = True     # PS data always streamed to disk in chunks (no in-memory option)
 WRITE_DATA  = True     # always write h5 (required by chunked streaming)
@@ -160,7 +172,7 @@ if USE_MANUAL_FILE:
             norm_time = meta["norm_time"]
             npfloat = np.dtype(meta["dtype"]).type  # optional
 
-            T_gyro = 2.0 * np.pi * (x_initial**3) 
+            T_gyro = meta.get("T_gyro", 2.0 * np.pi * (x_initial**3))  # fallback for older h5 files
 
             # ---- PS config ----
             ps_cfg = summary["ps"]
@@ -200,9 +212,8 @@ if USE_MANUAL_FILE:
             # ---- Load solver data ------
             """
             Earlier editions of the code loaded everything into memory, for extended runs this has become untenable. 
-            Chunking allows files to be written and read in chunks which takes far less memory. However, the option 
-            to still run the original way is left for now, in case we find need for it. Note, right now ONLY PS method 
-            does the chunking method. I have not tried to apply it to RK method until we find specific needs.
+            Chunking allows files to be written and read in chunks which takes far less memory. Note, right now ONLY PS method 
+            does the chunking method. I have not tried to apply it to RK method until we find specific needs beccause it was a lot of work.
             """
 
             # === PS (chunked — data stays on disk, read in slices later) ===
@@ -252,7 +263,6 @@ pitch_rad = npfloat(np.radians(pitch_deg))              # degrees to radians, pi
 phi_rad = npfloat(np.radians(phi_deg))                  # degrees to radians, phi 
 v_par = npfloat(v_tau) * npfloat(np.cos(pitch_rad))     # parallel velocity component
 v_perp = npfloat(v_tau) * npfloat(np.sin(pitch_rad))    # perpendicular velocity component 
-
 
 vx_initial = npfloat(v_perp * np.cos(phi_rad))          
 vy_initial = npfloat(v_perp * np.sin(phi_rad))
@@ -414,7 +424,7 @@ if not USE_MANUAL_FILE:
                 _r_i = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
                 _L_mon = float(_r_i**3 / _rho_i**2)
             dragt_mon = DragtMonitor(_L_mon, charge_sign,
-                                     check_every=1, rtol=1e-4)
+                                     check_every=1, rtol=dragt_monitor_rtol)
             # ----------------------------------
             _stream_args = dict(
                 initial_pos_vel_ps=initial_pos_vel,
@@ -435,12 +445,12 @@ if not USE_MANUAL_FILE:
             )
             if USE_ADAPTIVE:
                 _stream_args.update(
-                    order_low=50,
-                    order_high=300,
-                    grow_factor=1.5,
-                    shrink_factor=0.5,
-                    steps_per_local_gyro=200,
-                    min_fast_path_N=100,
+                    order_low=ps_adaptive.get("order_low", 50),
+                    order_high=ps_adaptive.get("order_high", 300),
+                    grow_factor=ps_adaptive.get("grow_factor", 1.5),
+                    shrink_factor=ps_adaptive.get("shrink_factor", 0.5),
+                    steps_per_local_gyro=ps_adaptive.get("steps_per_local_gyro", 200),
+                    min_fast_path_N=ps_adaptive.get("min_fast_path_N", 100),
                 )
                 max_ps, elapsed_ps = run_ps_streaming_adaptive(**_stream_args)
             else:
@@ -612,6 +622,7 @@ if not USE_MANUAL_FILE:
                     "qoverm": float(qoverm),
                     "dtype": npfloat.__name__,
                     "tau0": tau_time,
+                    "T_gyro": float(T_gyro),
                     "timing": results["meta"]["timing"],
                 },
                 "ps": {
@@ -734,10 +745,6 @@ if DEBUG:
     tracemalloc.stop()
     logger.debug(f"Data access for plottings: {peak / 1024**2:.2f} MB\n")
 
-# === paper specific adjustments for aeshetic purposes ====
-if run == "paper1": USE_RK4 = False 
-if run == "paper2": USE_RKG = False
-
 
 print(f"\n{'='*60}")
 print(f"  Run Statistics")
@@ -767,14 +774,14 @@ print(f"{'='*60}")
 
 
 # === Create run-specific output subfolder ===
-# All plots, txt summaries, and CSVs go here. Raw h5 data stays in run_storage.
+# All plots and txt summaries, master CVS log will go in one folder above. Raw h5 data stays in run_storage.
 run_folder = os.path.join(output_folder, stem)
 os.makedirs(run_folder, exist_ok=True)
 
 # =====================================================
 # ============== Full Trajectory Plots ================
 # =====================================================
-plotbounds = x_initial + 1.1
+plotbounds = x_initial + PLOT_BOUNDARY_PAD
 
 if USE_FULL_PLOT:
     _traj_common = dict(
@@ -961,8 +968,6 @@ if DEBUG: tracemalloc.start()
 time_factor = 1.0 / T_gyro  # to convert normalized time to gyroperiods
 
 if USE_PS: energy_stride = max(1, n_ps // MAX_PLOT_POINTS)
-# energy_stride=1 
-
 
 if USE_EXTERNAL_H5_ps:
     # Open the file directly from the SSD to avoid loading 200GB into RAM...it will die a horrible death
@@ -1115,7 +1120,6 @@ if USE_PS:
             return_plot_data=True,
         )
 
-
 # === If using Hamiltonian in RKG ==
 if USE_RKG:
     r_rkg = solution_rkg[:, 0:3]
@@ -1152,7 +1156,7 @@ if USE_RKG:
 if USE_RK45:
     t_rk45 = ps_step * np.arange(len(rel_drift_rk45), dtype=npfloat)
 
-# --- assemble plot data tuples ---
+# --- assemble KE plot data tuples ---
 _ke_ps   = (t_ps_plot, rel_drift_ps) if USE_PS else None
 _ke_rk4  = (t_rk4, rel_drift_rk4) if USE_RK4 else None
 _ke_rk45 = (t_rk45, rel_drift_rk45) if USE_RK45 else None
@@ -1238,7 +1242,7 @@ if USE_PS:
     _v_mag_ps0 = float(np.sqrt(_y0[3]**2 + _y0[4]**2 + _y0[5]**2))
     _v_tau_expected = float(v_tau)
     _v_rel_err = abs(_v_mag_ps0 - _v_tau_expected) / _v_tau_expected
-    if _v_rel_err > 0.005:
+    if _v_rel_err > CACHE_VELOCITY_RTOL:
         print(f"\n  *** CACHE MISMATCH WARNING ***")
         print(f"  PS trajectory v_mag = {_v_mag_ps0:.6f}  (from cached run)")
         print(f"  Current v_tau       = {_v_tau_expected:.6f}  (from current KE_particle/mass_si)")
@@ -1317,7 +1321,6 @@ else:
 plt.close('all')
 
 
-
 # =========================================================
 # PLOT RELATIVE ERROR OF CANONICAL ANGULAR MOMENTUM
 # =========================================================
@@ -1393,13 +1396,15 @@ if DEBUG:
 bounce_results = None
 drift_results  = None
 
+if DEBUG: tracemalloc.start()
+
 print(f"\n{'='*60}")
 print(f"  Bounce/Drift Statistics")
 print(f"{'='*60}")
 
 if USE_PS:
-    v_eps = npfloat(1e-14) * v_tau
-    user_min_gap = max(3, int(0.5 * T_gyro / ps_step))
+    v_eps = npfloat(velocity_epsilon_scale) * v_tau
+    user_min_gap = max(min_gap_steps, int(gap_gyro_fraction * T_gyro / ps_step))
 
     bounce_state = init_bounce_stream_state()
     drift_state  = init_drift_stream_state()
@@ -1475,10 +1480,14 @@ if USE_PS:
         "direction": direction,
     }
 
+if DEBUG:
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    logger.info(f"Peak memory usage for bounce/drift analysis: {peak / 1024**2:.2f} MB")
 
-# ==================================================
-# ========= Write Summary Output to File ==========
-# ==================================================
+# ===========================================================
+# ========= Write Summary Output to File & CVS Log ==========
+# ===========================================================
 
 if DEBUG: tracemalloc.start()
 

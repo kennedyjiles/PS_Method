@@ -40,6 +40,10 @@ rtol_rk45       = 1e-8
 atol_rk45       = 1e-10
 user_min_phase  = npfloat(0.1)
 
+# --- System-level constants (unlikely to need per-run tuning) ---
+CACHE_VELOCITY_RTOL = 0.005       # relative tolerance for cache velocity mismatch warning
+PLOT_BOUNDARY_PAD   = 1.1         # padding multiplier for trajectory plot boundaries
+
 # --- Matplotlib backend settings ---
 plt.rcParams['agg.path.chunksize'] = 100000 if USE_FLOAT128 else 1000
 
