@@ -23,9 +23,26 @@ from matplotlib.ticker import (
 
 # === Project-Specific ===
 import builtins
-import test_particles.dipoleB_testparticles as tp
-builtins.npfloat = np.float128 if tp.USE_FLOAT128 else np.float64
-from test_particles.dipoleB_testparticles import *
+from constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
+
+# --- System-level settings (hardcoded, not per-run) ---
+USE_FLOAT128    = False                                          # RKG will be disabled if True
+npfloat         = np.float128 if USE_FLOAT128 else np.float64
+builtins.npfloat = npfloat                                       # make available to functions library
+tol             = 1.0 * np.finfo(npfloat).eps                    # machine epsilon, scaled by tau_0 later
+MAX_PLOT_POINTS = 1_000_000                                      # cap points per graph
+
+# --- Defaults for per-run settings (overridden by YAML config) ---
+run_storage     = "outputs/outputs_rawdata"
+PS_order        = 40
+PS_chunk_steps  = int(1e4)
+rtol_rk45       = 1e-8
+atol_rk45       = 1e-10
+user_min_phase  = npfloat(0.1)
+
+# --- Matplotlib backend settings ---
+plt.rcParams['agg.path.chunksize'] = 100000 if USE_FLOAT128 else 1000
+
 
 # === Functions ===
 from functions.functions_library_universal_chunk import (
@@ -60,6 +77,8 @@ from functions.functions_library_dipole import (
     finalize_drift_stream,
     expand_h5_to_full,
     compute_pphi_error_chunked,
+    compute_mu_deviation_rk,
+    compute_mu_deviation_ps,
 )
 
 from functions.functions_library_dragt import (

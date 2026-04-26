@@ -208,6 +208,7 @@ def load_config(run_config_path, npfloat=np.float64):
 
         # Output
         "output_folder": output_folder,
+        "run_storage":   cfg.get("run_storage", "outputs/outputs_rawdata"),
 
         # Physics
         "pitch_deg":   pitch_deg,
@@ -232,7 +233,12 @@ def load_config(run_config_path, npfloat=np.float64):
         "N_GYRO":      plot_cfg.get("n_gyro", 75),
 
         # Optional overrides
-        "PS_order": cfg.get("ps_order", 40),
+        "PS_order":        cfg.get("ps_order", 40),
+        "PS_chunk_steps":  int(cfg.get("ps_chunk_steps", 10000)),
+        "rtol_rk45":       cfg.get("rtol_rk45", 1e-8),
+        "atol_rk45":       cfg.get("atol_rk45", 1e-10),
+        "user_min_phase":  cfg.get("user_min_phase", 0.1),
+        "MAX_PLOT_POINTS": cfg.get("max_plot_points", 1_000_000),
 
         # Special modes
         "legacy_h5_path": cfg.get("legacy_h5_path"),

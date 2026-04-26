@@ -1,3 +1,27 @@
+"""
+dipoleB.py — Main driver for charged particle trajectory simulation in a
+             magnetic dipole field using using power series method with
+             optional RK4, RK45, and RKG (symplectic) solvers for comparison.
+
+Usage:
+    python dipoleB.py                       # runs the default config (demo)
+    python dipoleB.py demo                  # named config  → configs/demo.yml
+    python dipoleB.py paper1                # named config  → configs/paper1.yml
+    python dipoleB.py configs/my_run.yml    # direct path to a custom YAML config
+
+Available named configs:
+    demo, paper1, paper2, paper3, dragt, walt, monster_ps, manual
+
+To create a custom run:
+    1. Copy configs/defaults.yml to configs/my_run.yml
+    2. Edit the parameters you want to change (energy, pitch, L-shell, etc.)
+    3. Run:  python dipoleB.py my_run
+
+Your config is automatically merged with defaults.yml — any parameter you don't
+specify falls back to the default value. Do NOT edit defaults.yml directly; it
+serves as the reference for all runs.
+"""
+
 from utility_scripts.project_setup import *
 
 DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
@@ -6,31 +30,28 @@ if DEBUG:
     tracemalloc.start()
 
 
-"""
-Run selection:
-    python dipoleB.py demo                  # named config  → configs/demo.yml
-    python dipoleB.py configs/my_run.yml    # direct YAML path
-    python dipoleB.py paper1                # falls back to load_params() if no YAML found
-Defaults to "demo" if nothing is selected.
-"""
-
 run = "demo"
-if len(sys.argv) > 1:       # this is scanning for the argument after dipoleb.py in the ternminal
-    run = sys.argv[1]       # if it finds somethin thing it rewrites run as that argument
+if len(sys.argv) > 1:
+    run = sys.argv[1]
     print(f"Run mode set from command line: {run}\n")
-else: print(f"Using default run mode: {run}\n")
+else:
+    print(f"Using default run mode: {run}\n")
 
-_configs_dir = os.path.join(os.path.dirname(__file__), "configs") # _file_ is built-in variable that contains the path to the current script
+_configs_dir = os.path.join(os.path.dirname(__file__), "configs")
 
 if run.endswith((".yml", ".yaml")) and os.path.isfile(run):
-    # Direct path to a YAML file
-    print(f"Loading YAML config: {run}\n")
-    params = load_config(run, npfloat=npfloat)
+    _yaml_path = run
 elif os.path.isfile(os.path.join(_configs_dir, f"{run}.yml")):
-    # Named config → configs/<name>.yml
     _yaml_path = os.path.join(_configs_dir, f"{run}.yml")
-    print(f"Loading YAML config: {_yaml_path}\n")
-    params = load_config(_yaml_path, npfloat=npfloat)
+else:
+    raise FileNotFoundError(
+        f"No YAML config found for '{run}'. "
+        f"Expected configs/{run}.yml or a direct path to a .yml file.\n"
+        f"Available configs: {[f.replace('.yml','') for f in os.listdir(_configs_dir) if f.endswith('.yml')]}"
+    )
+
+print(f"Loading YAML config: {_yaml_path}\n")
+params = load_config(_yaml_path, npfloat=npfloat)
 
 # =========================================================
 # ============= Assign YML file parameters ================
@@ -51,6 +72,7 @@ USE_FULL_PLOT   = params["USE_FULL_PLOT"]
 slice_mode      = params["slice_mode"]
 gyro_window     = params["gyro_window"]
 output_folder   = params["output_folder"]
+run_storage     = params.get("run_storage", run_storage)  # module default from testparticles
 window_time     = params["window_time"]
 N_GYRO          = params["N_GYRO"]
 
@@ -82,8 +104,13 @@ N_STEPS_PER_GYRO_rk4 = params.get("N_STEPS_PER_GYRO_rk4", None)
 N_STEPS_PER_GYRO_rkg = params.get("N_STEPS_PER_GYRO_rkg", None)
 
 # --- Optional overrides (only some modes set these) ---
-PS_order       = params.get("PS_order", PS_order)             
-manual_h5_path = params.get("manual_h5_path", None)
+PS_order        = params.get("PS_order", PS_order)
+PS_chunk_steps  = params.get("PS_chunk_steps", PS_chunk_steps)
+rtol_rk45       = params.get("rtol_rk45", rtol_rk45)
+atol_rk45       = params.get("atol_rk45", atol_rk45)
+user_min_phase  = params.get("user_min_phase", user_min_phase)
+MAX_PLOT_POINTS = params.get("MAX_PLOT_POINTS", MAX_PLOT_POINTS)
+manual_h5_path  = params.get("manual_h5_path", None)
 
 # === Misc Odds and Ends ===
 PS_CHUNKING = True     # PS data always streamed to disk in chunks (no in-memory option)
@@ -1305,130 +1332,45 @@ plot_pphi_error(run_folder, pphi["t_gyro"], pphi["rel_error_log"],
 # ============================================================
 if DEBUG: tracemalloc.start()
 
+mu_rk4_result = mu_rkg_result = mu_rk45_result = mu_ps_result = None
+
 if USE_RK4:
-    window_steps_rk4 = int(round(N_GYRO * N_STEPS_PER_GYRO_rk4))
-    mu0_rk4 = compute_mu_rk(solution_rk4[:, 0:1].T, mass)[0]
-
-    if gyro_window == "last":
-        i1_rk4 = steps_rk4
-        i0_rk4 = max(0, i1_rk4 - window_steps_rk4)
-    elif gyro_window == "first":
-        i0_rk4 = 0
-        i1_rk4 = min(window_steps_rk4, steps_rk4)
-    elif gyro_window == "all":
-        i0_rk4 = 0
-        i1_rk4 = steps_rk4
-    else:
-        raise ValueError("gyro_window must be 'first', 'last', or 'all'")
-
-    mu_rk4 = compute_mu_rk(solution_rk4[:, i0_rk4:i1_rk4].T, mass)
-    mudrift_rk4 = np.abs(mu_rk4 - mu0_rk4) / mu0_rk4
-    t_rk4_plot = (i0_rk4 + np.arange(mudrift_rk4.size, dtype=npfloat)) * rk4_step * time_factor
+    mu_rk4_result = compute_mu_deviation_rk(
+        solution_rk4, steps_rk4, rk4_step,
+        N_GYRO, N_STEPS_PER_GYRO_rk4, mass, gyro_window, time_factor,
+        solver_type="rk4")
 
 if USE_RKG:
-    window_steps_rkg = int(round(N_GYRO * N_STEPS_PER_GYRO_rkg))
-    r0 = solution_rkg[0, 0:3]
-    p0 = solution_rkg[0, 3:6]
-    A0 = vector_potential_dipole(r0)
-    v0 = p0 - A0
-    state0 = np.hstack((r0, v0))[None, :]
-    mu0_rkg = compute_mu_rk(state0, mass)[0]
-
-    if gyro_window == "last":
-        i1_rkg = steps_rkg
-        i0_rkg = max(0, i1_rkg - window_steps_rkg)
-    elif gyro_window == "first":
-        i0_rkg = 0
-        i1_rkg = min(window_steps_rkg, steps_rkg)
-    elif gyro_window == "all":
-        i0_rkg = 0
-        i1_rkg = steps_rkg
-    else:
-        raise ValueError("gyro_window must be 'first', 'last', or 'all'")
-
-    r_rkg = solution_rkg[i0_rkg:i1_rkg, 0:3]
-    p_rkg = solution_rkg[i0_rkg:i1_rkg, 3:6]
-    A_rkg = np.zeros_like(r_rkg)
-    for i in range(len(r_rkg)):
-        A_rkg[i] = vector_potential_dipole(r_rkg[i])
-    v_rkg = p_rkg - A_rkg
-    state_rkg = np.hstack((r_rkg, v_rkg))
-
-    mu_rkg = compute_mu_rk(state_rkg, mass)
-    mudrift_rkg = np.abs(mu_rkg - mu0_rkg) / mu0_rkg
-    t_rkg_plot = (i0_rkg + np.arange(mudrift_rkg.size, dtype=npfloat)) * rkg_step * time_factor
-
+    mu_rkg_result = compute_mu_deviation_rk(
+        solution_rkg, steps_rkg, rkg_step,
+        N_GYRO, N_STEPS_PER_GYRO_rkg, mass, gyro_window, time_factor,
+        solver_type="rkg")
 
 if USE_RK45:
-    window_steps_ps = int(round(N_GYRO * N_STEPS_PER_GYRO_ps))
-    y0 = y_rk45_common[:, 0:1]   
-    mu0_rk45 = compute_mu_rk(y0.T, mass)[0]
-
-    if gyro_window == "last":
-        i1_rk45 = steps_ps
-        i0_rk45 = max(0, i1_rk45 - window_steps_ps)
-    elif gyro_window == "first":
-        i0_rk45 = 0
-        i1_rk45 = min(window_steps_ps, steps_ps)
-    elif gyro_window == "all":
-        i0_rk45 = 0
-        i1_rk45 = steps_ps
-    else:
-        raise ValueError("gyro_window must be 'first', 'last', or 'all'")
-
-    mu_rk45 = compute_mu_rk(y_rk45_common[:, i0_rk45:i1_rk45].T, mass)
-    mudrift_rk45 = np.abs(mu_rk45 - mu0_rk45) / mu0_rk45
-    t_rk45_plot = (i0_rk45 + np.arange(mudrift_rk45.size, dtype=npfloat)) * ps_step * time_factor
+    mu_rk45_result = compute_mu_deviation_rk(
+        y_rk45_common, steps_ps, ps_step,
+        N_GYRO, N_STEPS_PER_GYRO_ps, mass, gyro_window, time_factor,
+        solver_type="rk45")
 
 if USE_PS:
-    window_steps_ps = N_GYRO * N_STEPS_PER_GYRO_ps
+    mu_ps_result = compute_mu_deviation_ps(
+        cache_path, steps_ps, ps_step, PS_decimate,
+        N_GYRO, N_STEPS_PER_GYRO_ps, mass, mu0_ps,
+        gyro_window, time_factor, max_plot_points=MAX_PLOT_POINTS)
+    ps_order_label = mu_ps_result["ps_order_label"]
 
-    if gyro_window == "last":
-        i1_phys = steps_ps
-        i0_phys = max(0, i1_phys - window_steps_ps)
-    elif gyro_window == "first":
-        i0_phys = 0
-        i1_phys = min(window_steps_ps, steps_ps)
-    elif gyro_window == "all":
-        i0_phys = 0
-        i1_phys = steps_ps
-    else:
-        raise ValueError("gyro_window must be 'first', 'last', or 'all'")
+# --- Unpack mu0 values needed by the summary writer ---
+mu0_rk4  = mu_rk4_result["mu0"]  if mu_rk4_result  else None
+mu0_rkg  = mu_rkg_result["mu0"]  if mu_rkg_result  else None
+mu0_rk45 = mu_rk45_result["mu0"] if mu_rk45_result else None
 
-    ps_store_stride = PS_decimate if (PS_decimate > 1) else 1
-    j0 = int(np.floor(i0_phys / ps_store_stride))
-    j1 = int(np.ceil(i1_phys / ps_store_stride))
-
-    with h5py.File(cache_path, "r") as ps_h5:
-        ps_grp = ps_h5["ps"]
-        ps_y = ps_grp["y"]
-        ps_order_label = int(ps_grp.attrs["max_ps"])
-        n_store = ps_y.shape[1]
-
-        j0 = max(0, min(j0, n_store))
-        j1 = max(0, min(j1, n_store))
-
-        if j1 <= j0:
-            raise RuntimeError("Empty PS μ window (chunked)")
-
-        y_ps_win = expand_h5_to_full(ps_y[:, j0:j1])
-        mu_ps = compute_mu_ps(y_ps_win, mass)
-        mudrift_ps = np.abs(mu_ps - mu0_ps) / mu0_ps
-
-        dt_ps_store = ps_step * ps_store_stride
-        t_ps_store = np.arange(j0, j1, dtype=npfloat) * dt_ps_store
-        moment_stride = max(1, round(len(mu_ps) // MAX_PLOT_POINTS))
-        t_ps_plot = t_ps_store[::moment_stride] * time_factor
-        mudrift_ps_plot = mudrift_ps[::moment_stride]
-
-# ===== Plotting ========
 plot_mu_deviation(
     summary, run_folder, stem, particle_type, ps_order_label,
     USE_PLOT_TITLES,
-    ps_data=(t_ps_plot, mudrift_ps_plot) if USE_PS else None,
-    rk4_data=(t_rk4_plot, mudrift_rk4) if USE_RK4 else None,
-    rk45_data=(t_rk45_plot, mudrift_rk45) if USE_RK45 else None,
-    rkg_data=(t_rkg_plot, mudrift_rkg) if USE_RKG else None,
+    ps_data=(mu_ps_result["t"], mu_ps_result["mudrift_plot"]) if mu_ps_result else None,
+    rk4_data=(mu_rk4_result["t"], mu_rk4_result["mudrift"]) if mu_rk4_result else None,
+    rk45_data=(mu_rk45_result["t"], mu_rk45_result["mudrift"]) if mu_rk45_result else None,
+    rkg_data=(mu_rkg_result["t"], mu_rkg_result["mudrift"]) if mu_rkg_result else None,
 )
 
 
@@ -1436,28 +1378,12 @@ if DEBUG:
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     logger.info(f"Peak memory usage for moment analysis: {peak / 1024**2:.2f} MB")
-    if USE_PS: mumidpoint_ps = int(round(len(mudrift_ps) / 2))
-    if USE_RK4: mumidpoint_rk4 = int(round(len(mudrift_rk4) / 2))
-    if USE_RKG: mumidpoint_rkg = int(round(len(mudrift_rkg) / 2))
-    if USE_RK45: mumidpoint_rk45 = int(round(len(mudrift_rk45) / 2))
-    
-    if USE_PS: logger.debug(f"mu midpoint: {mumidpoint_ps}")
-    if USE_RK4: logger.debug(f"mu midpoint: {mumidpoint_rk4}")
-    if USE_RKG: logger.debug(f"mu midpoint: {mumidpoint_rkg}")
-    if USE_RK45: logger.debug(f"mu midpoint: {mumidpoint_rk45}")
-
-    if USE_PS: logger.info(f"moment stride: {stride}")
-    if USE_PS: logger.debug(f"[PS] mu rel drift initial ={mudrift_ps[0]:.2e}, mu rel drift mid ={mudrift_ps[mumidpoint_ps]:.2e}, mu rel drift final ={mudrift_ps[-1]:.2e}")
-    if USE_RKG: logger.debug(f"[RKG] mu rel drift initial ={mudrift_rkg[0]:.2e}, mu rel drift mid ={mudrift_rkg[mumidpoint_rkg]:.2e}, mu rel drift final ={mudrift_rkg[-1]:.2e}")
-    if USE_RK4: logger.debug(f"[RK4] mu rel drift initial ={mudrift_rk4[0]:.2e}, mu rel drift mid ={mudrift_rk4[mumidpoint_rk4]:.2e}, mu rel drift final ={mudrift_rk4[-1]:.2e}")
-    if USE_RK45: 
-        logger.debug(f"[RK45] mu rel drift initial ={mudrift_rk45[0]:.2e}, mu rel drift mid ={mudrift_rk45[mumidpoint_rk45]:.2e}, mu rel drift final ={mudrift_rk45[-1]:.2e}")
-        logger.debug(f"[RK45 Slice] t_start={t_rk45[0]:.3e}, t_end={t_rk45[-1]:.3e}, len={len(t_rk45)}")
-
-    if USE_RK4: logger.debug(f"mu-window RK4  : {window_steps_rk4 * rk4_step:.6e}")
-    if USE_RKG: logger.debug(f"mu-window RKG  : {window_steps_rkg * rkg_step:.6e}")
-    if USE_RK45: logger.debug(f"mu-window RK45 : {window_steps_ps * ps_step:.6e}")
-    if USE_PS: logger.debug(f"mu-window PS   : {window_steps_ps * ps_step:.6e}")
+    for _lbl, _res in [("PS", mu_ps_result), ("RK4", mu_rk4_result),
+                        ("RKG", mu_rkg_result), ("RK45", mu_rk45_result)]:
+        if _res is not None:
+            _md = _res.get("mudrift", _res.get("mudrift_plot"))
+            _mid = int(round(len(_md) / 2))
+            logger.debug(f"[{_lbl}] mu rel drift initial={_md[0]:.2e}, mid={_md[_mid]:.2e}, final={_md[-1]:.2e}")
 
 
 # ===================================================
@@ -1589,10 +1515,10 @@ if DEBUG:
 
 # === Write to master simulation log CSV ===
 _method_records = []
-if USE_RK4: _method_records.append(("RK4",  steps_rk4,  rk4_step,  rel_drift_rk4,  mudrift_rk4))
-if USE_RK45: _method_records.append(("RK45", steps_ps,   ps_step,   rel_drift_rk45, mudrift_rk45))
-if USE_RKG: _method_records.append(("RKG",  steps_rkg,  rkg_step,  rel_drift_rkg,  mudrift_rkg))
-if USE_PS: _method_records.append(("PS",   steps_ps,   ps_step,   rel_drift_ps,   mudrift_ps))
+if USE_RK4:  _method_records.append(("RK4",  steps_rk4, rk4_step, rel_drift_rk4,  mu_rk4_result["mudrift"]))
+if USE_RK45: _method_records.append(("RK45", steps_ps,  ps_step,  rel_drift_rk45, mu_rk45_result["mudrift"]))
+if USE_RKG:  _method_records.append(("RKG",  steps_rkg, rkg_step, rel_drift_rkg,  mu_rkg_result["mudrift"]))
+if USE_PS:   _method_records.append(("PS",   steps_ps,  ps_step,  rel_drift_ps,   mu_ps_result["mudrift"]))
 
 write_master_csv(
     output_folder=output_folder, stem=stem, particle_type=particle_type,

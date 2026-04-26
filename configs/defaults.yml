@@ -33,6 +33,14 @@ solvers:
 # --- PS Settings ---
 ps_decimate: 1            # save every Nth PS step (1 = save all)
 ps_order: 40              # max power series order (system will truncate)
+ps_chunk_steps: 10000     # number of PS steps per h5 streaming chunk
+
+# --- RK45 Tolerances ---
+rtol_rk45: 1.0e-8         # RK45 relative tolerance
+atol_rk45: 1.0e-10        # RK45 absolute tolerance
+
+# --- Drift Detection ---
+user_min_phase: 0.1       # minimum radians to extrapolate drift from
 
 # --- Steps per gyroperiod (used to compute step sizes from T_gyro) ---
 # Set to null to use defaults (65 for all). Override individually as needed.
@@ -60,12 +68,12 @@ plotting:
   gyro_window: last       # "first" or "last" — which gyro window for detailed view
   n_gyro: 75              # number of gyroperiods in slice window
 
-# --- Window ---
 window_time: 11.6         # time window for slice plots (normalized units)
 
 # --- Output ---
 output_folder: outputs/runs
-read_data: true           # scan for cached runs and load from disk
+run_storage: outputs/_rawdata  # where raw trajectory h5 files are saved
+read_data: true                       # scan for cached runs and load from disk
 
 # --- External H5 files (for energy comparison across runs) ---
 # Set use_external_h5 to true AND provide the path to enable comparison.
