@@ -115,7 +115,7 @@ def build_run_list(phase):
             for pitch in PITCH_ANGLES:
                 runs.append({
                     "energy_eV": energy,
-                    "L_shell": round(L, 2),
+                    "x_initial": round(L, 2),
                     "pitch_deg": pitch,
                     "gyroperiods": GYROPERIODS[phase],
                     "phase": phase,
@@ -123,7 +123,7 @@ def build_run_list(phase):
     return runs
 
 
-def build_michel_sweep(energy_eV, L_shell, phi_steps=12, pitches=None,
+def build_michel_sweep(energy_eV, x_initial, phi_steps=12, pitches=None,
                        gyroperiods=None):
     """
     Generate run list for a Michel phase portrait at a single (L, energy).
@@ -134,7 +134,7 @@ def build_michel_sweep(energy_eV, L_shell, phi_steps=12, pitches=None,
 
     Args:
         energy_eV:  particle energy in eV
-        L_shell:    equatorial launch distance in R_E
+        x_initial:  equatorial launch distance in R_E
         phi_steps:  number of initial gyrophase values (evenly spaced 0–360°)
         pitches:    list of pitch angles (degrees); defaults to MICHEL_PITCHES
         gyroperiods: simulation length; defaults to MICHEL_GYROPERIODS
@@ -154,7 +154,7 @@ def build_michel_sweep(energy_eV, L_shell, phi_steps=12, pitches=None,
         for phi in phi_values:
             runs.append({
                 "energy_eV": energy_eV,
-                "L_shell": round(L_shell, 2),
+                "x_initial": round(x_initial, 2),
                 "pitch_deg": pitch,
                 "phi_deg": round(phi, 2),
                 "gyroperiods": gyroperiods,
@@ -166,8 +166,8 @@ def build_michel_sweep(energy_eV, L_shell, phi_steps=12, pitches=None,
 def run_key(run):
     """Unique string key for a run, used for progress tracking."""
     if run.get("phase") == "michel":
-        return f"E{run['energy_eV']:.0e}_L{run['L_shell']:.2f}_P{run['pitch_deg']:.1f}_phi{run['phi_deg']:.1f}"
-    return f"E{run['energy_eV']:.0e}_L{run['L_shell']:.2f}_P{run['pitch_deg']:.1f}"
+        return f"E{run['energy_eV']:.0e}_L{run['x_initial']:.2f}_P{run['pitch_deg']:.1f}_phi{run['phi_deg']:.1f}"
+    return f"E{run['energy_eV']:.0e}_L{run['x_initial']:.2f}_P{run['pitch_deg']:.1f}"
 
 
 def load_progress():
@@ -186,7 +186,7 @@ def estimate_time(run):
     """Rough estimate of run time in minutes."""
     E_MeV = run["energy_eV"] / 1e6
     pitch = run["pitch_deg"]
-    L = run["L_shell"]
+    L = run["x_initial"]
 
     if E_MeV <= 30:
         base_min = 3
@@ -215,7 +215,7 @@ def write_config(run, config_path):
     is_michel = (run.get("phase") == "michel")
     config = {
         "energy_eV":     run["energy_eV"],
-        "L_shell":       run["L_shell"],
+        "x_initial":       run["x_initial"],
         "pitch_deg":     run["pitch_deg"],
         "phi_deg":       run.get("phi_deg", 0.0),
         "gyroperiods":   run["gyroperiods"],
@@ -292,7 +292,7 @@ def run_parallel(runs, max_workers, dry_run=False):
             E_MeV = run["energy_eV"] / 1e6
             est = estimate_time(run)
             print(f"  [{i+1:>4d}/{total}] {key}  "
-                  f"E={E_MeV:.0f} MeV  L={run['L_shell']:.2f}  "
+                  f"E={E_MeV:.0f} MeV  L={run['x_initial']:.2f}  "
                   f"α={run['pitch_deg']:.0f}°  (~{est:.0f} min)")
         return
 
@@ -357,7 +357,7 @@ def run_sequential(runs, dry_run=False):
             E_MeV = run["energy_eV"] / 1e6
             est = estimate_time(run)
             print(f"[{i+1:>4d}/{total}] {key}  "
-                  f"E={E_MeV:.0f} MeV  L={run['L_shell']:.2f}  "
+                  f"E={E_MeV:.0f} MeV  L={run['x_initial']:.2f}  "
                   f"α={run['pitch_deg']:.0f}°  (~{est:.0f} min)")
 
             if dry_run:
@@ -441,7 +441,7 @@ Examples:
     if args.michel:
         runs = build_michel_sweep(
             energy_eV=args.energy,
-            L_shell=args.L,
+            x_initial=args.L,
             phi_steps=args.phi_steps,
             gyroperiods=args.michel_gyroperiods,
         )
@@ -488,7 +488,7 @@ Examples:
     print(f"  Estimated time: {total_est/60:.1f} hrs sequential, "
           f"~{parallel_est/60:.1f} hrs with {args.workers} workers")
     print(f"  Energies: {sorted(set(r['energy_eV']/1e6 for r in runs))} MeV")
-    print(f"  L-shells: {sorted(set(r['L_shell'] for r in runs))}")
+    print(f"  L-shells: {sorted(set(r['x_initial'] for r in runs))}")
     print(f"  Pitch angles: {sorted(set(r['pitch_deg'] for r in runs))}")
     if args.michel:
         print(f"  Gyrophase φ: {sorted(set(r['phi_deg'] for r in runs))}°")

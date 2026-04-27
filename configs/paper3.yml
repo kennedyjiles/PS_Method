@@ -7,7 +7,7 @@ particle: proton
 energy_eV: 100.0e3
 pitch_deg: 30.0
 phi_deg: 90.0
-L_shell: 5.0
+x_initial: 5.0
 
 solvers:
   ps: true

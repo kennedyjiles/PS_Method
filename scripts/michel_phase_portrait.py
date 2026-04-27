@@ -131,7 +131,7 @@ def process_h5_file(h5_path, chunk_size=1_000_000):
 
     Returns:
         alpha, phi (arrays in degrees)
-        meta (dict with energy_eV, L_shell, pitch_deg, etc.)
+        meta (dict with energy_eV, x_initial, pitch_deg, etc.)
     """
     meta = {}
 

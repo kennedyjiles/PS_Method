@@ -6,7 +6,7 @@ particle: proton
 energy_eV: 1.0e7
 pitch_deg: 85.0
 phi_deg: 90.0
-L_shell: 8.0
+x_initial: 8.0
 gyroperiods: 1.0e4
 read_data: false
 

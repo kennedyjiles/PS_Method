@@ -13,12 +13,12 @@ Available named configs:
     demo, paper1, paper2, paper3, dragt, walt, monster_ps, manual
 
 To create a custom run:
-    1. Copy configs/defaults.yml to configs/my_run.yml
-    2. Edit the parameters you want to change (energy, pitch, L-shell, etc.)
+    1. Copy configs/base.yml to configs/my_run.yml
+    2. Edit the parameters you want to change (energy, pitch, x_initial, etc.)
     3. Run:  python dipoleB.py my_run
 
-Your config is automatically merged with defaults.yml — any parameter you don't
-specify falls back to the default value. Do NOT edit defaults.yml directly; it
+Your config is automatically merged with base.yml — any parameter you don't
+specify falls back to the default value. Do NOT edit base.yml directly; it
 serves as the reference for all runs.
 """
 

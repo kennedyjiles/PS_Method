@@ -6,7 +6,7 @@ particle: proton
 energy_eV: 100.0e3
 pitch_deg: 30.0
 phi_deg: 90.0
-L_shell: 5.0
+x_initial: 5.0
 
 solvers:
   ps: true
@@ -18,6 +18,8 @@ solvers:
 # 1e7 steps × ps_step gives norm_time; gyroperiods is derived.
 gyroperiods: null         # computed from total_steps below
 total_steps: 1.0e7        # total integration steps (norm_time = total_steps × ps_step)
+use_gyroradius_L_correction: True  # Shifts x_initial by the particle's gyroradius to get the
+
 
 plotting:
   n_gyro: 150

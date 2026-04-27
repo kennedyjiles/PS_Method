@@ -17,17 +17,17 @@ particle: proton          # "proton" or "electron"
 energy_eV: 100.0e6        # kinetic energy in eV
 pitch_deg: 60.0           # pitch angle (degrees)
 phi_deg: 90.0             # gyrophase angle (degrees)
-L_shell: 5.0              # launch L-shell (x_initial in R_E)
+x_initial: 5.0            # initial x position (L-shell, in R_E)
 y_initial: 0.0            # initial y position (R_E), usually 0
 z_initial: 0.0            # initial z position (R_E), usually 0
 
 # --- Integration ---
 gyroperiods: 450          # number of gyroperiods to simulate
-use_gyroradius_L_correction: false  # Shifts L_shell by the particle's gyroradius to get the
-                                    # guiding-center L_eff, then computes T_gyro from that.
-                                    # Only matters when gyroradius is a significant fraction of
-                                    # L_shell (e.g. 210 MeV protons at L~3). Safe to leave false
-                                    # for low-energy particles or electrons.
+use_gyroradius_L_correction: false  # Uses gyroradius-corrected L_eff for T_gyro computation
+                                    # (more accurate step sizing). Launch position (x_initial)
+                                    # is unchanged. Only matters when gyroradius is a significant
+                                    # fraction of x_initial (e.g. 210 MeV protons at L~3).
+                                    # Safe to leave false for low-energy particles or electrons.
 
 # --- Solvers ---
 solvers:

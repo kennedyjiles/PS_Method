@@ -72,7 +72,7 @@ def _compute_steps(T_gyro, N_ps=65, N_rk4=65, N_rkg=65, rounding=True):
 
 def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial):
     """Relativistic gyro-physics: effective L-shell, gamma, physics-based T_gyro.
-    Used for dragt work or where gyroradius is a significant fraction of L_shell."""
+    Used for dragt work or where gyroradius is a significant fraction of x_initial."""
     E_kinetic = KE_eV * abs(q_e)
     E_rest    = mass_si * (spdlight ** 2)
     gamma     = 1.0 + (E_kinetic / E_rest)
@@ -100,7 +100,7 @@ def load_config(conf_file):
     Load a run YAML, merge with base config, validate keys, and print.
 
     If the run config contains a 'base_config' key, that file is loaded as the
-    base.  Otherwise, defaults.yml (in this directory) is used.
+    base.  Otherwise, base.yml (in this directory) is used.
 
     Parameters
     ----------
@@ -133,7 +133,7 @@ def load_config(conf_file):
         if not os.path.isabs(base_path):
             base_path = os.path.join(os.path.dirname(os.path.abspath(conf_file)), base_path)
     else:
-        base_path = os.path.join(_THIS_DIR, "defaults.yml")
+        base_path = os.path.join(_THIS_DIR, "base.yml")
 
     with open(base_path, "r") as f:
         base_cfg = yaml.safe_load(f)
@@ -227,7 +227,7 @@ def compute_derived(cfg, npfloat=np.float64):
     # --- Physics seeds ---
     pitch_deg   = npfloat(cfg["pitch_deg"])
     phi_deg     = npfloat(cfg["phi_deg"])
-    x_initial   = npfloat(cfg["L_shell"])
+    x_initial   = npfloat(cfg["x_initial"])
     KE_particle = npfloat(cfg["energy_eV"])
     y_initial   = npfloat(cfg.get("y_initial", 0.0))
     z_initial   = npfloat(cfg.get("z_initial", 0.0))
@@ -236,6 +236,8 @@ def compute_derived(cfg, npfloat=np.float64):
     if cfg.get("use_gyroradius_L_correction", False):
         L_eff, gamma, T_gyro = _compute_relativistic_L_eff(
             KE_particle, mass_si, pitch_deg, phi_deg, x_initial)
+        cfg.setdefault("_config_log", []).append(
+            f"  gyroradius L correction: L_eff {L_eff:.6f} R_E used for T_gyro (launch unchanged at {float(x_initial):.6f})")
     else:
         T_gyro = 2.0 * np.pi * (x_initial ** 3)
 

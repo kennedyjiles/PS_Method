@@ -435,7 +435,7 @@ def load_params(run):
         # Physics
         p["pitch_deg"]   = npfloat(_cfg["pitch_deg"])
         p["phi_deg"]     = npfloat(_cfg.get("phi_deg", 0.0))
-        p["x_initial"]   = npfloat(_cfg["L_shell"])
+        p["x_initial"]   = npfloat(_cfg["x_initial"])
         p["KE_particle"] = npfloat(_cfg["energy_eV"])
         p["mass_si"]     = m_p
 

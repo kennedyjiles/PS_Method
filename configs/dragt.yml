@@ -6,7 +6,7 @@ particle: proton
 energy_eV: 210.5306105318196e6
 pitch_deg: 67.61877044327187
 phi_deg: -90.0
-L_shell: 3.34483896
+x_initial: 3.34483896
 gyroperiods: 1.0e5
 use_gyroradius_L_correction: true
 
