@@ -11,7 +11,7 @@ import matplotlib as mpl
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from ps_method.constB_physics import PS_constantB_adaptive, analytical_constantB, lorentz_force_constB
 from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig
-from ps_method.writers import get_run_params_constB as get_run_params, h5_path_for, save_results_h5_constB as save_results_h5, load_results_h5_constB as load_results_h5
+from ps_method.writers import get_run_params_constB as get_run_params, h5_path_for, save_results_h5_constB as save_results_h5, load_results_h5_constB as load_results_h5, write_summary_txt_constB
 
 run = "demo"   # options: "paper" or "demo"
 
@@ -282,29 +282,31 @@ if USE_FULL_PLOT:
 # ================================================================
 time_factor = 1.0 / (2.0 * np.pi)  # to convert to gyroperiods if desired
 
-v_ps = solution_ps[3:6]  
+v_ps = solution_ps[3:6]
 E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
 rel_drift_ps = (E_ps - E_ps[0]) / E_ps[0]
 
 final_ps = rel_drift_ps[-1]
 
+rel_drift_rk4 = None
+rel_drift_rk45 = None
+
+if USE_RK45:
+    v_rk45 = solution_rk45.y[3:6]
+    E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
+    rel_drift_rk45 = (E_rk45 - E_rk45[0]) / E_rk45[0]
+    ratio_rk45_ps = rel_drift_rk45[-1]/final_ps
+    order_mag_rk45 = int(np.floor(np.log10(abs(ratio_rk45_ps))))
+
+if USE_RK4:
+    v_rk4 = solution_rk4[3:6]
+    E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
+    rel_drift_rk4 = (E_rk4 - E_rk4[0]) / E_rk4[0]
+    ratio_rk4_ps = rel_drift_rk4[-1]/final_ps
+    order_mag_rk4 = int(np.floor(np.log10(abs(ratio_rk4_ps))))
+
 
 if USE_FULL_PLOT:
-    if USE_RK45:
-        v_rk45 = solution_rk45.y[3:6]  
-        E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-        rel_drift_rk45 = (E_rk45 - E_rk45[0]) / E_rk45[0]
-        ratio_rk45_ps = rel_drift_rk45[-1]/final_ps
-        order_mag_rk45 = int(np.floor(np.log10(abs(ratio_rk45_ps))))
-
-    if USE_RK4:
-        v_rk4 = solution_rk4[3:6]      
-        E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
-        rel_drift_rk4 = (E_rk4 - E_rk4[0]) / E_rk4[0]
-        ratio_rk4_ps = rel_drift_rk4[-1]/final_ps
-        order_mag_rk4 = int(np.floor(np.log10(abs(ratio_rk4_ps))))
-
-
     # === Plot ===
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -766,37 +768,26 @@ if USE_ANALYTICAL:
 
 output_filename = f"{output_folder}/{stem}_ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_SimSummary.txt"
 
-with open(output_filename, "w") as f:
-    f.write("=== Simulation Summary ===\n")
-    f.write(f"Initial Conditions:\n")
-    f.write(f"  Particle      = {particle_type}\n")
-    f.write(f"  Energy        = {KE_particle} eV\n")
-    f.write(f"  mass          = {mass} kg\n")
-    f.write(f"  pitch_deg     = {pitch_deg}\n")
-    f.write(f"  phi_deg       = {phi_deg}\n")
-    f.write(f"  tau_time      = {tau_time}\n")
-    f.write(f"  v_tau         = {v_tau}\n")
-    f.write(f"  x_initial     = {x_initial} m\n")
-    f.write(f"  y_initial     = {y_initial} m\n")
-    f.write(f"  z_initial     = {z_initial} m\n")
-    f.write(f"  vx_initial    = {vx_initial} m/s\n")
-    f.write(f"  vy_initial    = {vy_initial} m/s\n")
-    f.write(f"  vz_initial    = {vz_initial} m/s\n\n")
-    f.write(f"  Bfield        = {Bfield} T\n")
-    f.write(f"  float type    = {npfloat.__name__}\n\n")
-
-    f.write(f"Timing Summary:\n")
-    f.write(f"  Run Time PS   = {timing['ps']:.2f} s\n")
-    if USE_RK4:
-        f.write(f"  RK4      = {timing['rk4']:.2f}s\n")
-    if USE_RK45:
-        f.write(f"  RK45     = {timing['rk45']:.2f} s\n")
-    if USE_ANALYTICAL:
-        f.write(f"  Analytical     = {end_time_analytical - start_time_analytical:.6f} s\n")    
-    f.write(f"  norm_time     = {norm_time}\n")
-    f.write(f"  Phsyical time = {physical_time} s\n")
-    f.write(f"  rk4_step      = {rk4_step}\n")
-    f.write(f"  ps_step       = {ps_step}\n")
-    f.write(f"  PS Orders     = max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
+write_summary_txt_constB(
+    output_filename,
+    stem=stem, WRITE_DATA=WRITE_DATA, READ_DATA=READ_DATA,
+    particle_type=particle_type, KE_particle=KE_particle, mass=mass,
+    pitch_deg=pitch_deg, phi_deg=phi_deg,
+    tau_time=tau_time, v_tau=v_tau, gyro_radius_si=gyro_radius_si,
+    x_initial=x_initial, y_initial=y_initial, z_initial=z_initial,
+    vx_initial=vx_initial, vy_initial=vy_initial, vz_initial=vz_initial,
+    Bfield=Bfield, B_0=B_0,
+    npfloat_name=npfloat.__name__,
+    norm_time=norm_time, physical_time=physical_time, gyroperiods=gyroperiods,
+    ps_step=ps_step, rk4_step=rk4_step,
+    steps_ps=steps_ps, steps_rk4=steps_rk4 if USE_RK4 else None,
+    orders_used=orders_used,
+    USE_RK4=USE_RK4, USE_RK45=USE_RK45, USE_ANALYTICAL=USE_ANALYTICAL,
+    timing=timing,
+    analytical_time=(end_time_analytical - start_time_analytical) if USE_ANALYTICAL else None,
+    rel_drift_ps=rel_drift_ps,
+    rel_drift_rk4=rel_drift_rk4,
+    rel_drift_rk45=rel_drift_rk45,
+)
 
 print(f"\nRun Complete → {output_folder}/{stem}")

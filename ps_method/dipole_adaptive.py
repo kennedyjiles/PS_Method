@@ -10,10 +10,9 @@ import numpy as np
 import h5py
 import time
 import warnings
-from ps_method.dipole_physics import *          # everything passes through
+from ps_method.dipole_physics import *          
 from ps_method.universal import npfloat
 
-# ---- constants (match original) ----
 _one   = npfloat(1.0)
 _two   = npfloat(2.0)
 _three = npfloat(3.0)

@@ -14,10 +14,17 @@ Field-specific run-param builders:
     get_run_params_constB
     get_run_params_hyper
 
+Shared helpers:
+    summarize_error, summarize, write_dict
+
 Dipole-only extras:
-    expand_h5_to_full, load_legacy_file, write_dict,
-    summarize_error, summarize, build_figure_filename, build_run_stem
+    expand_h5_to_full, load_legacy_file,
+    build_figure_filename, build_run_stem
     write_summary_txt, write_master_csv
+
+Field-specific summaries:
+    write_summary_txt_constB
+    write_summary_txt_hyper
 """
 
 import os
@@ -826,3 +833,170 @@ def write_master_csv(
         df_out = df_new
 
     df_out.to_csv(csv_path, index=False)
+
+
+# =====================================================================
+# ============  ConstB summary  =======================================
+# =====================================================================
+
+def write_summary_txt_constB(
+    output_filename, *,
+    # Run identity
+    stem=None, WRITE_DATA=False, READ_DATA=False,
+    # Particle / field
+    particle_type, KE_particle, mass, pitch_deg, phi_deg,
+    tau_time, v_tau, gyro_radius_si,
+    x_initial, y_initial, z_initial,
+    vx_initial, vy_initial, vz_initial,
+    Bfield, B_0,
+    npfloat_name="float64",
+    # Time / stepping
+    norm_time, physical_time, gyroperiods,
+    ps_step, rk4_step, steps_ps, steps_rk4=None,
+    orders_used=None,
+    # Solver flags
+    USE_RK4=False, USE_RK45=False, USE_ANALYTICAL=False,
+    # Timing dict
+    timing=None,
+    analytical_time=None,
+    # Energy drift arrays (already computed, full length)
+    rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None,
+):
+    """Write a simulation summary text file for a constant-B run."""
+    finalnum = max(1, int(steps_ps * 0.01))
+
+    with open(output_filename, "w") as f:
+        if WRITE_DATA or READ_DATA:
+            f.write(f"Run Data: {stem}.h5\n\n")
+
+        f.write("=== Simulation Summary ===\n")
+        f.write("Initial Conditions:\n")
+        f.write(f"  Particle      = {particle_type}\n")
+        f.write(f"  Energy        = {KE_particle} eV\n")
+        f.write(f"  mass          = {mass} kg\n")
+        f.write(f"  pitch_deg     = {pitch_deg}\n")
+        f.write(f"  phi_deg       = {phi_deg}\n")
+        f.write(f"  tau_time      = {tau_time}\n")
+        f.write(f"  v_tau         = {v_tau}\n")
+        f.write(f"  gyroradius    = {gyro_radius_si}\n")
+        f.write(f"  x_initial     = {x_initial}\n")
+        f.write(f"  y_initial     = {y_initial}\n")
+        f.write(f"  z_initial     = {z_initial}\n")
+        f.write(f"  vx_initial    = {vx_initial}\n")
+        f.write(f"  vy_initial    = {vy_initial}\n")
+        f.write(f"  vz_initial    = {vz_initial}\n")
+        f.write(f"  Bfield        = {Bfield}\n")
+        f.write(f"  B_0           = {B_0} T\n")
+        f.write(f"  float type    = {npfloat_name}\n\n")
+
+        f.write("=== Timing Summary ===\n")
+        if timing:
+            f.write(f"  Run Time PS   = {timing['ps']:.2f} s\n")
+            if USE_RK4 and "rk4" in timing:
+                f.write(f"  Run Time RK4  = {timing['rk4']:.2f} s\n")
+            if USE_RK45 and "rk45" in timing:
+                f.write(f"  Run Time RK45 = {timing['rk45']:.2f} s\n")
+        if USE_ANALYTICAL and analytical_time is not None:
+            f.write(f"  Run Time Ana  = {analytical_time:.6f} s\n")
+        f.write(f"  norm time     = {norm_time}\n")
+        f.write(f"  physical time = {physical_time:.2e} s\n")
+        f.write(f"  gyroperiods   = {gyroperiods}\n")
+        f.write(f"  ps step size  = {ps_step}\n")
+        f.write(f"  ps steps      = {steps_ps}\n")
+        if USE_RK4:
+            f.write(f"  rk4 step size = {rk4_step}\n")
+            if steps_rk4 is not None:
+                f.write(f"  rk4 steps     = {steps_rk4}\n")
+        if orders_used is not None:
+            f.write(f"  PS Orders     = max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
+        f.write("\n")
+
+        f.write(f"=== |delta E|/E0 (last {finalnum} steps) ===\n")
+        if USE_RK45 and rel_drift_rk45 is not None:
+            summarize_error("RK45", rel_drift_rk45[-finalnum:], f)
+        if USE_RK4 and rel_drift_rk4 is not None:
+            summarize_error("RK4", rel_drift_rk4[-finalnum:], f)
+        if rel_drift_ps is not None:
+            summarize_error("PS", rel_drift_ps[-finalnum:], f)
+
+
+# =====================================================================
+# ============  HyperB summary  =======================================
+# =====================================================================
+
+def write_summary_txt_hyper(
+    output_filename, *,
+    # Run identity
+    stem=None, WRITE_DATA=False, READ_DATA=False,
+    # Particle / field
+    particle_type, KE_particle, mass_si, pitch_deg, phi_deg,
+    tau_time, v_tau, gyro_radius_si,
+    x_initial_si, y_initial_si, z_initial_si,
+    vx_initial, vy_initial, vz_initial,
+    delta, B_0, gamma,
+    npfloat_name="float64",
+    # Time / stepping
+    norm_time, physical_time, gyroperiods,
+    ps_step, rk4_step, steps_ps, steps_rk4=None,
+    orders_used=None,
+    # Solver flags
+    USE_RK4=False, USE_RK45=False,
+    # Timing dict
+    timing=None,
+    # Energy drift arrays (already computed, full length)
+    rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None,
+):
+    """Write a simulation summary text file for a hyperbolic-B run."""
+    finalnum = max(1, int(steps_ps * 0.01))
+
+    with open(output_filename, "w") as f:
+        if WRITE_DATA or READ_DATA:
+            f.write(f"Run Data: {stem}.h5\n\n")
+
+        f.write("=== Simulation Summary ===\n")
+        f.write("Initial Conditions:\n")
+        f.write(f"  particle      = {particle_type}\n")
+        f.write(f"  mass          = {mass_si} kg\n")
+        f.write(f"  Energy        = {KE_particle} eV\n")
+        f.write(f"  pitch_deg     = {pitch_deg}\n")
+        f.write(f"  phi_deg       = {phi_deg}\n")
+        f.write(f"  tau           = {tau_time} s\n")
+        f.write(f"  v_tau         = {v_tau}\n")
+        f.write(f"  gyroradius    = {gyro_radius_si} km\n")
+        f.write(f"  x_initial     = {x_initial_si} km\n")
+        f.write(f"  y_initial     = {y_initial_si} km\n")
+        f.write(f"  z_initial     = {z_initial_si} km\n")
+        f.write(f"  vx_initial    = {vx_initial}\n")
+        f.write(f"  vy_initial    = {vy_initial}\n")
+        f.write(f"  vz_initial    = {vz_initial}\n")
+        f.write(f"  delta         = {delta} km\n")
+        f.write(f"  gamma         = {gamma}\n")
+        f.write(f"  B_0           = {B_0} T\n")
+        f.write(f"  float type    = {npfloat_name}\n\n")
+
+        f.write("=== Timing Summary ===\n")
+        if timing:
+            if USE_RK45 and "rk45" in timing:
+                f.write(f"  Run Time RK45 = {timing['rk45']:.2f} s\n")
+            if USE_RK4 and "rk4" in timing:
+                f.write(f"  Run Time RK4  = {timing['rk4']:.2f} s\n")
+            f.write(f"  Run Time PS   = {timing['ps']:.2f} s\n")
+        if orders_used is not None:
+            f.write(f"  PS Orders     = max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
+        f.write(f"  norm time     = {norm_time}\n")
+        f.write(f"  physical time = {physical_time:.2e} s\n")
+        f.write(f"  gyroperiods   = {gyroperiods}\n")
+        if USE_RK4:
+            f.write(f"  rk4 step size = {rk4_step}\n")
+            if steps_rk4 is not None:
+                f.write(f"  rk4 steps     = {steps_rk4}\n")
+        f.write(f"  ps step size  = {ps_step}\n")
+        f.write(f"  ps steps      = {steps_ps}\n\n")
+
+        f.write(f"=== |delta E|/E0 (last {finalnum} steps) ===\n")
+        if USE_RK45 and rel_drift_rk45 is not None:
+            summarize_error("RK45", rel_drift_rk45[-finalnum:], f)
+        if USE_RK4 and rel_drift_rk4 is not None:
+            summarize_error("RK4", rel_drift_rk4[-finalnum:], f)
+        if rel_drift_ps is not None:
+            summarize_error("PS", rel_drift_ps[-finalnum:], f)

@@ -13,7 +13,7 @@ import matplotlib as mpl
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from ps_method.hyper_physics import PS_hyperB, lorentz_force_hyperB
 from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig, slice_solution
-from ps_method.writers import get_run_params_hyper as get_run_params, h5_path_for, save_results_h5_hyper as save_results_h5, load_results_h5_hyper as load_results_h5
+from ps_method.writers import get_run_params_hyper as get_run_params, h5_path_for, save_results_h5_hyper as save_results_h5, load_results_h5_hyper as load_results_h5, write_summary_txt_hyper
 
 run = "demo"   # options: "demo", "paper1", "paper2", "paper3", or "paper4". Demo mode is a quick test run. Paper modes can take upwards of half or more
 
@@ -267,26 +267,29 @@ if USE_FULL_PLOT:
 # =====================================================
 time_factor = 1.0 / (2.0 * np.pi)  # to convert to gyroperiods if desired
 
-v_ps = solution_ps[3:6]        
+v_ps = solution_ps[3:6]
 E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
 rel_drift_ps = np.abs(E_ps - E_ps[0]) / E_ps[0]
 final_ps = rel_drift_ps[-1]
 
+rel_drift_rk4 = None
+rel_drift_rk45 = None
+
+if USE_RK4:
+    v_rk4 = solution_rk4[3:6]
+    E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
+    rel_drift_rk4 = np.abs(E_rk4 - E_rk4[0]) / E_rk4[0]
+    ratio_rk4_ps = rel_drift_rk4[-1]/final_ps
+    order_mag_rk4 = int(np.floor(np.log10(abs(ratio_rk4_ps))))
+
+if USE_RK45:
+    v_rk45 = solution_rk45.y[3:6]
+    E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
+    rel_drift_rk45 = np.abs(E_rk45 - E_rk45[0]) / E_rk45[0]
+    ratio_rk45_ps = rel_drift_rk45[-1]/final_ps
+    order_mag_rk45 = int(np.floor(np.log10(abs(ratio_rk45_ps))))
+
 if USE_FULL_PLOT:
-    if USE_RK4:
-        v_rk4 = solution_rk4[3:6]  
-        E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
-        rel_drift_rk4 = np.abs(E_rk4 - E_rk4[0]) / E_rk4[0]
-        ratio_rk4_ps = rel_drift_rk4[-1]/final_ps
-        order_mag_rk4 = int(np.floor(np.log10(abs(ratio_rk4_ps))))
-
-    if USE_RK45:
-        v_rk45 = solution_rk45.y[3:6]
-        E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-        rel_drift_rk45 = np.abs(E_rk45 - E_rk45[0]) / E_rk45[0]
-        ratio_rk45_ps = rel_drift_rk45[-1]/final_ps
-        order_mag_rk45 = int(np.floor(np.log10(abs(ratio_rk45_ps))))
-
     # === Plot =====
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -626,60 +629,28 @@ if not USE_FLOAT128:
 # === Write Summary Output to File ===
 # ====================================
 
-finalnum = max(1, int(steps_ps * 0.01)) # Number of steps to average over, last 1%
-
-def summarize_error(label, err, f):
-    mean_val = np.mean(err[-finalnum:])
-    max_val  = np.max(np.abs(err[-finalnum:]))
-    rms_val  = np.sqrt(np.mean(err[-finalnum:]**2))
-    f.write(f"  {label:<8}: mean = {mean_val:.2e}, max = {max_val:.2e}, rms = {rms_val:.2e}\n")
-
 output_filename = f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_simulation_summary.txt"
 
-with open(output_filename, "w") as f:
-    if WRITE_DATA or READ_DATA: f.write(f"Run Data: {stem}.hd5\n\n")
-    f.write("=== Simulation Summary ===\n")
-    f.write(f"Initial Conditions:\n")
-    f.write(f"  particle      = {particle_type}\n")
-    f.write(f"  mass          = {mass_si} kg\n")
-    f.write(f"  Energy        = {KE_particle} eV\n")
-    f.write(f"  pitch_deg     = {pitch_deg}\n")
-    f.write(f"  phi_deg       = {phi_deg}\n")
-    f.write(f"  tau           = {tau_time} s\n")
-    f.write(f"  v_tau         = {v_tau}\n")
-    f.write(f"  x_initial     = {x_initial_si} km\n")
-    f.write(f"  y_initial     = {y_initial_si} km\n")
-    f.write(f"  z_initial     = {z_initial_si} km\n")
-    f.write(f"  vx_initial    = {vx_initial}\n")
-    f.write(f"  vy_initial    = {vy_initial}\n")
-    f.write(f"  vz_initial    = {vz_initial}\n")
-    f.write(f"  delta         = {delta} km\n")
-    f.write(f"  Initial Bfield= {B_0} T\n")
-    f.write(f"  float type    = {npfloat.__name__}\n\n")
-
-    
-    f.write("=== Timing Summary ===\n")
-    if USE_RK45:
-        f.write(f"  Run Time RK45 = {timing['rk45']:.2f} s\n")    
-    if USE_RK4:
-        f.write(f"  Run Time RK4  = {timing['rk4']:.2f} s\n")
-    f.write(f"  Run Time PS   = {timing['ps']:.2f} s\n")
-    f.write(f"  PS Orders     = max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
-    f.write(f"  norm time     = {norm_time}\n")
-    f.write(f"  physical time = {physical_time:.2e} s\n")
-    if USE_RK4:
-        f.write(f"  rk4 step size = {rk4_step}\n")
-    f.write(f"  ps step size  = {ps_step}\n")
-    if USE_RK4:
-        f.write(f"  rk4 steps     = {steps_rk4}\n")
-    f.write(f"  ps steps      = {steps_ps}\n\n")
-
-    f.write(f"=== |delta E|/E0 (relative, last {finalnum} steps)===\n")
-    if USE_RK45:
-        summarize_error("RK45", rel_drift_rk45, f)
-    if USE_RK4:
-        summarize_error("RK4",  rel_drift_rk4, f)
-    summarize_error("PS",   rel_drift_ps,  f)
+write_summary_txt_hyper(
+    output_filename,
+    stem=stem, WRITE_DATA=WRITE_DATA, READ_DATA=READ_DATA,
+    particle_type=particle_type, KE_particle=KE_particle, mass_si=mass_si,
+    pitch_deg=pitch_deg, phi_deg=phi_deg,
+    tau_time=tau_time, v_tau=v_tau, gyro_radius_si=gyro_radius_si,
+    x_initial_si=x_initial_si, y_initial_si=y_initial_si, z_initial_si=z_initial_si,
+    vx_initial=vx_initial, vy_initial=vy_initial, vz_initial=vz_initial,
+    delta=delta, B_0=B_0, gamma=gamma,
+    npfloat_name=npfloat.__name__,
+    norm_time=norm_time, physical_time=physical_time, gyroperiods=gyroperiods,
+    ps_step=ps_step, rk4_step=rk4_step,
+    steps_ps=steps_ps, steps_rk4=steps_rk4 if USE_RK4 else None,
+    orders_used=orders_used,
+    USE_RK4=USE_RK4, USE_RK45=USE_RK45,
+    timing=timing,
+    rel_drift_ps=rel_drift_ps,
+    rel_drift_rk4=rel_drift_rk4,
+    rel_drift_rk45=rel_drift_rk45,
+)
 
 print(f"\nRun Complete → {output_folder}/{stem}")
 

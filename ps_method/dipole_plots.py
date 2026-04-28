@@ -494,7 +494,7 @@ def plot_mu_deviation(
         lnrkg, = ax.semilogy(t_rkg, mudrift_rkg, label="RKG", alpha=0.3, color="#CC0000", linestyle="-.")
     if ps_data is not None:
         t_ps, mudrift_ps = ps_data
-        lnps, = ax.semilogy(t_ps, mudrift_ps, label=f"PS{ps_order_label}", linewidth=3.0, color="#009E73", linestyle="-")
+        lnps, = ax.semilogy(t_ps, mudrift_ps, label=f"PS{ps_order_label}", linewidth=0.3, color="#009E73", linestyle="-")
 
     # ---- axis formatting ----
     ax.margins(x=0.01)
