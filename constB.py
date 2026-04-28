@@ -1,58 +1,131 @@
+"""
+constB.py — Driver for charged particle trajectory simulation in a
+            uniform magnetic field using power series, RK4, RK45, and
+            analytical solutions.
+
+Usage:
+    python constB.py                          # default config (demo)
+    python constB.py demo                     # named config → configs/constB/demo.yml
+    python constB.py paper                    # named config → configs/constB/paper.yml
+    python constB.py configs/constB/my.yml    # direct path to a custom YAML config
+"""
+
 import numpy as np
 import builtins
-import test_particles.constB_testparticles as tp
-builtins.npfloat = np.float128 if tp.USE_FLOAT128 else np.float64
-from test_particles.constB_testparticles import *
+import os
 import time
 import sys
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
+
+from configs.config_loader import load_config, compute_derived_constB
+from ps_method.constants import q_e, evtoj
 from ps_method.constB_physics import PS_constantB_adaptive, analytical_constantB, lorentz_force_constB
 from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig
 from ps_method.writers import get_run_params_constB as get_run_params, h5_path_for, save_results_h5_constB as save_results_h5, load_results_h5_constB as load_results_h5, write_summary_txt_constB
 
-run = "demo"   # options: "paper" or "demo"
-
-# Allow command-line override
+# === Load YAML Config ===
+run = "demo"
 if len(sys.argv) > 1:
     run = sys.argv[1]
     print(f"Run mode set from command line: {run}\n")
 else:
     print(f"Using default run mode: {run}\n")
 
-globals().update(load_params(run))
+_configs_dir = os.path.join(os.path.dirname(__file__), "configs", "constB")
+
+if run.endswith((".yml", ".yaml")) and os.path.isfile(run):
+    _yaml_path = run
+elif os.path.isfile(os.path.join(_configs_dir, f"{run}.yml")):
+    _yaml_path = os.path.join(_configs_dir, f"{run}.yml")
+else:
+    raise FileNotFoundError(
+        f"No YAML config found for '{run}'. "
+        f"Expected configs/constB/{run}.yml or a direct path to a .yml file.\n"
+        f"Available configs: {[f.replace('.yml','') for f in os.listdir(_configs_dir) if f.endswith('.yml') and f != 'base.yml']}"
+    )
+
+print(f"Loading YAML config: {_yaml_path}\n")
+cfg = load_config(_yaml_path)
+
+# --- Resolve float type BEFORE compute_derived (needs to be set for builtins) ---
+USE_FLOAT128 = cfg.get("use_float128", False)
+if USE_FLOAT128:
+    npfloat = np.float128
+else:
+    npfloat = np.float64
+builtins.npfloat = npfloat
+
+p = compute_derived_constB(cfg, npfloat=npfloat)
+
+# === Unpack Config ===
+READ_DATA       = p["READ_DATA"]
+WRITE_DATA      = p["WRITE_DATA"]
+USE_RK45        = p["USE_RK45"]
+USE_RK4         = p["USE_RK4"]
+USE_ANALYTICAL  = p["USE_ANALYTICAL"]
+USE_PLOT_TITLES = p["USE_PLOT_TITLES"]
+USE_FULL_PLOT   = p["USE_FULL_PLOT"]
+gyro_plot_slice = p["gyro_plot_slice"]
+
+USE_EXTERNAL_H5  = p["USE_EXTERNAL_H5"]
+USE_EXTERNAL_H5b = p["USE_EXTERNAL_H5b"]
+external_h5      = p["external_h5"]
+external_h5b     = p["external_h5b"]
+PS_order_ext     = p["PS_order_ext"]
+PS_order_extb    = p["PS_order_extb"]
+
+output_folder = p["output_folder"]
+run_storage   = p["run_storage"]
+
+pitch_deg   = p["pitch_deg"]
+phi_deg     = p["phi_deg"]
+KE_particle = p["KE_particle"]
+mass        = p["mass"]
+Bfield_si   = p["Bfield_si"]
+x_initial   = p["x_initial"]
+y_initial   = p["y_initial"]
+z_initial   = p["z_initial"]
+
+gyroperiods = p["gyroperiods"]
+norm_time   = p["norm_time"]
+ps_step     = p["ps_step"]
+rk4_step    = p["rk4_step"]
+
+PS_order    = p["PS_order"]
+tol         = p["tol"]
+rtol_rk45   = p["rtol_rk45"]
+atol_rk45   = p["atol_rk45"]
 
 # === Misc Odds and Ends ===
-plt_config(scale=1) 
-plt.ioff()              # Turns off interactive mode for figures
+os.makedirs(output_folder, exist_ok=True)
+plt_config(scale=1)
+plt.ioff()
 
-# for file naming
-if mass == m_e:
-    particle_type = "Electron"
-elif mass == m_p:
-    particle_type = "Proton"
+if USE_FLOAT128:
+    mpl.rcParams['agg.path.chunksize'] = 100000
 else:
-    particle_type = "Particle"
+    mpl.rcParams['agg.path.chunksize'] = 1000
 
-qoverm = npfloat(-1) if mass == m_e else npfloat(1)
+particle_type = p["particle"].capitalize()
+
+qoverm = npfloat(-1) if p["particle"].lower() in ("electron", "e") else npfloat(1)
 
 # === Misc Normalizing  ===
 B_0 = np.linalg.norm(Bfield_si)  # Magnitude of the field
-Bfield = Bfield_si/B_0           # normalized B field
+Bfield = Bfield_si / B_0         # normalized B field
 v_si = npfloat(np.sqrt(npfloat(2 * KE_particle * evtoj / mass)))
 tau_time = mass / (abs(q_e) * B_0)
 v_tau = v_si * tau_time
 physical_time = norm_time * tau_time
 
-
-
 # === Velocity Config ===
 pitch_rad = np.radians(pitch_deg)
 phi_rad = np.radians(phi_deg)
-v_par = v_tau * np.cos(pitch_rad)      
-v_perp = v_tau * np.sin(pitch_rad)     
+v_par = v_tau * np.cos(pitch_rad)
+v_perp = v_tau * np.sin(pitch_rad)
 vx_initial = v_perp * np.cos(phi_rad)
 vy_initial = v_perp * np.sin(phi_rad)
 vz_initial = v_par
@@ -60,7 +133,7 @@ if abs(vx_initial) < tol: vx_initial = npfloat(0.0)
 if abs(vy_initial) < tol: vy_initial = npfloat(0.0)
 if abs(vz_initial) < tol: vz_initial = npfloat(0.0)
 
-gyro_radius_si = abs(v_si * np.sin(pitch_rad) * mass/ (q_e * B_0))
+gyro_radius_si = abs(v_si * np.sin(pitch_rad) * mass / (q_e * B_0))
 
 
 initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)  
@@ -180,11 +253,7 @@ else:
             "timing": {},
             "physical_time": float(physical_time),
             "norm_time": float(norm_time),
-            "particle_label": (
-                f"{KE_particle:.1e} eV electron" if mass == m_e else
-                f"{KE_particle:.1e} eV proton" if mass == m_p else
-                "manual"
-            ),
+            "particle_label": f"{KE_particle:.1e} eV {particle_type.lower()}",
         }
     }
 
@@ -455,9 +524,6 @@ if not USE_FLOAT128:
         ext_ps = external["ps"]
         t_ext  = ext_ps["t"]          
         y_ext  = ext_ps["y"]          
-        PS_order_ext = external["params"]["PS_order"]
-        PS_order_ext = "19"
-
         vxe = y_ext[3].astype(np.float128)
         vye = y_ext[4].astype(np.float128)
         vze = y_ext[5].astype(np.float128)
@@ -470,8 +536,6 @@ if not USE_FLOAT128:
         ext_psb = externalb["ps"]
         t_extb  = ext_psb["t"]          
         y_extb  = ext_psb["y"]          
-        PS_order_extb = externalb["params"]["PS_order"]
-
         vxeb = y_extb[3].astype(np.float128)
         vyeb = y_extb[4].astype(np.float128)
         vzeb = y_extb[5].astype(np.float128)
@@ -630,8 +694,6 @@ if not USE_FLOAT128:
 # =================================================================
 
 if USE_ANALYTICAL:
-    eps = 1e-15
-
     x_ana = solution_analytical[0]
     y_ana = solution_analytical[1]
 
@@ -663,7 +725,6 @@ if USE_ANALYTICAL:
         ext_ps = external["ps"]
         t_ext  = ext_ps["t"]
         y_ext  = ext_ps["y"]
-        PS_order_ext = "19"
         x_ps_ext = y_ext[0]
         y_ps_ext = y_ext[1]
         rel_err_ps_ext = np.sqrt((x_ps_ext - x_ana)**2 + (y_ps_ext - y_ana)**2) / gyro_radius_si

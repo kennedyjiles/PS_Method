@@ -114,4 +114,4 @@ from ps_method.writers import write_summary_txt, write_master_csv
 
 from ps_method.logger_util import setup_logger
 
-from configs.config_loader import load_config, compute_derived
+from configs.config_loader import load_config, compute_derived_dipole as compute_derived

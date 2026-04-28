@@ -1,26 +1,32 @@
 """
-YAML config loader for dipoleB simulations.
+YAML config loader for all field types (dipole, constB, hyperB).
 
 Two-stage design (following advisor's config pattern):
-  1. load_config()      — loads YAML, merges with base, validates, prints.
-                           Returns the raw merged dict (no physics computation).
-  2. compute_derived()  — takes the raw config dict, computes all derived
-                           quantities (T_gyro, step sizes, norm_time, mass, …).
-                           Returns a flat params dict ready for dipoleB.py.
+  1. load_config()               — loads YAML, merges with base, validates, prints.
+                                   Returns the raw merged dict (no physics computation).
+                                   Base config is auto-discovered from the run YAML's directory.
+  2. compute_derived_<field>()   — field-specific derived quantities.
+                                   Returns a flat params dict ready for the driver script.
 
-Usage in dipoleB.py:
-    cfg    = load_config("configs/demo.yml")
-    params = compute_derived(cfg, npfloat=npfloat)
+Usage:
+    cfg    = load_config("configs/dipole/demo.yml")
+    params = compute_derived_dipole(cfg, npfloat=npfloat)
+
+    cfg    = load_config("configs/constB/demo.yml")
+    params = compute_derived_constB(cfg, npfloat=npfloat)
+
+    cfg    = load_config("configs/hyper/demo.yml")
+    params = compute_derived_hyper(cfg, npfloat=npfloat)
 """
 
 import os
 import copy
 import yaml
 import numpy as np
-from ps_method.constants import q_e, m_e, m_p, spdlight, RE, B_0
+from ps_method.constants import q_e, m_e, m_p, spdlight, RE, B_0 as B_0_dipole
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Shared helpers
 # ---------------------------------------------------------------------------
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -57,18 +63,42 @@ def _resolve_mass(particle_name):
         raise ValueError(f"Unknown particle type: {particle_name!r}. Use 'proton' or 'electron'.")
 
 
-def _compute_steps(T_gyro, N_ps=65, N_rk4=65, N_rkg=65, rounding=True):
-    """Compute integrator step sizes from T_gyro and steps-per-gyroperiod."""
-    if rounding:
-        ps_step  = round(T_gyro / N_ps,  1)
-        rk4_step = round(T_gyro / N_rk4, 1)
-        rkg_step = round(T_gyro / N_rkg, 1)
-    else:
-        ps_step  = T_gyro / N_ps
-        rk4_step = T_gyro / N_rk4
-        rkg_step = T_gyro / N_rkg
-    return ps_step, rk4_step, rkg_step, N_ps, N_rk4, N_rkg
+def _compute_step_sizes(T_gyro, steps_per_gyro, round_decimals=1):
+    """Compute step sizes from T_gyro and a {solver: N} dict.
 
+    Returns a dict of {solver: step_size}.
+    """
+    steps = {}
+    for solver, N in steps_per_gyro.items():
+        raw = T_gyro / N
+        steps[solver] = round(raw, round_decimals)
+    return steps
+
+
+def _apply_step_overrides(steps, overrides, npfloat=np.float64):
+    """Apply explicit step_overrides on top of computed steps."""
+    if overrides:
+        for solver, val in overrides.items():
+            if val is not None:
+                steps[solver] = npfloat(val)
+    return steps
+
+
+def _resolve_output_paths(config_name, field_prefix=""):
+    """Auto-derive output_folder and run_storage from config name."""
+    if field_prefix:
+        output_folder = os.path.join("data", field_prefix, config_name)
+    else:
+        output_folder = os.path.join("data", config_name)
+    run_storage = os.path.join(output_folder, "_rawdata")
+    os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(run_storage, exist_ok=True)
+    return output_folder, run_storage
+
+
+# ---------------------------------------------------------------------------
+# Dipole-specific helper
+# ---------------------------------------------------------------------------
 
 def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial):
     """Relativistic gyro-physics: effective L-shell, gamma, physics-based T_gyro.
@@ -80,7 +110,7 @@ def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial):
     alpha_rad = np.radians(pitch_deg)
     v_perp    = v_total * np.sin(alpha_rad)
 
-    B_at_launch = B_0 / (x_initial ** 3)
+    B_at_launch = B_0_dipole / (x_initial ** 3)
     omega_init  = (abs(q_e) * B_at_launch) / (gamma * mass_si)
     r_g_RE      = (v_perp / omega_init) / RE
 
@@ -92,15 +122,18 @@ def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial):
 
 
 # ---------------------------------------------------------------------------
-# Stage 1: Load, merge, validate, print
+# Stage 1: Load, merge, validate, print  (shared across all field types)
 # ---------------------------------------------------------------------------
 
 def load_config(conf_file):
     """
     Load a run YAML, merge with base config, validate keys, and print.
 
-    If the run config contains a 'base_config' key, that file is loaded as the
-    base.  Otherwise, base.yml (in this directory) is used.
+    Base config discovery:
+      1. If the run YAML contains a 'base_config' key, that path is used.
+      2. Otherwise, base.yml in the SAME directory as the run YAML is used.
+         This makes subdirectory layout (configs/dipole/, configs/constB/, …)
+         work automatically.
 
     Parameters
     ----------
@@ -129,11 +162,12 @@ def load_config(conf_file):
     # --- Load base config ---
     if "base_config" in run_cfg:
         base_path = run_cfg.pop("base_config")  # consumed, not passed through
-        # resolve relative paths against the run config's directory
         if not os.path.isabs(base_path):
             base_path = os.path.join(os.path.dirname(os.path.abspath(conf_file)), base_path)
     else:
-        base_path = os.path.join(_THIS_DIR, "base.yml")
+        # Look for base.yml in the same directory as the run config
+        run_dir = os.path.dirname(os.path.abspath(conf_file))
+        base_path = os.path.join(run_dir, "base.yml")
 
     with open(base_path, "r") as f:
         base_cfg = yaml.safe_load(f)
@@ -148,15 +182,12 @@ def load_config(conf_file):
     base_keys = _collect_keys(base_cfg)
     run_keys  = _collect_keys(run_cfg)
     unknown   = run_keys - base_keys
-    # Filter out keys that are valid overrides (e.g. total_steps, norm_time_override)
-    # These are intentionally absent from defaults because they represent alternate modes
     _known_extras = {
         "total_steps", "norm_time_override", "base_config",
-        "output_folder", "run_storage",  # auto-derived but allowed as overrides
+        "output_folder", "run_storage",
     }
     real_unknown = {k for k in unknown if k.split(".")[0] not in _known_extras}
     if real_unknown:
-        # Warnings still print to screen — you want to see these immediately
         print(f"\n  WARNING: Unknown config keys (possible typos): {sorted(real_unknown)}")
         print(f"  Valid top-level keys: {sorted(k for k in base_keys if '.' not in k)}\n")
         log.append(f"WARNING: Unknown config keys: {sorted(real_unknown)}")
@@ -172,7 +203,7 @@ def load_config(conf_file):
     log.append(yaml.dump(cfg, default_flow_style=False, sort_keys=False).rstrip())
     log.append("")
 
-    # --- Validate critical values ---
+    # --- Validate critical values (shared across field types) ---
     particle = cfg.get("particle", "").strip().lower()
     if particle not in ("proton", "p", "electron", "e"):
         raise ValueError(f"Unknown particle type: {cfg.get('particle')!r}. Use 'proton' or 'electron'.")
@@ -181,24 +212,20 @@ def load_config(conf_file):
     if energy is not None and float(energy) <= 0:
         raise ValueError(f"energy_eV must be positive, got {energy}")
 
-    pitch = cfg.get("pitch_deg")
-    if pitch is not None and not (0 < float(pitch) < 180):
-        raise ValueError(f"pitch_deg must be between 0 and 180 (exclusive), got {pitch}")
-
     # --- Inject metadata for downstream use ---
     cfg["_config_name"] = os.path.splitext(os.path.basename(conf_file))[0]
-    cfg["_config_log"]  = log   # written to file by dipoleB.py once output dirs exist
+    cfg["_config_log"]  = log
 
     return cfg
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: Compute derived quantities
+# Stage 2a: Compute derived — dipole
 # ---------------------------------------------------------------------------
 
-def compute_derived(cfg, npfloat=np.float64):
+def compute_derived_dipole(cfg, npfloat=np.float64):
     """
-    Take a raw merged config dict and compute all derived quantities.
+    Dipole-specific derived quantities.
 
     Parameters
     ----------
@@ -210,19 +237,12 @@ def compute_derived(cfg, npfloat=np.float64):
     Returns
     -------
     dict
-        Flat params dict with both raw config values and derived physics
-        quantities, ready for explicit unpacking in dipoleB.py.
+        Flat params dict ready for dipoleB.py.
     """
 
-    # --- Resolve particle mass ---
     mass_si = _resolve_mass(cfg["particle"])
-
-    # --- Output paths (auto-derived from config name) ---
     config_name = cfg.get("_config_name", "default")
-    output_folder = os.path.join("data", config_name)
-    run_storage   = os.path.join(output_folder, "_rawdata")
-    os.makedirs(output_folder, exist_ok=True)
-    os.makedirs(run_storage, exist_ok=True)
+    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="dipoleB")
 
     # --- Physics seeds ---
     pitch_deg   = npfloat(cfg["pitch_deg"])
@@ -243,22 +263,17 @@ def compute_derived(cfg, npfloat=np.float64):
 
     # --- Step sizes ---
     spg = cfg.get("steps_per_gyro", {})
-    N_ps  = spg.get("ps",  65)
-    N_rk4 = spg.get("rk4", 65)
-    N_rkg = spg.get("rkg", 65)
-    rounding = cfg.get("round_steps", True)
+    round_dec = cfg.get("round_decimals", 1)
+    raw_steps = _compute_step_sizes(T_gyro, {
+        "ps":  spg.get("ps", 65),
+        "rk4": spg.get("rk4", 65),
+        "rkg": spg.get("rkg", 65),
+    }, round_decimals=round_dec)
+    raw_steps = _apply_step_overrides(raw_steps, cfg.get("step_overrides", {}), npfloat)
 
-    ps_step, rk4_step, rkg_step, N_ps, N_rk4, N_rkg = _compute_steps(
-        T_gyro, N_ps=N_ps, N_rk4=N_rk4, N_rkg=N_rkg, rounding=rounding)
-
-    # --- Step overrides (optional — bypass computed values) ---
-    overrides = cfg.get("step_overrides", {})
-    if overrides.get("ps") is not None:
-        ps_step = npfloat(overrides["ps"])
-    if overrides.get("rk4") is not None:
-        rk4_step = npfloat(overrides["rk4"])
-    if overrides.get("rkg") is not None:
-        rkg_step = npfloat(overrides["rkg"])
+    ps_step  = npfloat(raw_steps["ps"])
+    rk4_step = npfloat(raw_steps["rk4"])
+    rkg_step = npfloat(raw_steps["rkg"])
 
     # --- Integration time ---
     if cfg.get("norm_time_override") is not None:
@@ -287,7 +302,6 @@ def compute_derived(cfg, npfloat=np.float64):
     # --- Solvers ---
     solvers = cfg.get("solvers", {})
 
-    # --- Build the params dict ---
     params = {
         # Toggles
         "READ_DATA":       cfg.get("read_data", True),
@@ -333,12 +347,12 @@ def compute_derived(cfg, npfloat=np.float64):
         "norm_time":   norm_time,
 
         # Steps
-        "ps_step":              npfloat(ps_step),
-        "rk4_step":             npfloat(rk4_step),
-        "rkg_step":             npfloat(rkg_step),
-        "N_STEPS_PER_GYRO_ps":  N_ps,
-        "N_STEPS_PER_GYRO_rk4": N_rk4,
-        "N_STEPS_PER_GYRO_rkg": N_rkg,
+        "ps_step":              ps_step,
+        "rk4_step":             rk4_step,
+        "rkg_step":             rkg_step,
+        "N_STEPS_PER_GYRO_ps":  spg.get("ps", 65),
+        "N_STEPS_PER_GYRO_rk4": spg.get("rk4", 65),
+        "N_STEPS_PER_GYRO_rkg": spg.get("rkg", 65),
 
         # Plotting windows
         "window_time": npfloat(cfg.get("window_time", 11.6)),
@@ -364,6 +378,259 @@ def compute_derived(cfg, npfloat=np.float64):
 
         # Bounce/drift detection
         "bounce_drift": cfg.get("bounce_drift", {}),
+    }
+
+    return params
+
+
+# Backward compatibility alias
+compute_derived = compute_derived_dipole
+
+
+# ---------------------------------------------------------------------------
+# Stage 2b: Compute derived — constant B
+# ---------------------------------------------------------------------------
+
+def compute_derived_constB(cfg, npfloat=np.float64):
+    """
+    Constant-B specific derived quantities.
+
+    T_gyro = 2π in normalized units (time is normalized by τ = m/qB).
+
+    Parameters
+    ----------
+    cfg : dict
+        Raw config from load_config().
+    npfloat : dtype
+        Floating-point type (np.float64 or np.float128).
+
+    Returns
+    -------
+    dict
+        Flat params dict ready for constB.py.
+    """
+
+    mass = _resolve_mass(cfg["particle"])
+    config_name = cfg.get("_config_name", "default")
+    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="constB")
+
+    # --- Physics seeds ---
+    pitch_deg   = npfloat(cfg["pitch_deg"])
+    phi_deg     = npfloat(cfg["phi_deg"])
+    KE_particle = npfloat(cfg["energy_eV"])
+    x_initial   = npfloat(cfg.get("x_initial", 0.0))
+    y_initial   = npfloat(cfg.get("y_initial", 0.0))
+    z_initial   = npfloat(cfg.get("z_initial", 0.0))
+    Bfield_si   = np.array(cfg["Bfield_si"], dtype=npfloat)
+
+    # --- T_gyro = 2π in normalized time ---
+    T_gyro = 2.0 * np.pi
+
+    # --- Step sizes ---
+    spg = cfg.get("steps_per_gyro", {})
+    round_dec = cfg.get("round_decimals", 3)
+    raw_steps = _compute_step_sizes(T_gyro, {
+        "ps":  spg.get("ps", 100),
+        "rk4": spg.get("rk4", 100),
+    }, round_decimals=round_dec)
+    raw_steps = _apply_step_overrides(raw_steps, cfg.get("step_overrides", {}), npfloat)
+
+    ps_step  = npfloat(raw_steps["ps"])
+    rk4_step = npfloat(raw_steps["rk4"])
+
+    # --- Integration time ---
+    gyroperiods = npfloat(cfg["gyroperiods"])
+    norm_time   = npfloat(gyroperiods) * T_gyro
+
+    # --- Tolerance ---
+    tol = 1.0 * np.finfo(npfloat).eps
+
+    # --- Plotting ---
+    plot_cfg = cfg.get("plotting", {})
+
+    # --- Solvers ---
+    solvers = cfg.get("solvers", {})
+
+    params = {
+        # Toggles
+        "READ_DATA":       cfg.get("read_data", False),
+        "WRITE_DATA":      cfg.get("write_data", True),
+        "USE_RK45":        solvers.get("rk45", True),
+        "USE_RK4":         solvers.get("rk4", True),
+        "USE_ANALYTICAL":  solvers.get("analytical", True),
+        "USE_FLOAT128":    cfg.get("use_float128", False),
+
+        # Plotting
+        "USE_PLOT_TITLES": plot_cfg.get("titles", True),
+        "USE_FULL_PLOT":   plot_cfg.get("full_plot", True),
+        "gyro_plot_slice": plot_cfg.get("gyro_plot_slice", 1.5),
+
+        # External h5
+        "USE_EXTERNAL_H5":  cfg.get("use_external_h5", False),
+        "USE_EXTERNAL_H5b": cfg.get("use_external_h5b", False),
+        "external_h5":      cfg.get("external_h5"),
+        "external_h5b":     cfg.get("external_h5b"),
+        "PS_order_ext":     cfg.get("external_h5_ps_order"),
+        "PS_order_extb":    cfg.get("external_h5b_ps_order"),
+
+        # Output
+        "output_folder": output_folder,
+        "run_storage":   run_storage,
+
+        # Physics
+        "particle":    cfg["particle"],
+        "pitch_deg":   pitch_deg,
+        "phi_deg":     phi_deg,
+        "KE_particle": KE_particle,
+        "mass":        mass,
+        "Bfield_si":   Bfield_si,
+        "x_initial":   x_initial,
+        "y_initial":   y_initial,
+        "z_initial":   z_initial,
+
+        # Timing
+        "T_gyro":      T_gyro,
+        "gyroperiods": gyroperiods,
+        "norm_time":   norm_time,
+
+        # Steps
+        "ps_step":  ps_step,
+        "rk4_step": rk4_step,
+
+        # Settings
+        "PS_order":  cfg.get("ps_order", 40),
+        "tol":       tol,
+        "rtol_rk45": cfg.get("rtol_rk45", 1e-8),
+        "atol_rk45": cfg.get("atol_rk45", 1e-10),
+    }
+
+    return params
+
+
+# ---------------------------------------------------------------------------
+# Stage 2c: Compute derived — hyperbolic B
+# ---------------------------------------------------------------------------
+
+def compute_derived_hyper(cfg, npfloat=np.float64):
+    """
+    Hyperbolic-B specific derived quantities.
+
+    T_gyro = 2π in normalized units (time is normalized by τ = m/qB₀).
+
+    Parameters
+    ----------
+    cfg : dict
+        Raw config from load_config().
+    npfloat : dtype
+        Floating-point type (np.float64 or np.float128).
+
+    Returns
+    -------
+    dict
+        Flat params dict ready for hyperB.py.
+    """
+
+    mass_si = _resolve_mass(cfg["particle"])
+    config_name = cfg.get("_config_name", "default")
+    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="hyperB")
+
+    # --- Physics seeds ---
+    pitch_deg    = npfloat(cfg["pitch_deg"])
+    phi_deg      = npfloat(cfg["phi_deg"])
+    KE_particle  = npfloat(cfg["energy_eV"])
+    delta        = cfg["delta"]
+    B_0          = npfloat(cfg["B_0"])
+    x_initial_si = npfloat(cfg.get("x_initial_si", 0.0))
+    y_initial_si = npfloat(cfg.get("y_initial_si", 0.0))
+    z_initial_si = npfloat(cfg.get("z_initial_si", 0.0))
+
+    # --- T_gyro = 2π in normalized time ---
+    T_gyro = 2.0 * np.pi
+
+    # --- Step sizes ---
+    spg = cfg.get("steps_per_gyro", {})
+    round_dec = cfg.get("round_decimals", 3)
+    raw_steps = _compute_step_sizes(T_gyro, {
+        "ps":  spg.get("ps", 100),
+        "rk4": spg.get("rk4", 100),
+    }, round_decimals=round_dec)
+    raw_steps = _apply_step_overrides(raw_steps, cfg.get("step_overrides", {}), npfloat)
+
+    ps_step  = npfloat(raw_steps["ps"])
+    rk4_step = npfloat(raw_steps["rk4"])
+
+    # --- Integration time ---
+    gyroperiods = npfloat(cfg["gyroperiods"])
+    norm_time   = npfloat(gyroperiods) * T_gyro
+
+    # --- Tolerance ---
+    tol = 1.0 * np.finfo(npfloat).eps
+
+    # --- Plotting ---
+    plot_cfg = cfg.get("plotting", {})
+    window_gyro = plot_cfg.get("window_gyroperiods", 8)
+    window_duration = npfloat(window_gyro * 2 * np.pi)
+
+    # --- Solvers ---
+    solvers = cfg.get("solvers", {})
+
+    params = {
+        # Toggles
+        "READ_DATA":       cfg.get("read_data", True),
+        "WRITE_DATA":      cfg.get("write_data", True),
+        "USE_RK45":        solvers.get("rk45", True),
+        "USE_RK4":         solvers.get("rk4", True),
+        "USE_FLOAT128":    cfg.get("use_float128", False),
+
+        # Plotting
+        "USE_PLOT_TITLES":    plot_cfg.get("titles", True),
+        "USE_FULL_PLOT":      plot_cfg.get("full_plot", False),
+        "window_duration":    window_duration,
+        "slice_mode":         plot_cfg.get("slice_mode", "last"),
+        "skip_rk4_slice":     plot_cfg.get("skip_rk4_slice", False),
+        "slice_ylim":         plot_cfg.get("slice_ylim"),
+        "slice_ylim_top":     plot_cfg.get("slice_ylim_top"),
+        "slice_equal_aspect": plot_cfg.get("slice_equal_aspect", False),
+        "energy_xlim_left":   plot_cfg.get("energy_xlim_left"),
+
+        # External h5
+        "USE_EXTERNAL_H5":  cfg.get("use_external_h5", False),
+        "USE_EXTERNAL_H5b": cfg.get("use_external_h5b", False),
+        "external_h5":      cfg.get("external_h5"),
+        "external_h5b":     cfg.get("external_h5b"),
+        "PS_order_ext":     cfg.get("external_h5_ps_order"),
+        "PS_order_extb":    cfg.get("external_h5b_ps_order"),
+
+        # Output
+        "output_folder": output_folder,
+        "run_storage":   run_storage,
+
+        # Physics
+        "particle":     cfg["particle"],
+        "pitch_deg":    pitch_deg,
+        "phi_deg":      phi_deg,
+        "KE_particle":  KE_particle,
+        "mass_si":      mass_si,
+        "delta":        delta,
+        "B_0":          B_0,
+        "x_initial_si": x_initial_si,
+        "y_initial_si": y_initial_si,
+        "z_initial_si": z_initial_si,
+
+        # Timing
+        "T_gyro":      T_gyro,
+        "gyroperiods": gyroperiods,
+        "norm_time":   norm_time,
+
+        # Steps
+        "ps_step":  ps_step,
+        "rk4_step": rk4_step,
+
+        # Settings
+        "PS_order":  cfg.get("ps_order", 40),
+        "tol":       tol,
+        "rtol_rk45": cfg.get("rtol_rk45", 1e-12),
+        "atol_rk45": cfg.get("atol_rk45", 1e-14),
     }
 
     return params

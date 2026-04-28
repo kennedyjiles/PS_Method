@@ -1,0 +1,44 @@
+# ===================================================================
+# Paper 2 — 10 keV electron, 75° pitch, delta=50 km, B0=10 nT
+# ===================================================================
+# Step size: 0.0315 (half of paper1's 0.063)
+# Cannot be cleanly derived from steps_per_gyro + rounding, so we
+# use step_overrides to force the exact value.
+# ===================================================================
+
+particle: electron
+energy_eV: 10.0e3
+pitch_deg: 75.0
+phi_deg: 10.0
+delta: 50
+B_0: 10.0e-9
+x_initial_si: 0.0
+y_initial_si: 5.0            # 0.1 * delta
+z_initial_si: 0.0
+gyroperiods: 1.0e5
+
+step_overrides:
+  ps: 0.0315
+  rk4: 0.0315
+
+solvers:
+  ps: true
+  rk4: true
+  rk45: true
+
+plotting:
+  titles: false
+  full_plot: false
+  slice_mode: last
+  slice_ylim: [-5, 13]
+  slice_equal_aspect: true
+
+read_data: true
+write_data: true
+
+use_external_h5: false
+use_external_h5b: false
+external_h5: "outputs/outputs_rawdata/run_6fc9daec43008056.h5"
+external_h5b: "outputs/outputs_rawdata/run_73287ee231150e97.h5"
+external_h5_ps_order: 40
+external_h5b_ps_order: 10

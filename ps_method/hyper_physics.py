@@ -74,7 +74,7 @@ def PS_hyperB(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol
             c[cosh_aux, i+1] = oip1[i] * gamma * cauchy_sum(c[sinh_aux], c[vy], i)
             c[Bz_aux,   i+1] = Bz_series[i]
 
-            if not np.isfinite(c[:, i+1]).all(): # internal overflow → stop series immediately
+            if not np.isfinite(c[:, i+1]).all(): 
                 break
 
             sum_terms += c[:, i+1] * power
@@ -97,4 +97,3 @@ def PS_hyperB(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol
 
     return final_coeff_matrix, orders_used
 
-# I/O functions (save/load h5, run params, hashing) have moved to ps_method/writers.py

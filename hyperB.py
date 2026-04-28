@@ -1,9 +1,17 @@
+"""
+hyperB.py — Driver for charged particle trajectory simulation in a
+            hyperbolic tangent magnetic field using power series, RK4,
+            and RK45 solvers.
+
+Usage:
+    python hyperB.py                          # default config (demo)
+    python hyperB.py demo                     # named config → configs/hyper/demo.yml
+    python hyperB.py paper1                   # named config → configs/hyper/paper1.yml
+    python hyperB.py configs/hyper/my.yml     # direct path to a custom YAML config
+"""
+
 import numpy as np
 import builtins
-import test_particles.hyperB_testparticles as tp
-builtins.npfloat = np.float128 if tp.USE_FLOAT128 else np.float64
-from test_particles.hyperB_testparticles import *
-import numpy as np
 import os
 import time
 import sys
@@ -11,61 +19,127 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
+
+from configs.config_loader import load_config, compute_derived_hyper
+from ps_method.constants import q_e, evtoj
 from ps_method.hyper_physics import PS_hyperB, lorentz_force_hyperB
 from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig, slice_solution
 from ps_method.writers import get_run_params_hyper as get_run_params, h5_path_for, save_results_h5_hyper as save_results_h5, load_results_h5_hyper as load_results_h5, write_summary_txt_hyper
 
-run = "demo"   # options: "demo", "paper1", "paper2", "paper3", or "paper4". Demo mode is a quick test run. Paper modes can take upwards of half or more
-
-
-# Allow command-line override
+# === Load YAML Config ===
+run = "demo"
 if len(sys.argv) > 1:
     run = sys.argv[1]
     print(f"Run mode set from command line: {run}\n")
 else:
     print(f"Using default run mode: {run}\n")
 
+_configs_dir = os.path.join(os.path.dirname(__file__), "configs", "hyper")
 
+if run.endswith((".yml", ".yaml")) and os.path.isfile(run):
+    _yaml_path = run
+elif os.path.isfile(os.path.join(_configs_dir, f"{run}.yml")):
+    _yaml_path = os.path.join(_configs_dir, f"{run}.yml")
+else:
+    raise FileNotFoundError(
+        f"No YAML config found for '{run}'. "
+        f"Expected configs/hyper/{run}.yml or a direct path to a .yml file.\n"
+        f"Available configs: {[f.replace('.yml','') for f in os.listdir(_configs_dir) if f.endswith('.yml') and f != 'base.yml']}"
+    )
 
-globals().update(load_params(run))
+print(f"Loading YAML config: {_yaml_path}\n")
+cfg = load_config(_yaml_path)
+
+# --- Resolve float type BEFORE compute_derived (needs to be set for builtins) ---
+USE_FLOAT128 = cfg.get("use_float128", False)
+if USE_FLOAT128:
+    npfloat = np.float128
+else:
+    npfloat = np.float64
+builtins.npfloat = npfloat
+
+p = compute_derived_hyper(cfg, npfloat=npfloat)
+
+# === Unpack Config ===
+READ_DATA       = p["READ_DATA"]
+WRITE_DATA      = p["WRITE_DATA"]
+USE_RK45        = p["USE_RK45"]
+USE_RK4         = p["USE_RK4"]
+USE_PLOT_TITLES    = p["USE_PLOT_TITLES"]
+USE_FULL_PLOT      = p["USE_FULL_PLOT"]
+window_duration    = p["window_duration"]
+slice_mode         = p["slice_mode"]
+skip_rk4_slice     = p["skip_rk4_slice"]
+slice_ylim         = p["slice_ylim"]
+slice_ylim_top     = p["slice_ylim_top"]
+slice_equal_aspect = p["slice_equal_aspect"]
+energy_xlim_left   = p["energy_xlim_left"]
+
+USE_EXTERNAL_H5  = p["USE_EXTERNAL_H5"]
+USE_EXTERNAL_H5b = p["USE_EXTERNAL_H5b"]
+external_h5      = p["external_h5"]
+external_h5b     = p["external_h5b"]
+PS_order_ext     = p["PS_order_ext"]
+PS_order_extb    = p["PS_order_extb"]
+
+output_folder = p["output_folder"]
+run_storage   = p["run_storage"]
+
+pitch_deg    = p["pitch_deg"]
+phi_deg      = p["phi_deg"]
+KE_particle  = p["KE_particle"]
+mass_si      = p["mass_si"]
+delta        = p["delta"]
+B_0          = p["B_0"]
+x_initial_si = p["x_initial_si"]
+y_initial_si = p["y_initial_si"]
+z_initial_si = p["z_initial_si"]
+
+gyroperiods = p["gyroperiods"]
+norm_time   = p["norm_time"]
+ps_step     = p["ps_step"]
+rk4_step    = p["rk4_step"]
+
+PS_order    = p["PS_order"]
+tol         = p["tol"]
+rtol_rk45   = p["rtol_rk45"]
+atol_rk45   = p["atol_rk45"]
 
 # === Misc Odds and Ends ===
 os.makedirs(run_storage, exist_ok=True)
-plt_config(scale=1)    # Dr. W's Plotting SCrip
-plt.ioff()              # Turn off interactive mode for plots
+os.makedirs(output_folder, exist_ok=True)
+plt_config(scale=1)
+plt.ioff()
 
-# for file naming
-if mass_si == m_e:
-    particle_type = "Electron"
-elif mass_si == m_p:
-    particle_type = "Proton"
+if USE_FLOAT128:
+    mpl.rcParams['agg.path.chunksize'] = 100000
 else:
-    particle_type = "Particle"
+    mpl.rcParams['agg.path.chunksize'] = 100
 
-qoverm = npfloat(-1) if mass_si == m_e else npfloat(1)
-
+particle_type = p["particle"].capitalize()
+qoverm = npfloat(-1) if p["particle"].lower() in ("electron", "e") else npfloat(1)
 
 # === Misc Normalization  ===
 pitch_rad = np.radians(pitch_deg)
 phi_rad = np.radians(phi_deg)
 
-v_si = npfloat(np.sqrt(npfloat(2 * KE_particle * evtoj / mass_si)))/1000       # /1000 puts things in km
-tau_time =  mass_si/(abs(q_e)*B_0)             # tau0 from paper, time normalization constant  
+v_si = npfloat(np.sqrt(npfloat(2 * KE_particle * evtoj / mass_si))) / 1000  # /1000 puts things in km
+tau_time = mass_si / (abs(q_e) * B_0)
 
-gyro_radius_si=abs(v_si * np.sin(pitch_rad) * mass_si/ (q_e * B_0))
+gyro_radius_si = abs(v_si * np.sin(pitch_rad) * mass_si / (q_e * B_0))
 r_normalization = delta
-v_tau = v_si*tau_time/r_normalization    # velocity in dimensionless units
-gamma= 1/(delta/r_normalization)         # if normalizing by delta this should be 1 
+v_tau = v_si * tau_time / r_normalization
+gamma = 1 / (delta / r_normalization)  # if normalizing by delta this should be 1
 
 physical_time = norm_time * tau_time
 
-x_initial = npfloat(x_initial_si/r_normalization)              
-y_initial = npfloat(y_initial_si/r_normalization)  
-z_initial = npfloat(z_initial_si/r_normalization)
+x_initial = npfloat(x_initial_si / r_normalization)
+y_initial = npfloat(y_initial_si / r_normalization)
+z_initial = npfloat(z_initial_si / r_normalization)
 
 # === Velocity Component Config for PS ===
-v_par = v_tau * np.cos(pitch_rad)      
-v_perp = v_tau * np.sin(pitch_rad)     
+v_par = v_tau * np.cos(pitch_rad)
+v_perp = v_tau * np.sin(pitch_rad)
 vx_initial = v_perp * np.cos(phi_rad)
 vy_initial = v_perp * np.sin(phi_rad)
 vz_initial = v_par
@@ -165,11 +239,7 @@ else:
             "timing": {},
             "physical_time": float(physical_time),
             "norm_time": float(norm_time),
-            "particle_label": (
-                f"{KE_particle:.1e} eV electron" if mass_si == m_e else
-                f"{KE_particle:.1e} eV proton" if mass_si == m_p else
-                "manual"
-            ),
+            "particle_label": f"{KE_particle:.1e} eV {particle_type.lower()}",
         }
     }
 
@@ -245,7 +315,7 @@ if USE_FULL_PLOT:
     if USE_RK4:
         ax.plot(solution_rk4[0], solution_rk4[1], solution_rk4[2], label='RK4 ', color='#CC79A7', linestyle=':')
 
-    ax.plot(solution_ps[0], solution_ps[1], solution_ps[2], label='RK4 ', color='#009E73', linestyle=':')
+    ax.plot(solution_ps[0], solution_ps[1], solution_ps[2], label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
 
 
     # === Labels and Legend ===
@@ -380,23 +450,13 @@ if USE_RK4:
 
 # =====================================================
 # ================ 2D Trajectory Slice ================
-# # =====================================================
-
-if USE_RK4:
-    start_t_rk4  = norm_time - window_duration
-    start_idx_rk4  = np.searchsorted(t_eval_rk4, start_t_rk4)
-    rk4_x, rk4_y, rk4_z = solution_rk4[0][start_idx_rk4:], solution_rk4[1][start_idx_rk4:], solution_rk4[2][start_idx_rk4:]
-
-if USE_RK45:
-    start_t_rk45  = norm_time - window_duration
-    start_idx_rk45  = np.searchsorted(t_eval_rk45, start_t_rk45)
-    rk45_x, rk45_y, rk45_z = solution_rk45.y[0][start_idx_rk45:], solution_rk45.y[1][start_idx_rk45:], solution_rk45.y[2][start_idx_rk45:]
+# =====================================================
 
 # === Plot Last Few Orbits ===
 fig, ax = plt.subplots(figsize=(10, 5))
 if USE_RK45:
     ax.plot(rk45_x, rk45_y, label=f"RK45", color='#E69F00', linestyle='--')
-if USE_RK4 and not run== "paper3":
+if USE_RK4 and not skip_rk4_slice:
     ax.plot(rk4_x, rk4_y, label=f"RK4", color='#CC79A7', linestyle='-.')
 
 ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", color='#009E73', linestyle=':')
@@ -406,14 +466,15 @@ ax.set_xlabel(r"$x$")
 ax.set_ylabel(r"$y$")
 if USE_PLOT_TITLES: ax.set_title(f"2D Trajectory of Final {particle_type} Orbits in Hyperbolic B Field")
 
-# ===  Axis Limits for Paper ===
+# ===  Axis Limits ===
 ax.ticklabel_format(style='plain', useOffset=False, axis='both')
 ax.axis('equal')
-if run == 'paper1': ax.set_ylim(top = .7)
-if run == 'paper2': 
-    ax.set_ylim(-5, 13)
+if slice_ylim is not None:
+    ax.set_ylim(slice_ylim[0], slice_ylim[1])
+if slice_ylim_top is not None:
+    ax.set_ylim(top=slice_ylim_top)
+if slice_equal_aspect:
     ax.set_aspect('equal', adjustable='box')
-if run == 'paper4': ax.set_ylim(top = .7)
 ax.legend(loc="upper right")
 ax.grid(True)
 
@@ -541,8 +602,8 @@ if not USE_FLOAT128:
     ax.margins(x=0.01)
     ax.set_yscale('log') 
     ax.set_xscale('log') 
-    if run== "paper4": 
-        ax.set_xlim(left=1e-1) # for the paper4 plots
+    if energy_xlim_left is not None:
+        ax.set_xlim(left=energy_xlim_left)
     ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
     ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
     ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))

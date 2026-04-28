@@ -90,7 +90,7 @@ step_overrides:
   rkg: null
 
 # --- Step rounding ---
-round_steps: true         # round step sizes to 1 decimal place
+round_decimals: 1         # decimal places for step size rounding
 
 # --- Adaptive PS Settings ---
 # Only used when solvers.adaptive = true. Safe to ignore for fixed-step runs.

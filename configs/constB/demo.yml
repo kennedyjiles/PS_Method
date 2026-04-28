@@ -1,0 +1,24 @@
+# ===================================================================
+# Demo run — quick test with default physics at 10 gyroperiods
+# ===================================================================
+
+particle: proton
+energy_eV: 100
+pitch_deg: 45.0
+phi_deg: 45.0
+Bfield_si: [0, 0, 0.01]
+gyroperiods: 10.0
+
+solvers:
+  ps: true
+  rk4: true
+  rk45: true
+  analytical: true
+
+plotting:
+  titles: true
+  full_plot: true
+  gyro_plot_slice: 1.5
+
+read_data: false
+write_data: true

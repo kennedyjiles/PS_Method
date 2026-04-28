@@ -1,0 +1,38 @@
+# ===================================================================
+# Paper 3 — 100 keV proton, -15° pitch, delta=200 km, B0=10 nT
+# ===================================================================
+# Step size: steps_per_gyro = 100, round_decimals = 3
+#   → round(2π/100, 3) = 0.063 ✓
+# ===================================================================
+
+particle: proton
+energy_eV: 100.0e3
+pitch_deg: -15.0
+phi_deg: 45.0
+delta: 200
+B_0: 10.0e-9
+x_initial_si: 0.0
+y_initial_si: 2.0            # 0.01 * delta
+z_initial_si: 0.0
+gyroperiods: 1.0e5
+
+solvers:
+  ps: true
+  rk4: true
+  rk45: true
+
+plotting:
+  titles: false
+  full_plot: false
+  slice_mode: last
+  skip_rk4_slice: true
+
+read_data: true
+write_data: true
+
+use_external_h5: false
+use_external_h5b: false
+external_h5: "outputs/outputs_rawdata/run_d72c9d579dd24595.h5"
+external_h5b: "outputs/outputs_rawdata/run_bbb58e0c8a29e72f.h5"
+external_h5_ps_order: 40
+external_h5b_ps_order: 15
