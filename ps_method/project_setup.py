@@ -59,29 +59,35 @@ from ps_method.dipole_physics import (
     vector_potential_dipole,
     rkgl4_hamiltonian,
     hamiltonian_rhs,
-    summarize,
     slice_solution,
-    append_results_h5,
     compute_energy_ps_chunked,
-    load_legacy_file,
     init_drift_stream_state,
-    write_dict,
     bounce_summary,
-    get_run_params,
-    h5_path_for,
-    save_results_h5,
-    load_results_h5,
-    summarize_error,
     run_ps_streaming_with_decimation,
-    build_figure_filename,
     process_bounce_and_drift_chunk,
     init_bounce_stream_state,
     check_time_grids,
     finalize_drift_stream,
-    expand_h5_to_full,
     compute_pphi_error_chunked,
     compute_mu_deviation_rk,
     compute_mu_deviation_ps,
+)
+
+from ps_method.writers import (
+    _to_serializable,
+    run_hash,
+    h5_path_for,
+    write_dict,
+    summarize_error,
+    summarize,
+    get_run_params_dipole as get_run_params,
+    build_run_stem,
+    build_figure_filename,
+    expand_h5_to_full,
+    save_results_h5_dipole as save_results_h5,
+    load_results_h5_dipole as load_results_h5,
+    append_results_h5_dipole as append_results_h5,
+    load_legacy_file,
 )
 
 from ps_method.dragt_physics import (
@@ -104,7 +110,7 @@ from ps_method.dipole_plots import (
     plot_mu_deviation,
 )
 
-from ps_method.dipole_writers import write_summary_txt, write_master_csv
+from ps_method.writers import write_summary_txt, write_master_csv
 
 from ps_method.logger_util import setup_logger
 

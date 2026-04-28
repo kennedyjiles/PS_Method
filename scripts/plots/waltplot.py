@@ -7,7 +7,7 @@ from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from ps_method.universal_legacy import plt_config
+from ps_method.universal import plt_config
 
 plt_config(scale=1)
 

@@ -8,7 +8,7 @@ dipoleB.py after data loading / slice setup is complete.
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
-from ps_method.dipole_physics import build_figure_filename
+from ps_method.writers import build_figure_filename
 from ps_method.universal import sparse_labels, data_to_fig
 import os
 

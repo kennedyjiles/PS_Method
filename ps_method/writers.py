@@ -1,0 +1,828 @@
+"""
+Consolidated I/O for all field types (dipole, constB, hyperB).
+
+Shared functions:
+    _to_serializable, run_hash, h5_path_for
+
+Field-specific save/load (named by field type):
+    save_results_h5_dipole / load_results_h5_dipole / append_results_h5_dipole
+    save_results_h5_constB / load_results_h5_constB
+    save_results_h5_hyper  / load_results_h5_hyper
+
+Field-specific run-param builders:
+    get_run_params_dipole
+    get_run_params_constB
+    get_run_params_hyper
+
+Dipole-only extras:
+    expand_h5_to_full, load_legacy_file, write_dict,
+    summarize_error, summarize, build_figure_filename, build_run_stem
+    write_summary_txt, write_master_csv
+"""
+
+import os
+import gc
+import re
+import json
+import hashlib
+import numpy as np
+import pandas as pd
+import h5py
+
+
+# =====================================================================
+# =====================  Shared Utilities  ============================
+# =====================================================================
+
+def _to_serializable(x):
+    if isinstance(x, (np.floating, np.float32, np.float64)):
+        return float(x)
+    if isinstance(x, (np.integer,)):
+        return int(x)
+    if isinstance(x, (np.ndarray,)):
+        return x.tolist()
+    return x
+
+
+def run_hash(params: dict) -> str:
+    j = json.dumps(params, sort_keys=True, default=_to_serializable, separators=(",", ":"))
+    return hashlib.sha1(j.encode("utf-8")).hexdigest()[:16]
+
+
+def h5_path_for(params, output_folder):
+    return os.path.join(output_folder, f"run_{run_hash(params)}.h5")
+
+
+def write_dict(f, d, indent=0):
+    pad = " " * indent
+    for k, v in d.items():
+        if isinstance(v, dict):
+            f.write(f"{pad}{k}:\n")
+            write_dict(f, v, indent + 2)
+        else:
+            f.write(f"{pad}{k} = {v}\n")
+
+
+def summarize_error(label, err, f):
+    mean_val = np.mean(err)
+    max_val  = np.max(np.abs(err))
+    rms_val  = np.sqrt(np.mean(err**2))
+    f.write(
+        f"  {label:<8}: "
+        f"mean = {mean_val:.2e}, "
+        f"max = {max_val:.2e}, "
+        f"rms = {rms_val:.2e}\n"
+    )
+
+
+def summarize(err):
+    return {
+        "mean": np.mean(err),
+        "max":  np.max(np.abs(err)),
+        "rms":  np.sqrt(np.mean(err**2))
+    }
+
+
+# =====================================================================
+# ===============  Dipole: run params & filename helpers  =============
+# =====================================================================
+
+def get_run_params_dipole(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUNKING,
+                          mass_si, q_e, B_0, gamma, user_min_phase,
+                          x_initial, y_initial, z_initial,
+                          pitch_deg, phi_deg,
+                          norm_time, ps_step, rk4_step, rkg_step,
+                          PS_order, tol, qoverm, rtol_rk45, atol_rk45):
+    """Collect all knobs that define a unique dipole run."""
+    return {
+        # toggles
+        "USE_RK45": bool(USE_RK45),
+        "USE_RK4":  bool(USE_RK4),
+        "USE_RKG":  bool(USE_RKG),
+        "USE_PS":   bool(USE_PS),
+        "PS_CHUNKING": bool(PS_CHUNKING),
+
+        # physics & normalization
+        "decimate": _to_serializable(decimate),
+        "mass_si": _to_serializable(mass_si),
+        "q_e": _to_serializable(q_e),
+        "B_0": _to_serializable(B_0),
+        "gamma": _to_serializable(gamma),
+        "user_min_phase": _to_serializable(user_min_phase),
+
+        # initial conditions (positions in RE units and velocity setup)
+        "x_initial": _to_serializable(x_initial),
+        "y_initial": _to_serializable(y_initial),
+        "z_initial": _to_serializable(z_initial),
+        "pitch_deg": _to_serializable(pitch_deg),
+        "phi_deg": _to_serializable(phi_deg),
+
+        # times / steps
+        "norm_time": _to_serializable(norm_time),
+        "ps_step": _to_serializable(ps_step),
+        "rk4_step": _to_serializable(rk4_step),
+        "rkg_step": _to_serializable(rkg_step),
+
+        # PS & solver knobs
+        "PS_order": int(PS_order),
+        "tol": _to_serializable(tol),
+        "rtol_rk45": _to_serializable(rtol_rk45),
+        "atol_rk45": _to_serializable(atol_rk45),
+
+        # charge/mass normalization used in RHS
+        "qoverm": _to_serializable(qoverm),
+    }
+
+
+def build_run_stem(summary, stem):
+    """Build a human-readable stem string from a summary dict."""
+    r = summary["meta"]
+    ps = summary["ps"]
+
+    parts = [
+        stem,
+        "DipoleB_",
+        r["particle"],
+        f"{r['energy_eV']:.1e}eV",
+        f"pitch{r['pitch_deg']}",
+        f"phi{r['phi_deg']}",
+        f"{r['norm_time']:.2e}s",
+        r["dtype"],
+    ]
+
+    if ps["enabled"]:
+        parts.insert(4, f"{ps['dt']}step_PS{ps['max_ps']}")
+
+    return "_".join(parts)
+
+
+def build_figure_filename(summary, output_folder, stem, figure_tag, ext="png"):
+    """Build the full path for a figure or output file."""
+    run_stem = build_run_stem(summary, stem)
+    return f"{output_folder}/{run_stem}_{figure_tag}.{ext}"
+
+
+# =====================================================================
+# ====================  Dipole: h5 save / load  =======================
+# =====================================================================
+
+# Compact h5 storage: only these rows are saved (pos, vel, B-field)
+SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
+n_save = len(SAVE_ROWS)
+
+
+def expand_h5_to_full(compact_arr):
+    """Expand a 9-row compact h5 array back to 17-row full layout.
+    If the array already has 17 rows, return it unchanged. Protects legacy"""
+    if compact_arr.shape[0] == 17:
+        return compact_arr
+    full = np.zeros((17, compact_arr.shape[1]), dtype=compact_arr.dtype)
+    for i_new, i_old in enumerate(SAVE_ROWS):
+        full[i_old, :] = compact_arr[i_new, :]
+    return full
+
+
+def save_results_h5_dipole(h5_path, results, summary):
+    with h5py.File(h5_path, "w") as f:
+        f.attrs["summary_json"] = json.dumps(summary)
+
+        for k in ("ps", "rk4", "rk45", "rkg"):
+            if k not in results or results[k] is None:
+                continue
+            grp = f.create_group(k)
+            for name, val in results[k].items():
+                if val is None:
+                    continue
+                if isinstance(val, np.ndarray):
+                    grp.create_dataset(
+                        name, data=val,
+                        compression="gzip", compression_opts=2)
+                else:
+                    grp.attrs[name] = val
+
+        meta = results.get("meta", {})
+        gmeta = f.create_group("meta")
+        for mk, mv in meta.get("timing", {}).items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in meta:
+                gmeta.attrs[sk] = meta[sk]
+
+
+def load_results_h5_dipole(h5_path):
+    with h5py.File(h5_path, "r") as f:
+        loaded = {"meta": {"timing": {}}}
+
+        if "params_json" in f.attrs:
+            loaded["params"] = json.loads(f.attrs["params_json"])
+        else:
+            loaded["params"] = None
+
+        def _read_grp(name):
+            if name not in f:
+                return None
+            g = f[name]
+            out = {}
+            for ds in g:
+                out[ds] = g[ds][...]
+            for k, v in g.attrs.items():
+                out[k] = v
+            return out
+
+        for k in ("ps", "rk4", "rk45", "rkg"):
+            loaded[k] = _read_grp(k)
+
+        gmeta = f["meta"]
+        for a in gmeta.attrs:
+            if a.startswith("timing_"):
+                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+            else:
+                loaded["meta"][a] = gmeta.attrs[a]
+
+        return loaded
+
+
+def append_results_h5_dipole(h5_path, results, summary):
+    """
+    Append non-PS solver results and metadata to an existing HDF5 file.
+    Ensures dictionary is written exactly once (for streaming PS files).
+    """
+    with h5py.File(h5_path, "a") as f:
+        if "summary_json" not in f.attrs:
+            f.attrs["summary_json"] = json.dumps(summary)
+
+        if "meta" not in f:
+            gmeta = f.create_group("meta")
+        else:
+            gmeta = f["meta"]
+
+        for mk, mv in results["meta"]["timing"].items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in results["meta"]:
+                gmeta.attrs[sk] = results["meta"][sk]
+
+        for k in ("rk4", "rk45", "rkg"):
+            if results.get(k) is None:
+                continue
+            if k in f:
+                del f[k]
+            grp = f.create_group(k)
+            for name, val in results[k].items():
+                if isinstance(val, np.ndarray):
+                    grp.create_dataset(
+                        name, data=val,
+                        compression="gzip", compression_opts=2)
+                else:
+                    grp.attrs[name] = val
+
+
+def load_legacy_file(h5_path):
+    """Loader for legacy HDF5 files."""
+    f = h5py.File(h5_path, "r")
+
+    params = {}
+    if "params_json" in f.attrs:
+        params = json.loads(f.attrs["params_json"])
+
+    meta = f["meta"]
+    timing = {
+        k.replace("timing_", ""): float(v)
+        for k, v in meta.attrs.items()
+        if k.startswith("timing_")
+    }
+
+    particle_label = meta.attrs.get("particle_label", "")
+    label_l = particle_label.lower()
+
+    if "proton" in label_l:
+        particle = "Proton"
+    elif "electron" in label_l:
+        particle = "Electron"
+    else:
+        particle = "Unknown"
+
+    m = re.search(r"([0-9.+\-eE]+)\s*ev", label_l)
+    if m:
+        KE_particle = float(m.group(1))
+    else:
+        raise RuntimeError(f"Could not parse energy from particle_label: '{particle_label}'")
+
+    x_initial = params["x_initial"]
+    ps_step = params.get("ps_step", 0)
+    rk4_step = params.get("rk4_step", 0)
+    rkg_step = params.get("rkg_step", 0)
+    norm_time = params["norm_time"]
+    T_gyro = 2.0 * np.pi * (x_initial**3)
+    gyroperiods = norm_time / T_gyro
+    npfloat = np.float64
+
+    summary = {
+        "meta": {
+            "stem": h5_path.split("/")[-1].replace(".h5", ""),
+            "legacy": True,
+            "particle": particle,
+            "mass_si": params["mass_si"],
+            "q_e": params["q_e"],
+            "energy_eV": npfloat(KE_particle),
+            "pitch_deg": params["pitch_deg"],
+            "phi_deg": params["phi_deg"],
+            "x0": params["x_initial"],
+            "y0": params["y_initial"],
+            "z0": params["z_initial"],
+            "B0_T": params["B_0"],
+            "gyroperiods": gyroperiods,
+            "norm_time": float(meta.attrs.get("norm_time")),
+            "physical_time": float(meta.attrs.get("physical_time")),
+            "percent_c": float(meta.attrs.get("percent_c")),
+            "qoverm": params["qoverm"],
+            "dtype": npfloat.__name__,
+            "timing": timing,
+        },
+        "ps": {"enabled": False},
+        "rk4": {"enabled": False},
+        "rk45": {"enabled": False},
+        "rkg": {"enabled": False},
+    }
+
+    datasets = {}
+
+    if "ps" in f:
+        g = f["ps"]
+        streaming = bool(g.attrs.get("streaming", False))
+        datasets["ps_y"] = g["y"] if "y" in g else None
+        datasets["ps_orders"] = g["orders"] if "orders" in g else None
+
+        max_ps_used = (
+            int(g.attrs["max_ps"])
+            if "max_ps" in g.attrs
+            else None
+        )
+
+        summary["ps"].update({
+            "enabled": True,
+            "dt": float(g.attrs.get("dt", ps_step)),
+            "steps": int(g.attrs.get("steps", int(norm_time / ps_step))),
+            "streaming": streaming,
+            "ordercap": params["PS_order"],
+            "max_ps": max_ps_used,
+            "decimate": int(g.attrs.get("decimate", 1)),
+            "numberstepspergyro": int(np.round(T_gyro / g.attrs.get("dt", ps_step))),
+            "E0": float(g.attrs.get("E0")),
+            "mu0": float(g.attrs.get("mu0")),
+            "tol": params["tol"],
+        })
+
+    if "rk4" in f:
+        g = f["rk4"]
+        summary["rk4"].update({
+            "enabled": True,
+            "dt": g.attrs.get("dt", rk4_step),
+            "steps": g.attrs.get("steps", int(norm_time / rk4_step)),
+            "numberstepspergyro": int(np.round(T_gyro / g.attrs.get("dt", rk4_step)))
+        })
+        datasets["rk4_y"] = g["y"]
+
+    if "rk45" in f:
+        summary["rk45"].update({
+            "enabled": True,
+            "atol": params["atol_rk45"],
+            "rtol": params["rtol_rk45"],
+        })
+        datasets["rk45_t"] = f["rk45"]["t"]
+        datasets["rk45_y"] = f["rk45"]["y"]
+
+    if "rkg" in f:
+        g = f["rkg"]
+        summary["rkg"].update({
+            "enabled": True,
+            "dt": g.attrs.get("dt", rkg_step),
+            "steps": g.attrs.get("steps", int(norm_time / rkg_step)),
+            "numberstepspergyro": int(np.round(T_gyro / g.attrs.get("dt", rkg_step)))
+        })
+        datasets["rkg_y"] = g["y"]
+
+    return summary, datasets, params, f
+
+
+# =====================================================================
+# ====================  ConstB: run params & h5  ======================
+# =====================================================================
+
+def get_run_params_constB(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
+                          mass_si, q_e, B_0,
+                          x_initial, y_initial, z_initial,
+                          pitch_deg, phi_deg,
+                          norm_time, ps_step, rk4_step,
+                          PS_order, tol, qoverm):
+    """Collect all knobs that define a unique constB run."""
+    return {
+        "USE_RK45": bool(USE_RK45),
+        "USE_RK4":  bool(USE_RK4),
+
+        "KE_particle": _to_serializable(KE_particle),
+        "mass_si": _to_serializable(mass_si),
+        "q_e": _to_serializable(q_e),
+        "B_0": _to_serializable(B_0),
+
+        "x_initial": _to_serializable(x_initial),
+        "y_initial": _to_serializable(y_initial),
+        "z_initial": _to_serializable(z_initial),
+        "pitch_deg": _to_serializable(pitch_deg),
+        "phi_deg": _to_serializable(phi_deg),
+
+        "norm_time": _to_serializable(norm_time),
+        "ps_step": _to_serializable(ps_step),
+        "rk4_step": _to_serializable(rk4_step),
+
+        "PS_order": int(PS_order),
+        "tol": _to_serializable(tol),
+        "rtol_rk45": _to_serializable(rtol_rk45),
+        "atol_rk45": _to_serializable(atol_rk45),
+
+        "qoverm": _to_serializable(qoverm),
+    }
+
+
+def save_results_h5_constB(h5_path, params, results):
+    with h5py.File(h5_path, "w") as f:
+        f.attrs["params_json"] = json.dumps(params, sort_keys=True, default=_to_serializable)
+
+        for k in ("ps", "rk4", "rk45"):
+            if k in results and results[k] is not None:
+                grp = f.create_group(k)
+                for name, arr in results[k].items():
+                    if arr is None:
+                        continue
+                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=2)
+
+        meta = results.get("meta", {})
+        gmeta = f.create_group("meta")
+        for mk, mv in meta.get("timing", {}).items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in meta:
+                gmeta.attrs[sk] = meta[sk]
+
+
+def load_results_h5_constB(h5_path):
+    with h5py.File(h5_path, "r") as f:
+        loaded = {"meta": {"timing": {}}}
+        loaded["params"] = json.loads(f.attrs["params_json"])
+
+        def _read_grp(name):
+            if name not in f:
+                return None
+            g = f[name]
+            out = {}
+            for ds in g:
+                out[ds] = g[ds][...]
+            return out
+
+        for k in ("ps", "rk4", "rk45"):
+            loaded[k] = _read_grp(k)
+
+        gmeta = f["meta"]
+        for a in gmeta.attrs:
+            if a.startswith("timing_"):
+                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+            else:
+                loaded["meta"][a] = gmeta.attrs[a]
+
+        return loaded
+
+
+# =====================================================================
+# ====================  HyperB: run params & h5  =====================
+# =====================================================================
+
+def get_run_params_hyper(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
+                         mass_si, q_e, B_0, delta,
+                         x_initial, y_initial, z_initial,
+                         pitch_deg, phi_deg,
+                         norm_time, ps_step, rk4_step,
+                         PS_order, tol, qoverm):
+    """Collect all knobs that define a unique hyperB run."""
+    return {
+        "USE_RK45": bool(USE_RK45),
+        "USE_RK4":  bool(USE_RK4),
+
+        "KE_particle": _to_serializable(KE_particle),
+        "mass_si": _to_serializable(mass_si),
+        "q_e": _to_serializable(q_e),
+        "B_0": _to_serializable(B_0),
+        "delta": _to_serializable(delta),
+
+        "x_initial": _to_serializable(x_initial),
+        "y_initial": _to_serializable(y_initial),
+        "z_initial": _to_serializable(z_initial),
+        "pitch_deg": _to_serializable(pitch_deg),
+        "phi_deg": _to_serializable(phi_deg),
+
+        "norm_time": _to_serializable(norm_time),
+        "ps_step": _to_serializable(ps_step),
+        "rk4_step": _to_serializable(rk4_step),
+
+        "PS_order": int(PS_order),
+        "tol": _to_serializable(tol),
+        "rtol_rk45": _to_serializable(rtol_rk45),
+        "atol_rk45": _to_serializable(atol_rk45),
+
+        "qoverm": _to_serializable(qoverm),
+    }
+
+
+def save_results_h5_hyper(h5_path, params, results):
+    with h5py.File(h5_path, "w") as f:
+        f.attrs["params_json"] = json.dumps(params, sort_keys=True, default=_to_serializable)
+
+        for k in ("ps", "rk4", "rk45", "rkg"):
+            if k in results and results[k] is not None:
+                grp = f.create_group(k)
+                for name, arr in results[k].items():
+                    if arr is None:
+                        continue
+                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=2)
+
+        meta = results.get("meta", {})
+        gmeta = f.create_group("meta")
+        for mk, mv in meta.get("timing", {}).items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in meta:
+                gmeta.attrs[sk] = meta[sk]
+
+
+def load_results_h5_hyper(h5_path):
+    with h5py.File(h5_path, "r") as f:
+        loaded = {"meta": {"timing": {}}}
+        loaded["params"] = json.loads(f.attrs["params_json"])
+
+        def _read_grp(name):
+            if name not in f:
+                return None
+            g = f[name]
+            out = {}
+            for ds in g:
+                out[ds] = g[ds][...]
+            return out
+
+        for k in ("ps", "rk4", "rk45", "rkg"):
+            loaded[k] = _read_grp(k)
+
+        gmeta = f["meta"]
+        for a in gmeta.attrs:
+            if a.startswith("timing_"):
+                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+            else:
+                loaded["meta"][a] = gmeta.attrs[a]
+
+        return loaded
+
+
+# =====================================================================
+# ====================  Dipole: Summary & CSV Writers  ================
+# =====================================================================
+
+def _make_tail_mask(n_points, step_size, tail_start, max_tail_steps):
+    """Build a boolean mask for the last fraction of a time series."""
+    j0 = int(tail_start / step_size)
+    j0 = max(0, min(j0, n_points - 1))
+
+    if n_points - j0 > max_tail_steps:
+        j0 = n_points - max_tail_steps
+
+    mask = np.zeros(n_points, dtype=bool)
+    mask[j0:] = True
+
+    if not np.any(mask):
+        NMIN = min(1000, n_points)
+        mask[-NMIN:] = True
+        j0 = n_points - NMIN
+
+    return mask, j0
+
+
+def write_summary_txt(
+    summary, run_folder, stem, dragt_log, bounce_results, drift_results,
+    gyroperiods, norm_time, mass, cache_path,
+    # Solver flags
+    USE_PS, USE_RK4, USE_RK45, USE_RKG, PS_decimate,
+    # Step sizes
+    ps_step, rk4_step=None, rkg_step=None,
+    # Energy drift arrays (already computed)
+    rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None, rel_drift_rkg=None,
+    # Mu reference values
+    mu0_ps=None, mu0_rk4=None, mu0_rk45=None, mu0_rkg=None,
+    # Solver solutions (for mu tail computation)
+    solution_rk4=None, solution_rkg=None, y_rk45_common=None,
+    # PS storage info
+    ps_store_stride=1,
+    # npfloat type
+    npfloat=np.float64,
+    # Physics functions (injected to avoid circular imports)
+    compute_mu_ps=None, compute_mu_rk=None, vector_potential_dipole=None,
+):
+    """
+    Write the simulation summary text file, including tail-averaged energy
+    and mu errors, Dragt diagnostics, and bounce/drift statistics.
+    """
+    # --- Tail fraction setup ---
+    if gyroperiods < 1e6:
+        TAIL_FRAC = 0.01
+    else:
+        TAIL_FRAC = 0.0001
+
+    tail_start = (1.0 - TAIL_FRAC) * npfloat(norm_time)
+    MAX_TAIL_STEPS = 500000
+
+    # --- Build tail masks ---
+    j0_ps = j0_rk4 = j0_rk45 = j0_rkg = 0
+
+    if USE_PS:
+        step_ps = ps_store_stride * ps_step
+        _, j0_ps = _make_tail_mask(rel_drift_ps.size, step_ps, tail_start, MAX_TAIL_STEPS)
+
+    if USE_RK45:
+        _, j0_rk45 = _make_tail_mask(len(rel_drift_rk45), ps_step, tail_start, MAX_TAIL_STEPS)
+
+    if USE_RK4:
+        _, j0_rk4 = _make_tail_mask(len(rel_drift_rk4), rk4_step, tail_start, MAX_TAIL_STEPS)
+
+    if USE_RKG:
+        _, j0_rkg = _make_tail_mask(len(rel_drift_rkg), rkg_step, tail_start, MAX_TAIL_STEPS)
+
+    # --- Write file ---
+    output_filename = build_figure_filename(summary, run_folder, stem,
+                                            figure_tag="simulation_summary", ext="txt")
+
+    with open(output_filename, "w") as f:
+        f.write("=== Simulation Summary ===\n")
+        write_dict(f, summary)
+        f.write("\n")
+
+        # --- Energy tail errors ---
+        f.write("\n=== |delta E|/E0 (tail average) ===\n")
+        if USE_RK45:
+            summarize_error("RK45", rel_drift_rk45[j0_rk45:], f)
+        if USE_RK4:
+            summarize_error("RK4", rel_drift_rk4[j0_rk4:], f)
+        if USE_RKG:
+            summarize_error("RKG", rel_drift_rkg[j0_rkg:], f)
+        if USE_PS:
+            summarize_error("PS", rel_drift_ps[j0_ps:], f)
+
+        # --- Mu tail errors ---
+        f.write("\n=== |delta mu|/mu0 (tail average) ===\n")
+
+        if USE_RK45:
+            y_tail = y_rk45_common[:, j0_rk45:]
+            mu_tail = compute_mu_rk(y_tail.T, mass)
+            summarize_error("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
+            del y_tail, mu_tail
+            gc.collect()
+
+        if USE_RK4:
+            y_tail = solution_rk4[:, j0_rk4:]
+            mu_tail = compute_mu_rk(y_tail.T, mass)
+            summarize_error("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
+            del y_tail, mu_tail
+            gc.collect()
+
+        if USE_RKG:
+            r_tail = solution_rkg[j0_rkg:, 0:3]
+            p_tail = solution_rkg[j0_rkg:, 3:6]
+
+            A_tail = np.empty_like(r_tail)
+            for i in range(len(r_tail)):
+                A_tail[i] = vector_potential_dipole(r_tail[i])
+
+            v_tail = p_tail - A_tail
+            state_tail = np.hstack((r_tail, v_tail))
+
+            mu_tail = compute_mu_rk(state_tail, mass)
+            summarize_error("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
+            del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
+            gc.collect()
+
+        if USE_PS:
+            step_ps_store = ps_store_stride * ps_step
+
+            with h5py.File(cache_path, "r") as ps_h5:
+                ps_y = ps_h5["ps"]["y"]
+                n_store = ps_y.shape[1]
+
+                j0 = int(tail_start / step_ps_store)
+                j0 = max(0, min(j0, n_store - 1))
+
+                if n_store - j0 > MAX_TAIL_STEPS:
+                    j0 = n_store - MAX_TAIL_STEPS
+
+                y_tail = expand_h5_to_full(ps_y[:, j0:])
+
+            mu_tail = compute_mu_ps(y_tail, mass)
+            summarize_error("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
+            del y_tail, mu_tail
+            gc.collect()
+
+        # --- Dragt diagnostics ---
+        if dragt_log["L_eff"] is not None:
+            f.write("\n=== Dragt Diagnostics ===\n")
+            f.write(f"Dragt L-shell           : {dragt_log['L_eff']:.4f} R_E\n")
+            f.write(f"W0^2                    : {dragt_log['W0_sq']:.8f}\n")
+            f.write(f"Boundary status         : {dragt_log['boundary']}\n")
+            f.write(f"mu^2 (sin^2 alpha_eq)   : {dragt_log['mu_sq']:.6f}\n")
+            f.write(f"Orbit character          : {dragt_log['orbit_character']}\n")
+            f.write(f"Adiabaticity (initial)  : {dragt_log['eps_initial']:.4f}\n")
+            f.write(f"Adiabaticity (mean)     : {dragt_log['eps_mean']:.4f}\n")
+            f.write(f"Adiabaticity (max)      : {dragt_log['eps_max']:.4f}\n")
+            if dragt_log["hit_atmosphere"]:
+                f.write(f"Atmosphere flag         : HIT (r_min = {dragt_log['hit_atm_r']:.4f} R_E)\n")
+            else:
+                f.write(f"Atmosphere flag         : CLEAR\n")
+
+        # --- Bounce & drift ---
+        if USE_PS:
+            f.write("\n=== Bounce and Drift Motion ===\n")
+
+            if bounce_results is None or bounce_results.get("full_mean_s") is None:
+                f.write("Bounce: not detected / insufficient mirror crossings\n")
+            else:
+                f.write(f"Mirror crossings        : {bounce_results['n_crossings']}\n")
+                f.write(f"Bounce period (s)       : {bounce_results['full_mean_s']:.6g}\n")
+                f.write(f"Bounce frequency (Hz)   : {bounce_results['frequency_hz']:.6g}\n")
+
+            if drift_results is None or drift_results.get("period_s") is None:
+                f.write("Drift: not enough azimuthal phase to estimate\n")
+            else:
+                direction = drift_results.get("direction", 0)
+                dir_str = "eastward" if direction > 0 else "westward"
+
+                f.write(f"Drift period (s)        : {drift_results['period_s']:.6g}\n")
+                f.write(f"Drift direction         : {dir_str}\n")
+
+            f.write("\n")
+
+
+def write_master_csv(
+    output_folder, stem, particle_type,
+    KE_particle, x_initial, y_initial, z_initial, pitch_deg, phi_deg,
+    dragt_log,
+    method_records,
+):
+    """
+    Build records and append to master_simulation_log.csv with duplicate detection.
+    """
+    records = []
+    for method, steps, dt, e_drift, mu_drift in method_records:
+        e = summarize(e_drift)
+        mu = summarize(mu_drift)
+
+        records.append({
+            "run_id": stem,
+            "particle": particle_type,
+            "energy_keV": KE_particle,
+            "x": x_initial,
+            "y": y_initial,
+            "z": z_initial,
+            "pitch_deg": pitch_deg,
+            "phi_deg": phi_deg,
+            "L_eff": dragt_log["L_eff"],
+            "eps_initial": dragt_log["eps_initial"],
+            "eps_mean": dragt_log["eps_mean"],
+            "eps_max": dragt_log["eps_max"],
+            "W0_sq": dragt_log["W0_sq"],
+            "boundary": dragt_log["boundary"],
+            "mu_sq": dragt_log["mu_sq"],
+            "orbit_character": dragt_log["orbit_character"],
+            "hit_atmosphere": dragt_log["hit_atmosphere"],
+            "hit_atm_r": dragt_log["hit_atm_r"],
+            "steps": steps,
+            "dt": dt,
+            "method": method,
+            "energy_mean_err": e["mean"],
+            "energy_max_err": e["max"],
+            "energy_rms_err": e["rms"],
+            "mu_mean_err": mu["mean"],
+            "mu_max_err": mu["max"],
+            "mu_rms_err": mu["rms"],
+        })
+
+    df_new = pd.DataFrame(records)
+    csv_path = f"{output_folder}/master_simulation_log.csv"
+    dup_keys = ["energy_keV", "L_eff", "phi_deg", "pitch_deg", "particle", "method", "steps"]
+
+    if os.path.exists(csv_path):
+        df_existing = pd.read_csv(csv_path)
+        for _, row in df_new.iterrows():
+            mask = True
+            for k in dup_keys:
+                if row[k] is not None and k in df_existing.columns:
+                    mask = mask & (df_existing[k] == row[k])
+            df_existing = df_existing[~mask]
+        df_out = pd.concat([df_existing, df_new], ignore_index=True)
+    else:
+        df_out = df_new
+
+    df_out.to_csv(csv_path, index=False)

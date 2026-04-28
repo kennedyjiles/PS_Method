@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from ps_method.hyper_physics import PS_hyperB, lorentz_force_hyperB
-from ps_method.universal_legacy import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig, slice_solution
-from ps_method.hyper_physics import get_run_params, h5_path_for, save_results_h5, load_results_h5
+from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, sparse_labels, data_to_fig, slice_solution
+from ps_method.writers import get_run_params_hyper as get_run_params, h5_path_for, save_results_h5_hyper as save_results_h5, load_results_h5_hyper as load_results_h5
 
 run = "demo"   # options: "demo", "paper1", "paper2", "paper3", or "paper4". Demo mode is a quick test run. Paper modes can take upwards of half or more
 
@@ -138,9 +138,10 @@ else:
     # ====== Run RK4 ======
     if USE_RK4:
         start_time_rk4 = time.time()
+        rk4_dt = npfloat(t_eval_rk4[1] - t_eval_rk4[0])
         solution_rk4 = rk4_fixed_step(
-            lorentz_force_hyperB, initial_pos_vel, 
-            t_eval_rk4, args=(gamma,qoverm))
+            lorentz_force_hyperB, initial_pos_vel,
+            rk4_dt, steps_rk4, args=(gamma,qoverm))
         end_time_rk4 = time.time()
 
     # ===== Run PS Method ====

@@ -1527,6 +1527,9 @@ write_summary_txt(
     y_rk45_common=y_rk45_common if USE_RK45 else None,
     ps_store_stride=ps_store_stride if USE_PS else 1,
     npfloat=npfloat,
+    compute_mu_ps=compute_mu_ps,
+    compute_mu_rk=compute_mu_rk,
+    vector_potential_dipole=vector_potential_dipole,
 )
 
 if DEBUG:
