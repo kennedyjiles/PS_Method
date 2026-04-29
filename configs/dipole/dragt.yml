@@ -25,9 +25,3 @@ plotting:
   n_gyro: 175
 
 window_time: 5.0
-
-external_h5:
-  ps:   "outputs/outputs_rawdata/run_304603211ada647c.h5"
-  rk4:  "outputs/outputs_rawdata/run_60a0558ebec9f956.h5"
-  rk45: "outputs/outputs_rawdata/run_60a0558ebec9f956.h5"
-  rkg:  "outputs/outputs_rawdata/run_60a0558ebec9f956.h5"

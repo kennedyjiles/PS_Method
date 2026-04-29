@@ -30,7 +30,7 @@ write_data: true
 # --- External H5 (for multi-precision comparison) ---
 use_external_h5: false
 use_external_h5b: false
-external_h5: "outputs/outputs_rawdata/run_29620be4f429e0cf.h5"
-external_h5b: "outputs/outputs_rawdata/run_344c6be65eafa517.h5"
+external_h5: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_29620be4f429e0cf.h5"
+external_h5b: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_344c6be65eafa517.h5"
 external_h5_ps_order: 19
 external_h5b_ps_order: 10

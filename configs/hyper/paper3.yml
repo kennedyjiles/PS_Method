@@ -32,7 +32,7 @@ write_data: true
 
 use_external_h5: false
 use_external_h5b: false
-external_h5: "outputs/outputs_rawdata/run_d72c9d579dd24595.h5"
-external_h5b: "outputs/outputs_rawdata/run_bbb58e0c8a29e72f.h5"
+external_h5: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_d72c9d579dd24595.h5"
+external_h5b: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_bbb58e0c8a29e72f.h5"
 external_h5_ps_order: 40
 external_h5b_ps_order: 15

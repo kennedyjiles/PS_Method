@@ -2,6 +2,9 @@
 # Demo run — paper1 physics at reduced gyroperiods for quick test
 # ===================================================================
 
+use_float128: False         # true = use np.float128 for extended precision
+
+
 particle: electron
 energy_eV: 10.0e3
 pitch_deg: 75.0

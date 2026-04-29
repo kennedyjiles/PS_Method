@@ -208,11 +208,12 @@ def plot_full_3d(
 def plot_ke_error(
     save_path, *,
     t_eval_ps, rel_drift_ps, orders_used,
-    t_eval_rk4=None, rel_drift_rk4=None, order_mag_rk4=None,
-    t_eval_rk45=None, rel_drift_rk45=None, order_mag_rk45=None,
+    t_eval_rk4=None, rel_drift_rk4=None,
+    t_eval_rk45=None, rel_drift_rk45=None,
     use_rk4=False, use_rk45=False,
     particle_type="", field_label="", use_plot_titles=True,
     time_factor=None,
+    **_ignored,
 ):
     """Relative kinetic energy error over time (log-log)."""
     if time_factor is None:
@@ -244,11 +245,9 @@ def plot_ke_error(
 
     endpoints = []
     if use_rk45 and "rk45" in lines:
-        lbl = f"RK45 ({order_mag_rk45})" if order_mag_rk45 is not None else "RK45"
-        endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), lbl, lines["rk45"].get_color()))
+        endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", lines["rk45"].get_color()))
     if use_rk4 and "rk4" in lines:
-        lbl = f"RK4 ({order_mag_rk4})" if order_mag_rk4 is not None else "RK4"
-        endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), lbl, lines["rk4"].get_color()))
+        endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lines["rk4"].get_color()))
     endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]),
                        f"PS{orders_used.max()}", lines["ps"].get_color()))
 

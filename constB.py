@@ -347,31 +347,24 @@ final_ps = rel_drift_ps[-1]
 
 rel_drift_rk4 = None
 rel_drift_rk45 = None
-order_mag_rk4 = None
-order_mag_rk45 = None
 
 if USE_RK45:
     v_rk45 = solution_rk45.y[3:6]
     E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
     rel_drift_rk45 = (E_rk45 - E_rk45[0]) / E_rk45[0]
-    ratio_rk45_ps = rel_drift_rk45[-1] / final_ps
-    order_mag_rk45 = int(np.floor(np.log10(abs(ratio_rk45_ps))))
 
 if USE_RK4:
     v_rk4 = solution_rk4[3:6]
     E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
     rel_drift_rk4 = (E_rk4 - E_rk4[0]) / E_rk4[0]
-    ratio_rk4_ps = rel_drift_rk4[-1] / final_ps
-    order_mag_rk4 = int(np.floor(np.log10(abs(ratio_rk4_ps))))
 
-if USE_FULL_PLOT:
-    plot_ke_error(
-        f"{_base}_KEerror.png",
-        t_eval_ps=t_eval_ps, rel_drift_ps=rel_drift_ps, orders_used=orders_used,
-        t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_drift_rk4=rel_drift_rk4, order_mag_rk4=order_mag_rk4,
-        t_eval_rk45=t_eval_rk45 if USE_RK45 else None, rel_drift_rk45=rel_drift_rk45, order_mag_rk45=order_mag_rk45,
-        use_rk4=USE_RK4, use_rk45=USE_RK45, **_plot_kw,
-    )
+plot_ke_error(
+    f"{_base}_KEerror.png",
+    t_eval_ps=t_eval_ps, rel_drift_ps=rel_drift_ps, orders_used=orders_used,
+    t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_drift_rk4=rel_drift_rk4,
+    t_eval_rk45=t_eval_rk45 if USE_RK45 else None, rel_drift_rk45=rel_drift_rk45,
+    use_rk4=USE_RK4, use_rk45=USE_RK45, **_plot_kw,
+)
 
 # ======================================
 # ============= Slicing ================
@@ -417,7 +410,7 @@ if USE_FULL_PLOT:
 # ===============================================================
 # === Multi-PS-order KE error comparison ========================
 # ===============================================================
-if not USE_FLOAT128:
+if USE_FULL_PLOT and not USE_FLOAT128:
     # --- Load external h5 data ---
     ext_data = None
     extb_data = None
