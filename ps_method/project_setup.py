@@ -7,6 +7,7 @@ import gc
 import logging
 import tracemalloc
 from datetime import datetime
+from types import SimpleNamespace
 
 # === Environment Setup ===
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"

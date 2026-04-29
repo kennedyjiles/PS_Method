@@ -15,6 +15,7 @@ import builtins
 import os
 import time
 import sys
+from types import SimpleNamespace
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -58,7 +59,7 @@ builtins.npfloat = npfloat
 # --- Import physics modules AFTER builtins.npfloat is set so @maybe_njit
 #     sees the correct float type (float128 skips njit, float64 compiles). ---
 from ps_method.constB_physics import PS_constB, analytical_constantB, lorentz_force_constB
-from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config
+from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, slice_solution
 from ps_method.field_plots import (
     plot_full_2d, plot_full_3d, plot_ke_error, plot_slice_2d, plot_slice_3d,
     plot_ke_error_multi, plot_trajectory_error, f64,
@@ -144,8 +145,7 @@ if abs(vz_initial) < tol: vz_initial = npfloat(0.0)
 gyro_radius_si = abs(v_si * np.sin(pitch_rad) * mass / (q_e * B_0))
 
 
-initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)  
-initial_pos_vel_ps = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)  
+initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)
 
 # === Ensures that Total Time Elapsed is the Same ===
 """
@@ -208,10 +208,7 @@ if os.path.exists(cache_path) and READ_DATA:
         solution_rk4 = cached["rk4"]["y"]
         t_eval_rk4 = cached["rk4"]["t"]
     if USE_RK45 and cached["rk45"]:
-        class _Obj: pass
-        solution_rk45 = _Obj()
-        solution_rk45.t = cached["rk45"]["t"]
-        solution_rk45.y = cached["rk45"]["y"]   
+        solution_rk45 = SimpleNamespace(t=cached["rk45"]["t"], y=cached["rk45"]["y"])
 
     timing = cached.get("meta", {}).get("timing", {})
     stem = os.path.splitext(os.path.basename(cache_path))[0]
@@ -242,7 +239,7 @@ else:
     # ===== Run PS Method ====
     start_time_ps = time.time()
     solution_ps, orders_used=PS_constB(
-        PS_order, steps_ps, initial_pos_vel_ps, 
+        PS_order, steps_ps, initial_pos_vel, 
         ps_step, Bfield, qoverm, tol)
     end_time_ps = time.time()
 
@@ -372,19 +369,15 @@ plot_ke_error(
 window_duration = gyro_plot_slice * 2 * np.pi
 
 if USE_RK4:
-    _si = np.searchsorted(t_eval_rk4, norm_time - window_duration)
-    rk4_x, rk4_y, rk4_z = solution_rk4[0][_si:], solution_rk4[1][_si:], solution_rk4[2][_si:]
+    rk4_x, rk4_y, rk4_z, *_ = slice_solution(t_eval_rk4, solution_rk4, window_duration, norm_time)
 
 if USE_RK45:
-    _si = np.searchsorted(t_eval_rk45, norm_time - window_duration)
-    rk45_x, rk45_y, rk45_z = solution_rk45.y[0][_si:], solution_rk45.y[1][_si:], solution_rk45.y[2][_si:]
+    rk45_x, rk45_y, rk45_z, *_ = slice_solution(t_eval_rk45, solution_rk45.y, window_duration, norm_time)
 
 if USE_ANALYTICAL:
-    _si = np.searchsorted(t_eval_ps, norm_time - window_duration)
-    ana_x, ana_y, ana_z = solution_analytical[0][_si:], solution_analytical[1][_si:], solution_analytical[2][_si:]
+    ana_x, ana_y, ana_z, *_ = slice_solution(t_eval_ps, solution_analytical, window_duration, norm_time)
 
-_si = np.searchsorted(t_eval_ps, norm_time - window_duration)
-ps_x, ps_y, ps_z = solution_ps[0][_si:], solution_ps[1][_si:], solution_ps[2][_si:]
+ps_x, ps_y, ps_z, *_ = slice_solution(t_eval_ps, solution_ps, window_duration, norm_time)
 
 _slice_kw = dict(
     ps_x=ps_x, ps_y=ps_y, orders_used=orders_used,
@@ -438,7 +431,7 @@ if USE_FULL_PLOT and not USE_FLOAT128:
     _ps_styles = [":", "-.", ":", "--", "-."]
     ps_drifts = []
     for order, color, ls in zip(_ps_orders, _ps_colors, _ps_styles):
-        sol, _ = PS_constB(order, steps_ps, initial_pos_vel_ps, ps_step, Bfield, qoverm, tol)
+        sol, _ = PS_constB(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
         vx, vy, vz = extract_v(sol)
         drift = compute_energy_drift(vx, vy, vz)
         ps_drifts.append((order, drift, color, ls))

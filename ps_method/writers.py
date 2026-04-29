@@ -71,8 +71,9 @@ def write_dict(f, d, indent=0):
 
 
 def summarize_error(label, err, f):
+    err = np.abs(err)
     mean_val = np.mean(err)
-    max_val  = np.max(np.abs(err))
+    max_val  = np.max(err)
     rms_val  = np.sqrt(np.mean(err**2))
     f.write(
         f"  {label:<8}: "

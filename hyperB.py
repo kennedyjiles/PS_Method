@@ -15,6 +15,7 @@ import builtins
 import os
 import time
 import sys
+from types import SimpleNamespace
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -156,8 +157,7 @@ if abs(vy_initial) < tol: vy_initial = npfloat(0.0)
 if abs(vz_initial) < tol: vz_initial = npfloat(0.0)
 
 
-initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)  
-initial_pos_vel_ps = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)  
+initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)
 
 
 # === Ensures that Total Time Elapsed is the Same ===
@@ -195,10 +195,7 @@ if os.path.exists(cache_path) and READ_DATA:
         solution_rk4 = cached["rk4"]["y"]
         t_eval_rk4 = cached["rk4"]["t"]
     if USE_RK45 and cached["rk45"]:
-        class _Obj: pass
-        solution_rk45 = _Obj()
-        solution_rk45.t = cached["rk45"]["t"]
-        solution_rk45.y = cached["rk45"]["y"] 
+        solution_rk45 = SimpleNamespace(t=cached["rk45"]["t"], y=cached["rk45"]["y"])
         t_eval_rk45 = cached["rk45"]["t"]
    
     timing = cached.get("meta", {}).get("timing", {})
@@ -230,7 +227,7 @@ else:
     start_time_ps = time.time()
     solution_ps, orders_used = PS_hyperB(
         PS_order, steps_ps, 
-        initial_pos_vel_ps, ps_step, gamma, 
+        initial_pos_vel, ps_step, gamma, 
         qoverm, tol)
     end_time_ps = time.time()
 
@@ -415,7 +412,7 @@ if USE_FULL_PLOT and not USE_FLOAT128:
     _ps_styles = ["--", ":", "-.", "--", "-"]
     ps_drifts = []
     for order, color, ls in zip(_ps_orders, _ps_colors, _ps_styles):
-        sol, _ = PS_hyperB(order, steps_ps, initial_pos_vel_ps, ps_step, gamma, qoverm, tol)
+        sol, _ = PS_hyperB(order, steps_ps, initial_pos_vel, ps_step, gamma, qoverm, tol)
         vx, vy, vz = extract_v(sol)
         drift = compute_energy_drift(vx, vy, vz)
         ps_drifts.append((order, drift, color, ls))

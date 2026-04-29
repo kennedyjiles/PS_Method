@@ -229,11 +229,7 @@ if USE_MANUAL_FILE:
 
             # === RK45 ===
             if USE_RK45 and "rk45" in cached:
-                class _Obj: pass
-                solution_rk45 = _Obj()
-                solution_rk45.t = cached["rk45"]["t"][()]
-                solution_rk45.y = cached["rk45"]["y"][()]
-                solution_rk45.sol = None
+                solution_rk45 = SimpleNamespace(t=cached["rk45"]["t"][()], y=cached["rk45"]["y"][()])
 
             # === RKG ===
             if USE_RKG and "rkg" in cached:
@@ -396,11 +392,7 @@ if not USE_MANUAL_FILE:
 
             # === RK45 ===
             if USE_RK45 and "rk45" in cached:
-                class _Obj: pass
-                solution_rk45 = _Obj()
-                solution_rk45.t = cached["rk45"]["t"][()]
-                solution_rk45.y = cached["rk45"]["y"][()]
-                solution_rk45.sol = None
+                solution_rk45 = SimpleNamespace(t=cached["rk45"]["t"][()], y=cached["rk45"]["y"][()])
 
             # === RKG ===
             if USE_RKG and "rkg" in cached:
