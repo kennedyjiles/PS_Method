@@ -6,7 +6,7 @@ from ps_method.universal import maybe_njit, npfloat
 one = npfloat(1.0)
 
 @maybe_njit
-def PS_constantB_adaptive(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol):
+def PS_constB(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol):
     n_total = 6        # x, y, z, v_x, v_y, v_z
     final_coeff_matrix = np.zeros((n_total, steps + 1), dtype=npfloat)  # array to store everything
     final_coeff_matrix[:, 0] = initial_pos_vel          # initialize with intial position velocity

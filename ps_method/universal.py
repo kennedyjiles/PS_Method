@@ -1,7 +1,7 @@
 import builtins
+import logging
 import numpy as np
 from numba import njit
-from matplotlib import transforms
 import matplotlib.pyplot as plt
 
 try:
@@ -22,30 +22,26 @@ two = npfloat(2.0)
 six = npfloat(6.0)
 half = npfloat(0.5)
 
-# #########################################
-# ============= KE fo Drift  ============
-# #########################################
+# =========================================
+# ============ Relative KE Error ==========
+# =========================================
 
-# @((lambda f: f) if npfloat == np.float128 else njit)
 @maybe_njit
 def kinetic_energy(vx, vy, vz, m=npfloat(1.0)):
     return half * m * (vx**two + vy**two + vz**two)
 
-# @((lambda f: f) if npfloat == np.float128 else njit)
 @maybe_njit
 def compute_energy_drift(vx, vy, vz):
     KE = kinetic_energy(vx, vy, vz)
     return (KE - KE[0]) / KE[0]
 
-# @((lambda f: f) if npfloat == np.float128 else njit)
 @maybe_njit
 def extract_v(sol):  # assumes PS output has x, y, z, vx, vy, vz as initial entries
     return sol[3], sol[4], sol[5]
 
-# #########################################
+# =========================================
 # ============= Cauchy Related ============
-# #########################################
-# @((lambda f: f) if npfloat == np.float128 else njit)
+# =========================================
 @maybe_njit
 def cauchy_sum(a, b, n):
     result = 0.0
@@ -57,7 +53,6 @@ def cauchy_sum(a, b, n):
 # =============== Runge Kutta 4th Order Fixed Step ===============
 # ================================================================
 
-# @((lambda f: f) if npfloat == np.float128 else njit)
 @maybe_njit
 def rk4_fixed_step(func, d0, dt, steps, args=()):
     d_out = np.zeros((steps + 1, len(d0)), dtype=npfloat)
@@ -105,88 +100,6 @@ def sparse_labels(val, pos):
     return rf"$10^{{{exp}}}$" if (exp % 2 == 0) else ""
 
 
-def _last_finite_pos(y):
-    """Return last finite, positive y (for log axes)."""
-    y = np.asarray(y, dtype=np.float64)
-    for v in y[::-1]:
-        if np.isfinite(v) and v > 0:
-            return float(v)
-    # fallback: tiniest positive to keep label on-axes
-    return np.finfo(np.float64).tiny
-
-def label_right_collision_free(ax, lines, names, x=1.01, min_sep=0.05, fontsize=9):
-    """
-    Place labels just outside the right edge (x in axes coords) while aligning
-    vertically to each line's endpoint (y in data coords), with collision avoidance
-    done in axes-fraction space. No Matplotlib transforms on your data arrays.
-    """
-    trans = transforms.blended_transform_factory(ax.transAxes, ax.transData)
-
-    # 1) get each line's last finite, positive y
-    y_end = np.array([_last_finite_pos(ln.get_ydata()) for ln in lines], dtype=np.float64)
-
-    # 2) normalize to axes-fraction y for spacing (works for linear or log)
-    y0, y1 = ax.get_ylim()
-    if ax.get_yscale() == 'log':
-        # guard log range
-        tiny = np.finfo(np.float64).tiny
-        y0, y1 = max(y0, tiny), max(y1, tiny)
-        lo, hi = np.log10(y0), np.log10(y1)
-        y_norm = (np.log10(y_end) - lo) / (hi - lo)
-    else:
-        lo, hi = y0, y1
-        y_norm = (y_end - lo) / (hi - lo)
-
-    # 3) sort and enforce minimum separation in axes space
-    order = np.argsort(y_norm)
-    y_norm = y_norm[order]
-    names  = [names[i] for i in order]
-    colors = [lines[i].get_color() for i in order]
-
-    for i in range(1, len(y_norm)):
-        if y_norm[i] - y_norm[i-1] < min_sep:
-            y_norm[i] = y_norm[i-1] + min_sep
-
-    # keep within axes vertically
-    y_norm = np.clip(y_norm, 0.02, 0.98)
-
-    # 4) map back to data y (still without transforms)
-    if ax.get_yscale() == 'log':
-        y_adj = 10 ** (lo + y_norm * (hi - lo))
-    else:
-        y_adj = lo + y_norm * (hi - lo)
-
-    # 5) draw labels just outside the axes
-    for yy, nm, col in zip(y_adj, names, colors):
-        ax.text(x, float(yy), nm, transform=trans, va='center', ha='left',
-                color=col, clip_on=False, fontsize=fontsize)
-
-def interp_to_grid(t_src, y_src, t_target, *, fill_value=np.nan):
-    # Cast to float64
-    t_src64 = np.asarray(t_src, dtype=np.float64).ravel()
-    y_src64 = np.asarray(y_src, dtype=np.float64).ravel()
-    t_tgt64 = np.asarray(t_target, dtype=np.float64).ravel()
-
-    # Remove NaN/inf pairs
-    mask = np.isfinite(t_src64) & np.isfinite(y_src64)
-    t_src64 = t_src64[mask]
-    y_src64 = y_src64[mask]
-
-    # Need at least 2 points to interpolate
-    if t_src64.size < 2:
-        return np.full_like(t_tgt64, fill_value, dtype=np.float64)
-
-    # Sort by t_src and deduplicate (np.interp requires ascending xp)
-    order = np.argsort(t_src64)
-    t_src64 = t_src64[order]
-    y_src64 = y_src64[order]
-    t_src64, uniq_idx = np.unique(t_src64, return_index=True)
-    y_src64 = y_src64[uniq_idx]
-
-    # Interpolate (no extrapolation by default)
-    out = np.interp(t_tgt64, t_src64, y_src64, left=fill_value, right=fill_value)
-    return out
-
 def data_to_fig(x, y, ax, fig):
     x64 = float(np.asarray(x, dtype=np.float64))
     y64 = float(np.asarray(y, dtype=np.float64))
@@ -216,3 +129,22 @@ def slice_solution(t_eval, sol, window_duration, norm_time, mode="last"):
 
     else:
         raise ValueError("mode must be 'first' or 'last'")
+
+# ========================================
+# ============= Logging ==================
+# ========================================
+
+def setup_logger(name="dipole_logger", filename="dipole_run.log", level=logging.INFO):
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+
+    formatter = logging.Formatter('%(levelname)s — %(message)s')
+
+    file_handler = logging.FileHandler(filename, mode="w")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return logger

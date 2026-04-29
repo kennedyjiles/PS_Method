@@ -3,6 +3,8 @@ import warnings
 import os
 import h5py
 
+from ps_method.constants import RE, spdlight, B_0
+
 
 # ===================================================================
 # === W0^2 / P_phi Conservation Monitor (per-step, no dt needed) ===
@@ -413,7 +415,7 @@ def compute_gyrophase_mu(x_cross, y_cross, vx_cross, vy_cross):
     return gyrophase, mu_cross
 
 
-def calculate_w0_squared(speed, L_shell, mass_si, q_e, M_earth=8.087e15):
+def calculate_w0_squared(speed, L_shell, mass_si, q_e, M_earth=None):
     """
     Calculates Dragt's dimensionless energy constant W0^2.
 
@@ -422,27 +424,28 @@ def calculate_w0_squared(speed, L_shell, mass_si, q_e, M_earth=8.087e15):
     L_shell (float): The reference L-shell (dimensionless).
     mass_si (float): Particle mass in kg.
     q_e (float): Particle charge in Coulombs.
-    M_earth (float): Magnetic dipole moment in T·m³ (default = B0*RE³ = 3.12e-5*(6378137)³ ≈ 8.087e15,
-                     matching dipoleB_testparticles.py and dragt.py).
+    M_earth (float): Magnetic dipole moment in T·m³.
+                     Default: B_0 * RE³ from constants.py.
 
     Returns:
     float: The dimensionless energy constant W0^2.
     """
+    if M_earth is None:
+        M_earth = float(B_0) * float(RE)**3
+
     # 1. Calculate the reciprocal length scaling factor Gamma
-    # RE = 6378137.0 meters (WGS84, matches dipoleB_testparticles.py)
-    gamma_df = 1.0 / (L_shell * 6378137.0)
-    
+    gamma_df = 1.0 / (L_shell * float(RE))
+
     # 2. Calculate the characteristic velocity scale
     # Dragt's unit velocity = (|q| * M * Gamma^2) / m
     v_scale = (abs(q_e) * M_earth * (gamma_df**2)) / mass_si
-    
+
     # 3. Calculate W0^2 = (γv / v_scale)^2
     # From Dragt (1965) eqs 2.7 + 2.15d + 2.16:  γmv = qMΓ²·W₀
     # So W₀ = γv / v_scale, and W₀² = (γv / v_scale)²
     # The γ factor is needed because v_scale = qMΓ²/m uses rest mass,
     # while Dragt's time scaling (eq 2.15d) uses γm.
-    c_light = 299792458.0  # m/s
-    gamma_lorentz = 1.0 / np.sqrt(1.0 - (speed / c_light)**2)
+    gamma_lorentz = 1.0 / np.sqrt(1.0 - (speed / float(spdlight))**2)
     w0_sq = (gamma_lorentz * speed / v_scale)**2
 
     return w0_sq

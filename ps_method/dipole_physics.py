@@ -278,56 +278,8 @@ def hamiltonian_rhs(t, y, qoverm):
 
     return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=npfloat)
 
-
-# OLD rkgl4_hamiltonian_step (kept for reproducibility):
-# @maybe_njit
-# def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):
-#     sqrt3 = np.sqrt(3.0)
-#     a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
-#     a21, a22 = 0.25 + sqrt3 / 6.0, 0.25
-#     b1 = b2 = 0.5
-#     dim = len(y0)
-#     K = np.zeros((2, dim), dtype=npfloat)
-#     K[0] = func(0.0, y0, *args)
-#     K[1] = K[0].copy()
-#     for n in range(max_iter):
-#         Y1 = y0 + dt * (a11 * K[0] + a12 * K[1])
-#         Y2 = y0 + dt * (a21 * K[0] + a22 * K[1])
-#         F1 = K[0] - func(0.0, Y1, *args)
-#         F2 = K[1] - func(0.0, Y2, *args)
-#         F = np.concatenate((F1, F2))
-#         normF = np.max(np.abs(F))
-#         if normF < tol:
-#             break
-#         J = np.zeros((2 * dim, 2 * dim), dtype=npfloat)
-#         for i in range(2):
-#             for j in range(dim):
-#                 dK = np.zeros((2, dim), dtype=npfloat)
-#                 dK[i, j] = eps
-#                 Y1_pert = y0 + dt * (a11 * (K[0] + dK[0]) + a12 * (K[1] + dK[1]))
-#                 Y2_pert = y0 + dt * (a21 * (K[0] + dK[0]) + a22 * (K[1] + dK[1]))
-#                 F1_pert = K[0] + dK[0] - func(0.0, Y1_pert, *args)
-#                 F2_pert = K[1] + dK[1] - func(0.0, Y2_pert, *args)
-#                 F_pert = np.concatenate((F1_pert, F2_pert))
-#                 dF = (F_pert - F) / eps
-#                 J[:, i * dim + j] = dF
-#         try:
-#             dK_flat = np.linalg.solve(J, -F)
-#         except:
-#             raise RuntimeError("Newton step failed: singular Jacobian")
-#         K_flat = np.concatenate((K[0], K[1])) + dK_flat
-#         K[0] = K_flat[:dim]
-#         K[1] = K_flat[dim:]
-#     else:
-#         print("Newton did not converge")
-#     return y0 + dt * (b1 * K[0] + b2 * K[1])
-
 @maybe_njit
 def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):
-    # Gauss-Legendre RK4 (implicit, symplectic) — njit-friendly version.
-    # Changes from old version: removed try/except (numba can't compile it,
-    # forces object mode), removed np.concatenate in hot loop, pre-allocated
-    # scratch arrays. Produces identical results.
     sqrt3 = np.sqrt(3.0)
     a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
     a21, a22 = 0.25 + sqrt3 / 6.0, 0.25
@@ -383,10 +335,8 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
                     J[d,       i * dim + j] = (F1_pert[d] - F1[d]) / eps
                     J[dim + d, i * dim + j] = (F2_pert[d] - F2[d]) / eps
 
-                K[i, j] = K_save[i, j]  # restore
+                K[i, j] = K_save[i, j]  
 
-        # Newton update (no try/except — let it crash if singular,
-        # which would indicate a bug, not a recoverable condition)
         dK_flat = np.linalg.solve(J, -F)
         for d in range(dim):
             K[0, d] += dK_flat[d]
@@ -608,7 +558,6 @@ def finalize_drift_stream(
 
 
 def bounce_summary(crossing_times_tau, time_scale_sec=None):
-    import numpy as np
     c = np.asarray(crossing_times_tau, dtype=float)
     half_tau = np.diff(c) if c.size >= 2 else np.array([], float)
     full_tau = (c[2:] - c[:-2]) if c.size >= 3 else np.array([], float)
@@ -797,19 +746,6 @@ def drift_period_from_PS(final_coeff_matrix, dt_tau,
             "drift_intervals_tau": drift_intervals_tau,
         })
     return result
-
-# ========================
-# === Write Functions ===
-# ========================
-
-# I/O functions (_to_serializable, get_run_params, run_hash, h5_path_for,
-# save/load/append_results_h5, load_legacy_file, write_dict, summarize,
-# summarize_error) have moved to ps_method/writers.py.
-# build_run_stem and build_figure_filename also moved there.
-
-# --- Legacy aliases (imported from writers at top of file) ---
-# SAVE_ROWS, n_save, expand_h5_to_full, build_figure_filename, build_run_stem
-
 # ===================================
 # === Decimate/Chunking Functions ===
 # ===================================
