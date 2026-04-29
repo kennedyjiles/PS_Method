@@ -6,8 +6,8 @@ from matplotlib.lines import Line2D
 import os
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 import sys
-sys.path.append('/Users/heatherjiles/Documents/GitHub/GradSchool')
-from PSMethod.code.definitions.functions_library_universal import plt_config, sparse_labels
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from ps_method.universal import plt_config, sparse_labels
 
 # === Load CSV ===
 csv_path = "proton_summary_results.csv"
