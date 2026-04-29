@@ -12,7 +12,17 @@ except Exception:
 has_float128 = getattr(np, "float128", None) is not None
 
 def maybe_njit(func):
-    if has_float128 and npfloat == np.float128:
+    """Skip njit when using float128 (numba doesn't support it), else compile.
+
+    IMPORTANT: modules using @maybe_njit must be imported AFTER
+    builtins.npfloat has been set, otherwise the check sees the
+    float64 fallback and always compiles with njit.
+    """
+    try:
+        live_npfloat = builtins.npfloat
+    except AttributeError:
+        live_npfloat = np.float64
+    if has_float128 and live_npfloat == np.float128:
         return func
     else:
         return njit(func)

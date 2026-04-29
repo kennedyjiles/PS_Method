@@ -21,13 +21,6 @@ import matplotlib as mpl
 
 from configs.config_loader import load_config, compute_derived_hyper
 from ps_method.constants import q_e, evtoj
-from ps_method.hyper_physics import PS_hyperB, lorentz_force_hyperB
-from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, slice_solution
-from ps_method.field_plots import (
-    plot_full_2d, plot_full_3d, plot_ke_error, plot_slice_2d, plot_slice_3d,
-    plot_ke_error_multi, f64,
-)
-from ps_method.writers import get_run_params_hyper as get_run_params, h5_path_for, save_results_h5_hyper as save_results_h5, load_results_h5_hyper as load_results_h5, write_summary_txt_hyper
 
 # === Load YAML Config ===
 run = "demo"
@@ -52,6 +45,7 @@ else:
 
 print(f"Loading YAML config: {_yaml_path}\n")
 cfg = load_config(_yaml_path)
+_config_log = cfg.pop("_config_log", [])
 
 # --- Resolve float type BEFORE compute_derived (needs to be set for builtins) ---
 USE_FLOAT128 = cfg.get("use_float128", False)
@@ -60,6 +54,16 @@ if USE_FLOAT128:
 else:
     npfloat = np.float64
 builtins.npfloat = npfloat
+
+# --- Import physics modules AFTER builtins.npfloat is set so @maybe_njit
+#     sees the correct float type (float128 skips njit, float64 compiles). ---
+from ps_method.hyper_physics import PS_hyperB, lorentz_force_hyperB
+from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, slice_solution
+from ps_method.field_plots import (
+    plot_full_2d, plot_full_3d, plot_ke_error, plot_slice_2d, plot_slice_3d,
+    plot_ke_error_multi, f64,
+)
+from ps_method.writers import get_run_params_hyper as get_run_params, h5_path_for, save_results_h5_hyper as save_results_h5, load_results_h5_hyper as load_results_h5, write_summary_txt_hyper
 
 p = compute_derived_hyper(cfg, npfloat=npfloat)
 
@@ -280,8 +284,25 @@ print(f"Physical Time   : {physical_time:.2e} s")
 if orders_used is not None:
     print(f"PS Orders       : max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
 
+# === Create run-specific output subfolders ===
+# data/hyperB/<config>/<stem>/figures/   ← plots
+# data/hyperB/<config>/<stem>/output/    ← text summaries
+_run_name = f"{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}"
+run_folder = os.path.join(output_folder, _run_name)
+fig_folder = os.path.join(run_folder, "figures")
+out_folder = os.path.join(run_folder, "output")
+os.makedirs(fig_folder, exist_ok=True)
+os.makedirs(out_folder, exist_ok=True)
+
+# --- Write config log to output folder ---
+if _config_log:
+    _config_log_path = os.path.join(out_folder, "config_log.txt")
+    with open(_config_log_path, "w") as _f:
+        _f.write("\n".join(_config_log))
+    print(f"Config log written to {_config_log_path}\n")
+
 # --- Filename helper (shared stem for all plots) ---
-_base = f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}"
+_base = f"{fig_folder}/{_run_name}"
 _field_label = "Hyperbolic B Field"
 _plot_kw = dict(particle_type=particle_type, field_label=_field_label, use_plot_titles=USE_PLOT_TITLES)
 
@@ -437,7 +458,7 @@ if not USE_FLOAT128:
 # === Write Summary Output to File ===
 # ====================================
 
-output_filename = f"{output_folder}/{stem}_HyperB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_{delta}delta_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}_simulation_summary.txt"
+output_filename = f"{out_folder}/{_run_name}_simulation_summary.txt"
 
 write_summary_txt_hyper(
     output_filename,
@@ -460,5 +481,5 @@ write_summary_txt_hyper(
     rel_drift_rk45=rel_drift_rk45,
 )
 
-print(f"\nRun Complete → {output_folder}/{stem}")
+print(f"\nRun Complete → {run_folder}")
 
