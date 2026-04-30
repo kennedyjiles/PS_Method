@@ -16,7 +16,10 @@ Contents:
     data_to_fig         – Matplotlib formatting helpers shared across plot modules.
   • slice_solution      – Extract a time window (first or last N gyroperiods)
                           from a solution array.
-  • setup_logger        – Configurable file logger for debug runs.
+  • setup_logger /
+    redirect_logger     – Configurable file logger for debug runs; redirect
+                          moves the log file into the run output folder once
+                          that path is known.
 
 IMPORTANT: modules that use @maybe_njit must be imported AFTER
 builtins.npfloat has been set, otherwise the decorator always sees the
@@ -25,6 +28,7 @@ float64 fallback and compiles with njit even when float128 is intended.
 
 import builtins
 import logging
+import os
 import numpy as np
 from numba import njit
 import matplotlib.pyplot as plt
@@ -206,3 +210,41 @@ def setup_logger(name="dipole_logger", filename="dipole_run.log", level=logging.
     logger.addHandler(file_handler)
 
     return logger
+
+
+def redirect_logger(logger, new_path):
+    """Move a logger's file output to a new path.
+
+    Copies any content already written to the original log file, then
+    replaces the file handler so subsequent messages go to new_path.
+    """
+    import shutil
+
+    old_path = None
+    formatter = None
+    for h in logger.handlers:
+        if isinstance(h, logging.FileHandler):
+            old_path = h.baseFilename
+            formatter = h.formatter
+            break
+
+    if old_path is None:
+        return
+
+    # Flush and close the old handler
+    for h in logger.handlers[:]:
+        if isinstance(h, logging.FileHandler):
+            h.flush()
+            h.close()
+            logger.removeHandler(h)
+
+    # Copy early log content to the new location
+    if os.path.exists(old_path) and old_path != os.path.abspath(new_path):
+        shutil.copy2(old_path, new_path)
+        os.remove(old_path)
+
+    # Attach new handler (append so copied content is preserved)
+    new_handler = logging.FileHandler(new_path, mode="a")
+    if formatter:
+        new_handler.setFormatter(formatter)
+    logger.addHandler(new_handler)

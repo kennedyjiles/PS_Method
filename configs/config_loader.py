@@ -212,6 +212,27 @@ def load_config(conf_file):
     if energy is not None and float(energy) <= 0:
         raise ValueError(f"energy_eV must be positive, got {energy}")
 
+    # --- Append git commit hash for reproducibility ---
+    import subprocess
+    try:
+        _hash = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(conf_file)),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        # Check for uncommitted changes
+        _dirty = subprocess.call(
+            ["git", "diff", "--quiet"],
+            cwd=os.path.dirname(os.path.abspath(conf_file)),
+            stderr=subprocess.DEVNULL,
+        )
+        if _dirty:
+            _hash += " (dirty — uncommitted changes)"
+        log.append(f"git commit: {_hash}")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        log.append("git commit: unavailable")
+    log.append("")
+
     # --- Inject metadata for downstream use ---
     cfg["_config_name"] = os.path.splitext(os.path.basename(conf_file))[0]
     cfg["_config_log"]  = log

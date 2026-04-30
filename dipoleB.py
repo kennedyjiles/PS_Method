@@ -777,6 +777,12 @@ out_folder = os.path.join(run_folder, "output")
 os.makedirs(fig_folder, exist_ok=True)
 os.makedirs(out_folder, exist_ok=True)
 
+# --- Redirect debug log to output folder ---
+if DEBUG:
+    _log_path = os.path.join(out_folder, f"{stem}.log")
+    redirect_logger(logger, _log_path)
+    print(f"Debug log redirected to {_log_path}\n")
+
 # --- Write config log to output folder ---
 if _config_log:
     _config_log_path = os.path.join(out_folder, "config_log.txt")
