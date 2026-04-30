@@ -1,3 +1,28 @@
+"""
+universal.py — Shared utilities used by all three field drivers
+               (constB, hyperB, dipoleB).
+
+Contents:
+  • maybe_njit          – Decorator that compiles with numba when using float64
+                          and passes through unmodified for float128.
+  • kinetic_energy /
+    compute_energy_drift /
+    extract_v           – Kinetic-energy helpers for post-processing.
+  • cauchy_sum          – Cauchy product for power-series
+                          multiplication; used by hyperB and dipoleB recurrences.
+  • rk4_fixed_step      – Classical 4th-order Runge–Kutta integrator.
+  • plt_config /
+    sparse_labels /
+    data_to_fig         – Matplotlib formatting helpers shared across plot modules.
+  • slice_solution      – Extract a time window (first or last N gyroperiods)
+                          from a solution array.
+  • setup_logger        – Configurable file logger for debug runs.
+
+IMPORTANT: modules that use @maybe_njit must be imported AFTER
+builtins.npfloat has been set, otherwise the decorator always sees the
+float64 fallback and compiles with njit even when float128 is intended.
+"""
+
 import builtins
 import logging
 import numpy as np
@@ -54,10 +79,15 @@ def extract_v(sol):  # assumes PS output has x, y, z, vx, vy, vz as initial entr
 # =========================================
 @maybe_njit
 def cauchy_sum(a, b, n):
+    """Return the n-th coefficient of the product of two power series.
+
+    Given series a and b, computes  Σ_{j=0}^{n} a[j] * b[n-j],  which is the
+    n-th term in the Cauchy (discrete convolution) product a·b.
+    """
     result = 0.0
     for j in range(n + 1):
         result += a[j] * b[n - j]
-    return result  
+    return result
     
 # ================================================================
 # =============== Runge Kutta 4th Order Fixed Step ===============
@@ -83,9 +113,9 @@ def rk4_fixed_step(func, d0, dt, steps, args=()):
 
     return d_out.T
 
-# ===========================================
-# ============== Misc Plotting ==============
-# ===========================================
+# =======================================================
+# ============== Misc Assists for Plotting ==============
+# =======================================================
 def plt_config(scale=1):
     plt.rcParams['font.family'] = 'Times New Roman'
     plt.rcParams['mathtext.fontset'] = 'cm' # Computer Modern
@@ -111,6 +141,11 @@ def sparse_labels(val, pos):
 
 
 def data_to_fig(x, y, ax, fig):
+    """Convert a data-coordinate point (x, y) to figure-fraction coordinates.
+
+    Useful for placing annotations (e.g. fig.text) at a position that
+    corresponds to a specific data value on a given axes.
+    """
     x64 = float(np.asarray(x, dtype=np.float64))
     y64 = float(np.asarray(y, dtype=np.float64))
     px, py = ax.transData.transform(np.array([[x64, y64]], dtype=np.float64))[0]
@@ -118,6 +153,19 @@ def data_to_fig(x, y, ax, fig):
     return fx, fy
 
 def slice_solution(t_eval, sol, window_duration, norm_time, mode="last"):
+    """Extract a time window from a solution array.
+
+    Parameters
+    ----------
+    t_eval          : 1-D time array.
+    sol             : 2-D solution array, either (nvars, npts) or (npts, nvars).
+    window_duration : length of the window in normalised time units.
+    norm_time       : total simulation time (used to locate the tail end).
+    mode            : "last" returns the final `window_duration` of the run;
+                      "first" returns from t=0 up to `window_duration`.
+
+    Returns a list of 1-D arrays, one per variable (x, y, z, vx, …).
+    """
     t_eval = np.asarray(t_eval)
     if mode == "first":
         # Slice from start up to first N gyroperiods
@@ -140,9 +188,9 @@ def slice_solution(t_eval, sol, window_duration, norm_time, mode="last"):
     else:
         raise ValueError("mode must be 'first' or 'last'")
 
-# ========================================
-# ============= Logging ==================
-# ========================================
+# ==================================================
+# ============= Logging for Debug ==================
+# ==================================================
 
 def setup_logger(name="dipole_logger", filename="dipole_run.log", level=logging.INFO):
     logger = logging.getLogger(name)

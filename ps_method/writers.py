@@ -42,6 +42,8 @@ import h5py
 # =====================================================================
 
 def _to_serializable(x):
+    """Coerce numpy scalars and arrays to native Python types so json.dumps
+    doesn't choke on them."""
     if isinstance(x, (np.floating, np.float32, np.float64)):
         return float(x)
     if isinstance(x, (np.integer,)):
@@ -52,6 +54,11 @@ def _to_serializable(x):
 
 
 def run_hash(params: dict) -> str:
+    """Produce a short unique hash from a run-parameter dict.
+
+    Used as a cache key so that identical configs map to the same h5 file
+    and re-running a simulation skips the solver if the cache already exists.
+    """
     j = json.dumps(params, sort_keys=True, default=_to_serializable, separators=(",", ":"))
     return hashlib.sha1(j.encode("utf-8")).hexdigest()[:16]
 
@@ -61,6 +68,7 @@ def h5_path_for(params, output_folder):
 
 
 def write_dict(f, d, indent=0):
+    """Recursively pretty-print a nested dict to a file handle."""
     pad = " " * indent
     for k, v in d.items():
         if isinstance(v, dict):
@@ -71,6 +79,7 @@ def write_dict(f, d, indent=0):
 
 
 def summarize_error(label, err, f):
+    """Write mean / max / rms of |err| to an open file handle."""
     err = np.abs(err)
     mean_val = np.mean(err)
     max_val  = np.max(err)
@@ -84,6 +93,8 @@ def summarize_error(label, err, f):
 
 
 def summarize(err):
+    """Return a dict of mean / max / rms statistics (same as summarize_error
+    but returns a dict instead of writing to a file)."""
     return {
         "mean": np.mean(err),
         "max":  np.max(np.abs(err)),

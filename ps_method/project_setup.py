@@ -1,3 +1,14 @@
+"""
+project_setup.py — Centralised imports and system-level defaults for the
+                   dipole-B driver (dipoleB.py).
+
+This module is consumed via ``from ps_method.project_setup import *`` so that
+dipoleB.py starts with every library, constant, physics function, and plotting
+helper already in scope.  It also sets the global float type (float64 /
+float128) on builtins.npfloat, which must happen BEFORE any module decorated
+with @maybe_njit is imported.
+"""
+
 # === Standard Library ===
 import os
 import sys
@@ -32,13 +43,6 @@ npfloat         = np.float128 if USE_FLOAT128 else np.float64
 builtins.npfloat = npfloat                                       # make available to functions library
 tol             = 1.0 * np.finfo(npfloat).eps                    # machine epsilon, scaled by tau_0 later
 MAX_PLOT_POINTS = 1_000_000                                      # cap points per graph
-
-# --- Defaults for per-run settings (overridden by YAML config) ---
-PS_order        = 40
-PS_chunk_steps  = int(1e4)
-rtol_rk45       = 1e-8
-atol_rk45       = 1e-10
-user_min_phase  = npfloat(0.1)
 
 # --- System-level constants (unlikely to need per-run tuning) ---
 CACHE_VELOCITY_RTOL = 0.005       # relative tolerance for cache velocity mismatch warning
