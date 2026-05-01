@@ -60,11 +60,11 @@ def run_hash(params: dict) -> str:
     and re-running a simulation skips the solver if the cache already exists.
     """
     j = json.dumps(params, sort_keys=True, default=_to_serializable, separators=(",", ":"))
-    return hashlib.sha1(j.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1(j.encode("utf-8")).hexdigest()[:6]
 
 
 def h5_path_for(params, output_folder):
-    return os.path.join(output_folder, f"run_{run_hash(params)}.h5")
+    return os.path.join(output_folder, f"{run_hash(params)}.h5")
 
 
 def write_dict(f, d, indent=0):
@@ -177,8 +177,7 @@ def build_run_stem(summary, stem):
 
 def build_figure_filename(summary, output_folder, stem, figure_tag, ext="png"):
     """Build the full path for a figure or output file."""
-    run_stem = build_run_stem(summary, stem)
-    return f"{output_folder}/{run_stem}_{figure_tag}.{ext}"
+    return os.path.join(output_folder, f"{stem}_{figure_tag}.{ext}")
 
 
 # =====================================================================
@@ -641,7 +640,7 @@ def write_summary_txt(
     # npfloat type
     npfloat=np.float64,
     # Physics functions (injected to avoid circular imports)
-    compute_mu_ps=None, compute_mu_rk=None, vector_potential_dipole=None,
+    compute_mu_ps=None, compute_mu_rk=None, vector_potential=None,
 ):
     """
     Write the simulation summary text file, including tail-averaged energy
@@ -674,7 +673,7 @@ def write_summary_txt(
 
     # --- Write file ---
     output_filename = build_figure_filename(summary, run_folder, stem,
-                                            figure_tag="simulation_summary", ext="txt")
+                                            figure_tag="summary", ext="txt")
 
     with open(output_filename, "w") as f:
         f.write("=== Simulation Summary ===\n")
@@ -715,7 +714,7 @@ def write_summary_txt(
 
             A_tail = np.empty_like(r_tail)
             for i in range(len(r_tail)):
-                A_tail[i] = vector_potential_dipole(r_tail[i])
+                A_tail[i] = vector_potential(r_tail[i])
 
             v_tail = p_tail - A_tail
             state_tail = np.hstack((r_tail, v_tail))

@@ -9,13 +9,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from ps_method.writers import build_figure_filename
-from ps_method.universal import sparse_labels, data_to_fig
+from ps_method.universal import sparse_labels, data_to_fig, npfloat
+from ps_method.dipole_physics import slice_solution
+import h5py
 import os
 
 # =====================================================
 # ============== Full 2D Trajectory Plot ==============
 # =====================================================
-def plot_full_2d(
+def full_2d(
     summary, run_folder, stem, particle_type, plotbounds, ps_order_label,
     USE_PLOT_TITLES, USE_RK45, USE_RK4, USE_RKG, USE_PS,
     solution_rk45=None, solution_rk4=None, solution_rkg=None,
@@ -54,7 +56,7 @@ def plot_full_2d(
 # =====================================================
 # ============== Full 3D Trajectory Plot ==============
 # =====================================================
-def plot_full_3d(
+def full_3d(
     summary, run_folder, stem, particle_type, plotbounds, ps_order_label,
     USE_PLOT_TITLES, USE_RK45, USE_RK4, USE_RKG, USE_PS,
     solution_rk45=None, solution_rk4=None, solution_rkg=None,
@@ -93,7 +95,7 @@ def plot_full_3d(
 # =====================================================
 # ================ 2D Trajectory Slice ================
 # =====================================================
-def plot_slice_2d(
+def slice_2d(
     summary, run_folder, stem, particle_type, ps_order_label,
     USE_PLOT_TITLES, USE_RK45, USE_RK4, USE_RKG, USE_PS,
     rk45_x_slice=None, rk45_y_slice=None,
@@ -130,7 +132,7 @@ def plot_slice_2d(
 # =====================================================
 # ================ 3D Trajectory Slice ================
 # =====================================================
-def plot_slice_3d(
+def slice_3d(
     summary, run_folder, stem, particle_type, plotbounds, ps_order_label,
     USE_PLOT_TITLES, USE_RK45, USE_RK4, USE_RKG, USE_PS,
     rk45_x_slice=None, rk45_y_slice=None, rk45_z_slice=None,
@@ -173,7 +175,7 @@ def plot_slice_3d(
 # =====================================================
 # ============== KE Relative Error Plot ===============
 # =====================================================
-def plot_ke_error(
+def ke_error(
     summary, run_folder, stem, particle_type, ps_order_label,
     USE_PLOT_TITLES, time_factor, norm_time,
     ps_data=None, rk4_data=None, rk45_data=None, rkg_data=None,
@@ -329,10 +331,10 @@ def plot_ke_error(
 # =============================================================
 # ============== Dragt Poincaré Surface of Section ============
 # =============================================================
-def plot_dragt_poincare(
+def dragt_poincare(
     run_folder, L_shell_dragt, gamma,
     rho_bnd, rho_dot_bnd, rho_0_sim, rho_dot_0_sim,
-    crossings=None,
+    crossings=None, stem="",
 ):
     """
     Poincaré surface of section at z=0 in Dragt dimensionless units.
@@ -367,14 +369,14 @@ def plot_dragt_poincare(
     ax.grid(True)
     ax.legend(loc="upper right", fontsize=9)
     fig.canvas.draw()
-    fig.savefig(os.path.join(run_folder, "dragt_surface_section.png"), dpi=300)
+    fig.savefig(os.path.join(run_folder, f"{stem}_dragt_surface_section.png"), dpi=300)
     plt.close(fig)
 
 
 # =============================================================
 # ============== Gyrophase vs Magnetic Moment =================
 # =============================================================
-def plot_gyrophase_mu(run_folder, gyrophase, mu_cross):
+def gyrophase_mu(run_folder, gyrophase, mu_cross, stem=""):
     """Scatter plot of gyrophase vs magnetic moment at equatorial crossings."""
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -384,28 +386,28 @@ def plot_gyrophase_mu(run_folder, gyrophase, mu_cross):
     ax.set_title("Gyrophase vs. Adiabatic Invariance at Equator")
     ax.set_ylim(-180, 180)
     ax.grid(True)
-    fig.savefig(os.path.join(run_folder, "phase_vs_mu.png"), dpi=300)
+    fig.savefig(os.path.join(run_folder, f"{stem}_phase_vs_mu.png"), dpi=300)
     plt.close(fig)
 
 
 # =============================================================
 # ============== Polar Phase Space ============================
 # =============================================================
-def plot_polar_phase_space(run_folder, gyrophase, mu_cross):
+def polar_phase_space(run_folder, gyrophase, mu_cross, stem=""):
     """Polar plot of gyrophase vs magnetic moment."""
 
     gyrophase_rad = np.radians(gyrophase)
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': 'polar'})
     ax.scatter(gyrophase_rad, mu_cross, s=10, c='blue', alpha=0.6, edgecolors='none')
     ax.set_title("Phi vs Mu", va='bottom')
-    fig.savefig(os.path.join(run_folder, "polar_phase_space.png"), dpi=300)
+    fig.savefig(os.path.join(run_folder, f"{stem}_polar_phase_space.png"), dpi=300)
     plt.close(fig)
 
 
 # =============================================================
 # ============== Meridian Plane (Dragt Fig. 3) ================
 # =============================================================
-def plot_meridian_plane(run_folder, rho_arr, z_arr):
+def meridian_plane(run_folder, rho_arr, z_arr, stem=""):
     """Trajectory in the meridian plane (rho vs z) in Dragt dimensionless units."""
 
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -416,14 +418,14 @@ def plot_meridian_plane(run_folder, rho_arr, z_arr):
     ax.set_title(r"Meridian Plane Comparison ")
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper right')
-    fig.savefig(os.path.join(run_folder, "dragt_z_vs_rho.png"), dpi=300)
+    fig.savefig(os.path.join(run_folder, f"{stem}_dragt_z_vs_rho.png"), dpi=300)
     plt.close(fig)
 
 
 # =============================================================
 # ============== Adiabaticity Parameter vs Time ===============
 # =============================================================
-def plot_adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max):
+def adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max, stem=""):
     """Adiabaticity parameter epsilon vs time (semilogy)."""
 
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -436,14 +438,14 @@ def plot_adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max
     ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
     print(f"(Adiabaticity parameter, <.1 stable) epsilon:\n   initial={eps_initial:.4f}, mean={eps_mean:.4f}, max={eps_max:.4f}\n")
     fig.canvas.draw()
-    fig.savefig(os.path.join(run_folder, "dragt_adiabaticity.png"), dpi=300, bbox_inches='tight')
+    fig.savefig(os.path.join(run_folder, f"{stem}_dragt_adiabaticity.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
 
 
 # =============================================================
 # ============== P_phi Relative Error =========================
 # =============================================================
-def plot_pphi_error(run_folder, t_pphi_gyro, rel_error_log, P_phi_initial, max_err, ylabel_str):
+def pphi_error(run_folder, t_pphi_gyro, rel_error_log, P_phi_initial, max_err, ylabel_str, stem=""):
     """Log-log plot of canonical angular momentum conservation error."""
 
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -462,14 +464,14 @@ def plot_pphi_error(run_folder, t_pphi_gyro, rel_error_log, P_phi_initial, max_e
     ax.grid(True, which="both", ls="--", alpha=0.5)
 
     fig.tight_layout()
-    fig.savefig(os.path.join(run_folder, "P_phi_rel_error_loglog.png"), dpi=300)
+    fig.savefig(os.path.join(run_folder, f"{stem}_P_phi_rel_error.png"), dpi=300)
     plt.close(fig)
 
 
 # =====================================================
 # ============== Magnetic Moment Deviations ===========
 # =====================================================
-def plot_mu_deviation(
+def mu_deviation(
     summary, run_folder, stem, particle_type, ps_order_label,
     USE_PLOT_TITLES,
     ps_data=None, rk4_data=None, rk45_data=None, rkg_data=None,
@@ -559,3 +561,101 @@ def plot_mu_deviation(
     fig_path_mu = build_figure_filename(summary, run_folder, stem, figure_tag="mu", ext="png")
     plt.savefig(fig_path_mu, dpi=600, bbox_inches="tight")
     plt.close(fig)
+
+
+# ------------------------------------------------------------------
+#  prepare_slice_window  — extract time-windowed trajectory slices
+# ------------------------------------------------------------------
+def prepare_slice_window(
+    slice_mode, window_duration, norm_time,
+    # PS-specific
+    USE_PS=False, cache_path=None, ps_step=None, steps_ps=None,
+    PS_decimate=1, MAX_PLOT_POINTS=1_000_000,
+    # RK4
+    USE_RK4=False, solution_rk4=None, rk4_step=None,
+    # RKG
+    USE_RKG=False, solution_rkg=None, rkg_step=None,
+    # RK45
+    USE_RK45=False, y_rk45_common=None,
+):
+    """Compute time-windowed trajectory slices for each enabled solver.
+
+    Returns a dict with keys like ``ps_x_slice``, ``rk4_y_slice``, etc.
+    Missing solvers get ``None`` values.
+    """
+    if slice_mode == "first":
+        t_start = 0.0
+        t_end   = min(norm_time, window_duration)
+    elif slice_mode == "last":
+        t_end   = norm_time
+        t_start = max(0.0, norm_time - window_duration)
+    else:
+        raise ValueError("slice_mode must be 'first' or 'last'")
+
+    result = dict(
+        ps_x_slice=None, ps_y_slice=None, ps_z_slice=None,
+        rk4_x_slice=None, rk4_y_slice=None, rk4_z_slice=None,
+        rkg_x_slice=None, rkg_y_slice=None, rkg_z_slice=None,
+        rk45_x_slice=None, rk45_y_slice=None, rk45_z_slice=None,
+        ps_order_label=None,
+    )
+
+    # ---------- PS ----------
+    if USE_PS:
+        i0_phys = int(np.floor(t_start / ps_step))
+        i1_phys = int(np.floor(t_end   / ps_step))
+        i0_phys = max(0, i0_phys)
+        i1_phys = min(i1_phys, steps_ps)
+        if i1_phys < i0_phys:
+            raise RuntimeError("Empty PS slice window")
+
+        ps_store_stride = PS_decimate if PS_decimate > 1 else 1
+        j0 = int(np.ceil(i0_phys / ps_store_stride))
+        j1 = int(np.floor(i1_phys / ps_store_stride))
+        if j1 < j0:
+            raise RuntimeError("Empty PS stored slice window")
+
+        with h5py.File(cache_path, "r") as ps_h5:
+            ps_grp = ps_h5["ps"]
+            ps_y   = ps_grp["y"]
+            n_store = ps_y.shape[1]
+            j0 = max(0, min(j0, n_store - 1))
+            j1 = max(0, min(j1, n_store - 1))
+            if j1 < j0:
+                raise RuntimeError("Empty PS stored slice")
+            y_win = ps_y[:, j0:j1+1]
+            result["ps_order_label"] = int(ps_grp.attrs["max_ps"])
+
+        plot_stride = max(1, y_win.shape[1] // MAX_PLOT_POINTS)
+        result["ps_x_slice"] = y_win[0, ::plot_stride]
+        result["ps_y_slice"] = y_win[1, ::plot_stride]
+        result["ps_z_slice"] = y_win[2, ::plot_stride]
+
+    # ---------- RK4 ----------
+    if USE_RK4:
+        t_rk4 = rk4_step * np.arange(solution_rk4.shape[1], dtype=npfloat)
+        rk4_x, rk4_y, rk4_z = slice_solution(
+            t_rk4, solution_rk4, window_duration, norm_time, mode=slice_mode)[:3]
+        result["rk4_x_slice"] = rk4_x
+        result["rk4_y_slice"] = rk4_y
+        result["rk4_z_slice"] = rk4_z
+
+    # ---------- RKG ----------
+    if USE_RKG:
+        t_rkg = rkg_step * np.arange(solution_rkg.shape[0], dtype=npfloat)
+        rkg_x, rkg_y, rkg_z = slice_solution(
+            t_rkg, solution_rkg.T, window_duration, norm_time, mode=slice_mode)[:3]
+        result["rkg_x_slice"] = rkg_x
+        result["rkg_y_slice"] = rkg_y
+        result["rkg_z_slice"] = rkg_z
+
+    # ---------- RK45 ----------
+    if USE_RK45:
+        t_rk45 = ps_step * np.arange(y_rk45_common.shape[1], dtype=npfloat)
+        rk45_x, rk45_y, rk45_z = slice_solution(
+            t_rk45, y_rk45_common, window_duration, norm_time, mode=slice_mode)[:3]
+        result["rk45_x_slice"] = rk45_x
+        result["rk45_y_slice"] = rk45_y
+        result["rk45_z_slice"] = rk45_z
+
+    return result

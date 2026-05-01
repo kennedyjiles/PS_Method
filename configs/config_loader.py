@@ -461,6 +461,9 @@ def compute_derived_dipole(cfg, npfloat=np.float64):
         "atol_rk45":       cfg.get("atol_rk45", 1e-10),
         "user_min_phase":  cfg.get("user_min_phase", 0.1),
         "MAX_PLOT_POINTS": cfg.get("max_plot_points", 1_000_000),
+        "USE_FLOAT128":    cfg.get("use_float128", False),
+        "CACHE_VELOCITY_RTOL": cfg.get("cache_velocity_rtol", 0.005),
+        "PLOT_BOUNDARY_PAD":   cfg.get("plot_boundary_pad", 1.1),
 
         # Special modes
         "legacy_h5_path": cfg.get("legacy_h5_path"),

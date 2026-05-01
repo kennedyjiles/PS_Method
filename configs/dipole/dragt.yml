@@ -3,11 +3,11 @@
 # ===================================================================
 
 particle: proton
-energy_eV: 210.5306105318196e6
-pitch_deg: 67.61877044327187
-phi_deg: -90.0
-x_initial: 3.34483896
-gyroperiods: 1.0e5
+energy_eV: 0.1e9
+pitch_deg: 60
+phi_deg: 0.0
+x_initial: 1.3
+gyroperiods: 1.0e3
 use_gyroradius_L_correction: true
 
 solvers:
@@ -15,7 +15,6 @@ solvers:
   adaptive: true
 
 ps_order: 1000
-round_steps: false
 
 plotting:
   titles: true

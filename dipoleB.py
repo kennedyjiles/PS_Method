@@ -1,6 +1,6 @@
 """
 dipoleB.py — Main driver for charged particle trajectory simulation in a
-             magnetic dipole field using using power series method with
+             magnetic dipole field using the power series (PS) method with
              optional RK4, RK45, and RKG (symplectic) solvers for comparison.
 
 Usage:
@@ -10,7 +10,7 @@ Usage:
     python dipoleB.py configs/dipole/my_run.yml    # direct path to a custom YAML config
 
 Available named configs:
-    demo, paper1, paper2, paper3, dragt, walt, monster_ps, manual
+    demo, paper1, paper2, paper3, dragt, walt, monster_ps, manual, testrun
 
 To create a custom run:
     1. Copy configs/dipole/base.yml to configs/dipole/my_run.yml
@@ -22,7 +22,23 @@ specify falls back to the default value. Do NOT edit base.yml directly; it
 serves as the reference for all runs.
 """
 
-from ps_method.project_setup import *
+import numpy as np
+import builtins
+import os
+import sys
+import time
+import json
+import logging
+import tracemalloc
+from types import SimpleNamespace
+
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+import h5py
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+from ps_method.constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
+from configs.config_loader import load_config, compute_derived_dipole as compute_derived, copy_config_to_output
 
 
 def main(cfg_path, replot=False):
@@ -34,11 +50,27 @@ def main(cfg_path, replot=False):
     replot   : bool – if True, force READ_DATA=True (skip solvers,
                regenerate plots from cached h5 data).
     """
-    # npfloat and B_0 are reassigned in cache-reload branches, which makes
-    # Python treat them as local for the entire function.  Provide an
-    # unconditional initial assignment so reads before the conditional
-    # branches don't hit UnboundLocalError.
-    npfloat = builtins.npfloat
+
+    cfg        = load_config(cfg_path)
+
+    # --- Resolve float type BEFORE importing physics modules so @maybe_njit
+    #     sees the correct type (float128 skips njit, float64 compiles). ---
+    USE_FLOAT128 = cfg.get("use_float128", False)
+    npfloat = np.float128 if USE_FLOAT128 else np.float64
+    builtins.npfloat = npfloat
+    tol = 1.0 * np.finfo(npfloat).eps
+    plt.rcParams['agg.path.chunksize'] = 100000 if USE_FLOAT128 else 1000
+
+    # --- Import physics modules AFTER builtins.npfloat is set ---
+    from ps_method import dipole_physics as dp
+    from ps_method import dragt_physics as df
+    from ps_method import dipole_plots as dplt
+    from ps_method import writers as wr
+    from ps_method.universal import rk4_fixed_step, plt_config, setup_logger, redirect_logger
+    from ps_method.dipole_adaptive import run_ps_streaming_adaptive
+
+    # B_0 reassigned in cache-reload branches — provide unconditional initial
+    # assignment so reads before the conditional branches don't hit UnboundLocalError.
     from ps_method.constants import B_0
 
     DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
@@ -46,8 +78,6 @@ def main(cfg_path, replot=False):
         logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
         tracemalloc.start()
 
-    cfg        = load_config(cfg_path)
-    _config_log = cfg.pop("_config_log", [])   # save for writing to file later
     params     = compute_derived(cfg, npfloat=npfloat)
 
     # =========================================================
@@ -111,6 +141,8 @@ def main(cfg_path, replot=False):
     atol_rk45       = params["atol_rk45"]
     user_min_phase  = params["user_min_phase"]
     MAX_PLOT_POINTS_local = params.get("MAX_PLOT_POINTS", 1_000_000)
+    CACHE_VELOCITY_RTOL   = params.get("CACHE_VELOCITY_RTOL", 0.005)
+    PLOT_BOUNDARY_PAD     = params.get("PLOT_BOUNDARY_PAD", 1.1)
     manual_h5_path  = params.get("manual_h5_path", None)
 
     # --- Adaptive PS settings ---
@@ -311,7 +343,7 @@ def main(cfg_path, replot=False):
     y0_ps[14, 0] = -3 * x0 * z0 * r5inv
     y0_ps[15, 0] = -3 * y0 * z0 * r5inv
     y0_ps[16, 0] = -(3*z0*z0 - r2) * r5inv
-    mu0_ps = compute_mu_ps(y0_ps, mass)[0]
+    mu0_ps = dp.compute_mu_ps(y0_ps, mass)[0]
 
 
     # === Build parameter tracer & check cache ===
@@ -322,13 +354,13 @@ def main(cfg_path, replot=False):
     Beware that these files can be GB size for dipole.
     """
     if not USE_MANUAL_FILE:
-        run_params = get_run_params(USE_RK45, USE_RK4, USE_RKG, USE_PS, PS_decimate, PS_CHUNKING,   # parameters it is scanning
+        run_params = wr.get_run_params_dipole(USE_RK45, USE_RK4, USE_RKG, USE_PS, PS_decimate, PS_CHUNKING,   # parameters it is scanning
                         mass_si, q_e, B_0, gamma, user_min_phase,
                         x_initial, y_initial, z_initial,
                         pitch_deg, phi_deg,
                         norm_time, ps_step, rk4_step, rkg_step,
                         PS_order, tol_local, qoverm, rtol_rk45, atol_rk45)
-        cache_path = h5_path_for(run_params, run_storage)
+        cache_path = wr.h5_path_for(run_params, run_storage)
         if os.path.exists(cache_path) and READ_DATA:
             print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
 
@@ -432,7 +464,7 @@ def main(cfg_path, replot=False):
                 else:
                     _r_i = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
                     _L_mon = float(_r_i**3 / _rho_i**2)
-                dragt_mon = DragtMonitor(_L_mon, charge_sign,
+                dragt_mon = df.conservation_monitor(_L_mon, charge_sign,
                                          check_every=1, rtol=dragt_monitor_rtol)
                 # ----------------------------------
                 _stream_args = dict(
@@ -463,7 +495,7 @@ def main(cfg_path, replot=False):
                     )
                     max_ps, elapsed_ps = run_ps_streaming_adaptive(**_stream_args)
                 else:
-                    max_ps, elapsed_ps = run_ps_streaming_with_decimation(**_stream_args)
+                    max_ps, elapsed_ps = dp.run_ps_streaming_with_decimation(**_stream_args)
                 dragt_mon.summary()
                 solution_ps = None
                 orders_used = None
@@ -474,7 +506,7 @@ def main(cfg_path, replot=False):
                 start_time_rk45 = time.time()
                 t_common = ps_step * np.arange(steps_ps + 1, dtype=npfloat)
                 solution_rk45 = solve_ivp(
-                    lorentz_force_dipole,
+                    dp.lorentz_force,
                     (0.0, norm_time),
                     initial_pos_vel,
                     method="RK45",
@@ -489,7 +521,7 @@ def main(cfg_path, replot=False):
                 steps_rk4 = int(norm_time / rk4_step)
                 start_time_rk4 = time.time()
                 solution_rk4 = rk4_fixed_step(
-                    lorentz_force_dipole,
+                    dp.lorentz_force,
                     initial_pos_vel,
                     rk4_step,
                     steps_rk4,
@@ -502,7 +534,7 @@ def main(cfg_path, replot=False):
                 r0 = np.array([x_initial, y_initial, z_initial], dtype=npfloat)   # already normalized RE units
                 v_tau_vec = np.array([vx_initial, vy_initial, vz_initial], dtype=npfloat)
 
-                A0 = vector_potential_dipole(r0)
+                A0 = dp.vector_potential(r0)
                 p0 = v_tau_vec + A0
                 y0 = np.concatenate((r0, p0))   # for Hamiltonian in RKG
                 # y0 = np.concatenate((r0, v_tau_vec))  # for Lorentz force in RKG, used as a sanity check
@@ -511,8 +543,8 @@ def main(cfg_path, replot=False):
                 steps_rkg = max(1, steps_rkg)
 
                 start_time_rkg = time.time()
-                solution_rkg = rkgl4_hamiltonian(
-                    hamiltonian_rhs,
+                solution_rkg = dp.rkgl4_hamiltonian(
+                    dp.hamiltonian_rhs,
                     y0,
                     rkg_step,
                     steps_rkg,
@@ -670,17 +702,17 @@ def main(cfg_path, replot=False):
 
                 # ====== h5 file creation =============
                 if USE_PS:
-                    append_results_h5(cache_path, results, summary)
+                    wr.append_results_h5_dipole(cache_path, results, summary)
                     print(f"Updated streamed file → {os.path.basename(cache_path)}")
                 else:
-                    save_results_h5(cache_path, results, summary)
+                    wr.save_results_h5_dipole(cache_path, results, summary)
                     print(f"Saved results → {os.path.basename(cache_path)}")
 
     if DEBUG:
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for load/write h5: {peak / 1024**2:.2f} MB\n")
-        logger.debug(check_time_grids(
+        logger.debug(dp.check_time_grids(
         norm_time=norm_time,
         ps_step=ps_step if USE_PS else None,
         steps_ps=steps_ps if USE_PS else None,
@@ -784,30 +816,20 @@ def main(cfg_path, replot=False):
 
     # === Create run-specific output subfolders ===
     # data/<config>/<run-hash>/figures/   ← plots
-    # data/<config>/<run-hash>/output/    ← text summaries
+    # data/<config>/<run-hash>/           ← summary, config copy, log
     # data/<config>/_rawdata/             ← h5 trajectory files
     run_folder = os.path.join(output_folder, stem)
     fig_folder = os.path.join(run_folder, "figures")
-    out_folder = os.path.join(run_folder, "output")
     os.makedirs(fig_folder, exist_ok=True)
-    os.makedirs(out_folder, exist_ok=True)
 
-    # --- Redirect debug log to output folder ---
+    # --- Redirect debug log to run folder ---
     if DEBUG:
-        _log_path = os.path.join(out_folder, f"{stem}.log")
+        _log_path = os.path.join(run_folder, f"{stem}.log")
         redirect_logger(logger, _log_path)
         print(f"Debug log redirected to {_log_path}\n")
 
-    # --- Write config log to output folder ---
-    if _config_log:
-        _config_log_path = os.path.join(out_folder, "config_log.txt")
-        with open(_config_log_path, "w") as _f:
-            _f.write("\n".join(_config_log))
-        print(f"Config log written to {_config_log_path}\n")
-
-    # --- Copy config YAML to output folder (with git hash) ---
-    copy_config_to_output(cfg_path, output_folder)   # replot copy (overwritten each run)
-    copy_config_to_output(cfg_path, out_folder)      # permanent snapshot for this run
+    # --- Copy config YAML to run folder (with git hash) ---
+    copy_config_to_output(cfg_path, run_folder)
 
     # =====================================================
     # ============== Full Trajectory Plots ================
@@ -826,134 +848,42 @@ def main(cfg_path, replot=False):
             x_ps_plot=x_ps_plot if USE_PS else None,
             y_ps_plot=y_ps_plot if USE_PS else None,
         )
-        plot_full_2d(**_traj_common)
-        plot_full_3d(**_traj_common, z_ps_plot=z_ps_plot if USE_PS else None)
+        dplt.full_2d(**_traj_common)
+        dplt.full_3d(**_traj_common, z_ps_plot=z_ps_plot if USE_PS else None)
 
     # ========================================================================
     # ================ Creating Plot Window (slice of time) ==================
     # ========================================================================
-    """
-    Generally only interested in a specific window of time for a run, like 'first' and 'last' parts of the run. Test particle
-    yml file lets you specify in physical seconds how big you want this window to be via window_time. Generally looking at a drift
-    or several bounce periods is useful. If you don't know or have these numbers, they are an output of the calculations and after
-    completing the initial run, you can use this information to adjust plotting (no impact to h5 file creation).
-    """
     if DEBUG: tracemalloc.start()
 
-    if slice_mode == "first":
-        t_start = 0.0
-        t_end   = min(norm_time, window_duration)
-    elif slice_mode == "last":
-        t_end   = norm_time
-        t_start = max(0.0, norm_time - window_duration)
-    else:
-        raise ValueError("slice_mode must be 'first' or 'last'")
-
-
-    # =========== PS Window Load ===============
-
-    if USE_PS:
-        # --- map physical time → PS indices ---
-        i0_phys = int(np.floor(t_start / ps_step))
-        i1_phys = int(np.floor(t_end   / ps_step))
-        i0_phys = max(0, i0_phys)
-        i1_phys = min(i1_phys, steps_ps)
-
-        if i1_phys < i0_phys:
-            raise RuntimeError("Empty PS slice window")
-
-        ps_store_stride = PS_decimate if PS_decimate > 1 else 1
-
-        # --- map physical → stored indices ---
-        j0 = int(np.ceil(i0_phys / ps_store_stride))
-        j1 = int(np.floor(i1_phys / ps_store_stride))
-
-        if j1 < j0:
-            raise RuntimeError("Empty PS stored slice window")
-
-        # --- Load ONLY the window from HDF5 ---
-        with h5py.File(cache_path, "r") as ps_h5:
-            ps_grp = ps_h5["ps"]
-            ps_y   = ps_grp["y"]
-
-            n_store = ps_y.shape[1]
-            j0 = max(0, min(j0, n_store - 1))
-            j1 = max(0, min(j1, n_store - 1))
-
-            if j1 < j0:
-                raise RuntimeError("Empty PS stored slice")
-
-            y_win = ps_y[:, j0:j1+1]
-            ps_order_label = int(ps_grp.attrs["max_ps"])
-
-        plot_stride = max(1, y_win.shape[1] // MAX_PLOT_POINTS_local)
-
-        ps_x_slice = y_win[0, ::plot_stride]
-        ps_y_slice = y_win[1, ::plot_stride]
-        ps_z_slice = y_win[2, ::plot_stride]
-
-    if USE_RK4:
-        t_rk4 = rk4_step * np.arange(solution_rk4.shape[1], dtype=npfloat)
-        rk4_x_slice, rk4_y_slice, rk4_z_slice = slice_solution(
-            t_rk4,solution_rk4, window_duration, norm_time, mode=slice_mode )[:3]
-
-    if USE_RKG:
-        t_rkg = rkg_step * np.arange(solution_rkg.shape[0], dtype=npfloat)
-        rkg_x_slice, rkg_y_slice, rkg_z_slice = slice_solution(
-            t_rkg, solution_rkg.T, window_duration, norm_time, mode=slice_mode )[:3]
-
-    if USE_RK45:
-        t_rk45 = ps_step * np.arange(y_rk45_common.shape[1], dtype=npfloat)
-        rk45_x_slice, rk45_y_slice, rk45_z_slice = slice_solution(
-            t_rk45, y_rk45_common, window_duration, norm_time, mode=slice_mode )[:3]
-
+    _sw = dplt.prepare_slice_window(
+        slice_mode, window_duration, norm_time,
+        USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
+        steps_ps=steps_ps, PS_decimate=PS_decimate,
+        MAX_PLOT_POINTS=MAX_PLOT_POINTS_local,
+        USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
+        USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
+        USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
+    )
+    ps_x_slice   = _sw["ps_x_slice"]
+    ps_y_slice   = _sw["ps_y_slice"]
+    ps_z_slice   = _sw["ps_z_slice"]
+    rk4_x_slice  = _sw["rk4_x_slice"]
+    rk4_y_slice  = _sw["rk4_y_slice"]
+    rk4_z_slice  = _sw["rk4_z_slice"]
+    rkg_x_slice  = _sw["rkg_x_slice"]
+    rkg_y_slice  = _sw["rkg_y_slice"]
+    rkg_z_slice  = _sw["rkg_z_slice"]
+    rk45_x_slice = _sw["rk45_x_slice"]
+    rk45_y_slice = _sw["rk45_y_slice"]
+    rk45_z_slice = _sw["rk45_z_slice"]
+    if _sw["ps_order_label"] is not None:
+        ps_order_label = _sw["ps_order_label"]
 
     if DEBUG:
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for slice analysis: {peak / 1024**2:.2f} MB")
-        tol_factor = 1.5  # allow ~1 timestep mismatch
-
-        def _check_window(label, t0, t1, dt):
-            if t0 is None or t1 is None or dt is None:
-                return
-            dt_tol = tol_factor * dt
-            if abs(t0 - t_start) > dt_tol or abs(t1 - t_end) > dt_tol:
-                logger.warning(
-                    f"[SLICE MISMATCH] {label}: "
-                    f"[{t0:.6e}, {t1:.6e}] vs "
-                    f"expected [{t_start:.6e}, {t_end:.6e}] "
-                    f"(dt≈{dt:.2e})"
-                )
-            else:
-                logger.debug(
-                    f"[SLICE OK] {label}: "
-                    f"[{t0:.6e}, {t1:.6e}]"
-                )
-
-        # ---- PS ----
-        if USE_PS:
-            t_ps_start = j0 * ps_store_stride * ps_step
-            t_ps_end   = j1 * ps_store_stride * ps_step
-            _check_window("PS", t_ps_start, t_ps_end, ps_step)
-
-        # ---- RK4 ----
-        if USE_RK4:
-            t_rk4_start = t_rk4[0] if len(t_rk4) else None
-            t_rk4_end   = t_rk4[-1] if len(t_rk4) else None
-            _check_window("RK4", t_rk4_start, t_rk4_end, rk4_step)
-
-        # ---- RKG ----
-        if USE_RKG:
-            t_rkg_start = t_rkg[0] if len(t_rkg) else None
-            t_rkg_end   = t_rkg[-1] if len(t_rkg) else None
-            _check_window("RKG", t_rkg_start, t_rkg_end, rkg_step)
-
-        # ---- RK45 ----
-        if USE_RK45:
-            t_rk45_start = t_rk45[0] if len(t_rk45) else None
-            t_rk45_end   = t_rk45[-1] if len(t_rk45) else None
-            _check_window("RK45", t_rk45_start, t_rk45_end, ps_step)
 
 
 
@@ -976,9 +906,9 @@ def main(cfg_path, replot=False):
     )
 
     if USE_FULL_PLOT:
-        plot_slice_2d(**_slice_common)
+        dplt.slice_2d(**_slice_common)
 
-    plot_slice_3d(
+    dplt.slice_3d(
         **_slice_common, plotbounds=plotbounds,
         rk45_z_slice=rk45_z_slice if USE_RK45 else None,
         rk4_z_slice=rk4_z_slice if USE_RK4 else None,
@@ -990,375 +920,80 @@ def main(cfg_path, replot=False):
     # =====================================================
     # ============== KE Relative Error Plot ===============
     # =====================================================
-    """
-    This section calculates the relative KE error plot over the entire run. This is done in chunks
-    """
-
     if DEBUG: tracemalloc.start()
 
-    time_factor = 1.0 / T_gyro  # to convert normalized time to gyroperiods
+    _ke = dp.compute_ke_errors(
+        T_gyro, n_ps=n_ps, MAX_PLOT_POINTS=MAX_PLOT_POINTS_local,
+        USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
+        PS_decimate=PS_decimate, E0_ps=E0_ps,
+        USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
+        USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
+        USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
+        USE_EXTERNAL_H5_ps=USE_EXTERNAL_H5_ps,   external_h5_ps=external_h5_ps,
+        USE_EXTERNAL_H5_rk4=USE_EXTERNAL_H5_rk4, external_h5_rk4=external_h5_rk4,
+        USE_EXTERNAL_H5_rk45=USE_EXTERNAL_H5_rk45, external_h5_rk45=external_h5_rk45,
+        USE_EXTERNAL_H5_rkg=USE_EXTERNAL_H5_rkg,   external_h5_rkg=external_h5_rkg,
+        vector_potential_func=dp.vector_potential,
+        load_results_h5_func=wr.load_results_h5_dipole,
+    )
 
-    if USE_PS: energy_stride = max(1, n_ps // MAX_PLOT_POINTS_local)
+    time_factor    = _ke["time_factor"]
+    energy_stride  = _ke["energy_stride"]
+    rel_drift_ps   = _ke["rel_drift_ps"]
+    rel_drift_rk4  = _ke["rel_drift_rk4"]
+    rel_drift_rk45 = _ke["rel_drift_rk45"]
+    rel_drift_rkg  = _ke["rel_drift_rkg"]
 
-    if USE_EXTERNAL_H5_ps:
-        # Open the file directly from the SSD to avoid loading 200GB into RAM...it will die a horrible death
-        with h5py.File(external_h5_ps, 'r') as external:
-            ext_ps = external["ps"]
-
-            # Create a reference to the 'y' dataset on the disk
-            y_ext = ext_ps["y"]
-            n_store = y_ext.shape[1]
-
-            # Read scalar values from the metadata attributes (.attrs)
-            ps_step_ext = ext_ps.attrs["dt"]
-            ps_decimate_ext = ext_ps.attrs.get("decimate", 1)
-            dt_store_ext = ps_step_ext * ps_decimate_ext
-
-            energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS_local)
-
-            # ---- plot-ready time axis ----
-            idx = np.arange(0, n_store, energy_stride_ext)
-            t_eval_ps_ext = idx * dt_store_ext
-
-            # ---- strided energy ----
-            # The ::stride syntax pulls ONLY the needed points directly from the SSD
-            vxe = y_ext[3, ::energy_stride_ext].astype(np.float64)
-            vye = y_ext[4, ::energy_stride_ext].astype(np.float64)
-            vze = y_ext[5, ::energy_stride_ext].astype(np.float64)
-
-            E_ext = 0.5 * (vxe*vxe + vye*vye + vze*vze)
-            rel_drift_ps_ext = (E_ext - E_ext[0]) / E_ext[0]
-
-            PS_order_ext = ext_ps.attrs.get("max_ps", None)
-
-    if USE_EXTERNAL_H5_rk4:
-        external_rk4 = load_results_h5(external_h5_rk4)
-        ext_rk4 = external_rk4["rk4"]
-        y_rk4_ext = ext_rk4["y"]
-
-        if "t" in ext_rk4 and ext_rk4["t"] is not None:
-            t_eval_rk4_ext = ext_rk4["t"]
-
-        elif "dt" in ext_rk4 and "steps" in ext_rk4:
-            t_eval_rk4_ext = ext_rk4["dt"] * np.arange(ext_rk4["steps"] + 1, dtype=npfloat)
-        else:
-            raise ValueError(
-                "External RK4 H5 file has no time information "
-                "(no 't', no 'dt/steps').")
-
-        # ensure shape consistency
-        if y_rk4_ext.shape[0] != 6:
-            y_rk4_ext = y_rk4_ext.T
-
-        # velocity, energy, drift ----
-        v_rk4_ext = y_rk4_ext[3:6]
-        E_rk4_ext = 0.5 * np.sum(v_rk4_ext**2, axis=0)
-        rel_drift_rk4_ext = np.abs(E_rk4_ext - E_rk4_ext[0]) / E_rk4_ext[0]
-
-
-    if USE_EXTERNAL_H5_rk45:
-        externalb = load_results_h5(external_h5_rk45)
-        ext_rk45 = externalb["rk45"]
-
-        y_rk45_ext = ext_rk45["y"]
-
-        # ensure shape consistency
-        if y_rk45_ext.shape[0] != 6:
-            y_rk45_ext = y_rk45_ext.T
-
-        n_store = y_rk45_ext.shape[1]
-
-        # ---- time base ----
-        if "t" in ext_rk45 and ext_rk45["t"] is not None:
-            t_ext = np.asarray(ext_rk45["t"])
-
-        else:
-            # RK45 on PS grid → respect PS decimation
-            ps_step_ext = ext_rk45.get("dt", ps_step)
-            ps_decimate_ext = ext_rk45.get("decimate", 1)
-            dt_store_ext = ps_step_ext * ps_decimate_ext
-            t_ext = dt_store_ext * np.arange(n_store, dtype=npfloat)
-
-        # ---- energy stride (plot-only) ----
-        energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS_local)
-        idx = np.arange(0, n_store, energy_stride_ext)
-
-        t_eval_rk45_ext = t_ext[idx]
-
-        # ---- velocity, energy ----
-        v = y_rk45_ext[3:6, idx].astype(np.float64)
-        E = 0.5 * np.sum(v*v, axis=0)
-        rel_drift_rk45_ext = (E - E[0]) / E[0]
-
-
-    if USE_EXTERNAL_H5_rkg:
-        with h5py.File(external_h5_rkg, 'r') as external_file:
-            ext_rkg = external_file["rkg"]
-            y_dataset = ext_rkg["y"]
-
-            is_transposed = (y_dataset.shape[0] == 6)
-            n_steps = y_dataset.shape[1] if is_transposed else y_dataset.shape[0]
-            rkg_stride = max(1, n_steps // MAX_PLOT_POINTS_local)
-
-            # ---- Handle Time Axis ----
-            if "t" in ext_rkg:
-                t_ext_rkg = ext_rkg["t"][::rkg_stride]
-            else:
-                dt_rkg = ext_rkg.attrs.get("dt", ext_rkg.get("dt", None))
-
-                if dt_rkg is None and "params_json" in external_file.attrs:
-                    params = json.loads(external_file.attrs["params_json"])
-                    dt_rkg = params.get("rkg_step")
-
-                if dt_rkg is not None:
-                    if hasattr(dt_rkg, 'value'): dt_rkg = dt_rkg[()]
-                    idx = np.arange(0, n_steps, rkg_stride)
-
-                    t_ext_rkg = dt_rkg * idx.astype(npfloat)
-                else:
-                    raise ValueError("External RKG H5 file has no time info.")
-
-            if is_transposed:
-                y_ext_rkg = y_dataset[:, ::rkg_stride].T
-            else:
-                y_ext_rkg = y_dataset[::rkg_stride, :]
-
-        # =========================================================================
-        # Operating only on the strided subset in RAM now.
-        # =========================================================================
-
-        r_rkg_ext = y_ext_rkg[:, 0:3]
-        p_rkg_ext = y_ext_rkg[:, 3:6]
-
-        A_rkg_ext = np.zeros_like(r_rkg_ext)
-        for i in range(len(r_rkg_ext)):
-            A_rkg_ext[i] = vector_potential_dipole(r_rkg_ext[i])
-
-        v_rkg_ext = p_rkg_ext - A_rkg_ext
-        E_rkg_ext = npfloat(0.5) * np.sum(v_rkg_ext**2, axis=1, dtype=npfloat)
-        rel_drift_ext_rkg = np.abs(E_rkg_ext - E_rkg_ext[0]) / E_rkg_ext[0]
-
-    if USE_PS:
-        with h5py.File(cache_path, "r") as ps_h5:
-            ps_y_h5 = ps_h5["ps"]["y"]
-
-            t_ps_plot, rel_drift_ps = compute_energy_ps_chunked(
-                ps_y_h5=ps_y_h5,
-                E0_ps=E0_ps,
-                dt_ps_store=ps_step * (PS_decimate if PS_decimate > 1 else 1),
-                chunk_cols=MAX_PLOT_POINTS_local,
-                stride=energy_stride,
-                return_plot_data=True,
-            )
-
-    # === If using Hamiltonian in RKG ==
-    if USE_RKG:
-        r_rkg = solution_rkg[:, 0:3]
-        p_rkg = solution_rkg[:, 3:6]
-        A_rkg = np.zeros_like(r_rkg)
-        for i in range(len(r_rkg)):
-            A_rkg[i] = vector_potential_dipole(r_rkg[i])
-        v_rkg = p_rkg - A_rkg
-        E_rkg = npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=npfloat)
-        E_rkg_0 = E_rkg[0]
-        rel_drift_rkg = np.abs(E_rkg - E_rkg_0) / E_rkg_0
-
-    # === If using Lorentz force in RKG (not part of paper) ==
-    # r_rkg = solution_rkg[:, 0:3]
-    # v_rkg = solution_rkg[:, 3:6]
-
-    if USE_RK45:
-        v_rk45 = y_rk45_common[3:6]
-        E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-        E_rk45_0 = E_rk45[0]
-        rel_drift_rk45 = np.abs(E_rk45 - E_rk45_0) / E_rk45_0
-
-    if USE_RK4:
-        v_rk4 = solution_rk4[3:6]
-        E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
-        E_rk4_0 = E_rk4[0]
-        rel_drift_rk4 = np.abs(E_rk4 - E_rk4_0) / E_rk4_0
-
-    # --- build time arrays for non-PS solvers ---
-    if USE_RK4:
-        t_rk4 = rk4_step * np.arange(len(rel_drift_rk4), dtype=npfloat)
-    if USE_RKG:
-        t_rkg = rkg_step * np.arange(len(rel_drift_rkg), dtype=npfloat)
-    if USE_RK45:
-        t_rk45 = ps_step * np.arange(len(rel_drift_rk45), dtype=npfloat)
-
-    # --- assemble KE plot data tuples ---
-    _ke_ps   = (t_ps_plot, rel_drift_ps) if USE_PS else None
-    _ke_rk4  = (t_rk4, rel_drift_rk4) if USE_RK4 else None
-    _ke_rk45 = (t_rk45, rel_drift_rk45) if USE_RK45 else None
-    _ke_rkg  = (t_rkg, rel_drift_rkg) if USE_RKG else None
-
-    _ke_ext_ps   = (t_eval_ps_ext, rel_drift_ps_ext, PS_order_ext) if USE_EXTERNAL_H5_ps else None
-    _ke_ext_rk4  = (t_eval_rk4_ext, rel_drift_rk4_ext) if USE_EXTERNAL_H5_rk4 else None
-    _ke_ext_rk45 = (t_eval_rk45_ext, rel_drift_rk45_ext) if USE_EXTERNAL_H5_rk45 else None
-    _ke_ext_rkg  = (t_ext_rkg, rel_drift_ext_rkg) if USE_EXTERNAL_H5_rkg else None
-
-    plot_ke_error(
+    dplt.ke_error(
         summary=summary, run_folder=fig_folder, stem=stem,
         particle_type=particle_type, ps_order_label=ps_order_label,
         USE_PLOT_TITLES=USE_PLOT_TITLES, time_factor=time_factor, norm_time=norm_time,
-        ps_data=_ke_ps, rk4_data=_ke_rk4, rk45_data=_ke_rk45, rkg_data=_ke_rkg,
-        ext_ps_data=_ke_ext_ps, ext_rk4_data=_ke_ext_rk4,
-        ext_rk45_data=_ke_ext_rk45, ext_rkg_data=_ke_ext_rkg,
+        ps_data=_ke["ke_ps"], rk4_data=_ke["ke_rk4"],
+        rk45_data=_ke["ke_rk45"], rkg_data=_ke["ke_rkg"],
+        ext_ps_data=_ke["ke_ext_ps"], ext_rk4_data=_ke["ke_ext_rk4"],
+        ext_rk45_data=_ke["ke_ext_rk45"], ext_rkg_data=_ke["ke_ext_rkg"],
     )
 
     if DEBUG:
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for KE analysis: {peak / 1024**2:.2f} MB")
-        if USE_PS: midpoint_ps = int(round(len(rel_drift_ps) / 2))
-        if USE_PS: logger.info(f"energy stride: {energy_stride}")
-        if USE_PS: logger.debug(f"[PS] E rel drift initial ={rel_drift_ps[0]:.2e}, E rel drift mid ={rel_drift_ps[midpoint_ps]:.2e}, E rel drift final ={rel_drift_ps[-1]:.2e}")
-
-        if USE_RK4: midpoint_rk4 = int(round(len(rel_drift_rk4) / 2))
-        if USE_RKG: midpoint_rkg = int(round(len(rel_drift_rkg) / 2))
-        if USE_RK45: midpoint_rk45 = int(round(len(rel_drift_rk45) / 2))
-
-        if USE_RKG: logger.debug(f"[RKG] E rel drift initial ={rel_drift_rkg[0]:.2e}, E rel drift mid ={rel_drift_rkg[midpoint_rkg]:.2e}, E rel drift final ={rel_drift_rkg[-1]:.2e}")
-        if USE_RK4: logger.debug(f"[RK4] E rel drift initial ={rel_drift_rk4[0]:.2e}, E rel drift mid ={rel_drift_rk4[midpoint_rk4]:.2e}, E rel drift final ={rel_drift_rk4[-1]:.2e}")
-        if USE_RK45: logger.debug(f"[RK45] E rel drift initial ={rel_drift_rk45[0]:.2e}, E rel drift mid ={rel_drift_rk45[midpoint_rk45]:.2e}, E rel drift final ={rel_drift_rk45[-1]:.2e}")
+        if USE_PS and rel_drift_ps is not None:
+            midpoint_ps = int(round(len(rel_drift_ps) / 2))
+            logger.info(f"energy stride: {energy_stride}")
+            logger.debug(f"[PS] E rel drift initial ={rel_drift_ps[0]:.2e}, E rel drift mid ={rel_drift_ps[midpoint_ps]:.2e}, E rel drift final ={rel_drift_ps[-1]:.2e}")
+        for _lbl, _rd, _flag in [("RK4", rel_drift_rk4, USE_RK4),
+                                  ("RKG", rel_drift_rkg, USE_RKG),
+                                  ("RK45", rel_drift_rk45, USE_RK45)]:
+            if _flag and _rd is not None:
+                _mid = int(round(len(_rd) / 2))
+                logger.debug(f"[{_lbl}] E rel drift initial ={_rd[0]:.2e}, E rel drift mid ={_rd[_mid]:.2e}, E rel drift final ={_rd[-1]:.2e}")
 
     # ==================================================
-    # --- Dragt physics defaults (populated below if PS data exists) ---
-    dragt_log = {
-        "L_eff": None, "W0_sq": None, "boundary": None,
-        "mu_sq": None, "orbit_character": None,
-        "eps_initial": None, "eps_mean": None, "eps_max": None,
-        "hit_atmosphere": False, "hit_atm_r": None,
-    }
+    # ======== Dragt Analysis + Poincaré Plots =========
     # ==================================================
-    # ======== Dragt Poincaré Surface of Section =======
-    # ==================================================
-    plt.close('all')
-
-    # L-shell for Dragt normalization: derived from the conserved canonical momentum.
-    # P_phi = rho*v_phi - charge_sign/rho  (code's upward-B convention)
-    # L = 1/|P_phi|  →  L is L-independent and orbit-conserved, consistent with dragt.py.
-    #
-    # For a proton (charge_sign=+1) drifting westward: P_phi < 0, L = -1/P_phi
-    # For an electron (charge_sign=-1) drifting eastward: P_phi > 0, L = +1/P_phi
-    #
-    # Fallback to field-line L (r^3/rho^2) for degenerate cases (e.g. purely radial launch).
-    _rho_init    = np.sqrt(x_initial**2 + y_initial**2)
-    _v_phi_init  = (x_initial * vy_initial - y_initial * vx_initial) / _rho_init
-    # Canonical momentum in code's upward-B convention: P_phi = rho*v_phi - charge_sign/rho
-    #   Proton  (charge_sign=+1): P_phi = rho*v_phi - 1/rho  < 0 for trapped (westward drift)
-    #   Electron (charge_sign=-1): P_phi = rho*v_phi + 1/rho  > 0 for trapped (eastward drift)
-    # Trapped condition (both species): charge_sign * P_phi < 0
-    # L-shell from canonical momentum: L = 1/|P_phi| = -charge_sign / P_phi
-    _P_phi_code = _rho_init * _v_phi_init - charge_sign / _rho_init
-    if charge_sign * _P_phi_code < 0:
-        L_shell_dragt = float(-charge_sign / _P_phi_code)  # = 1/|P_phi|
-    else:
-        _r_init = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
-        L_shell_dragt = float(_r_init**3 / _rho_init**2)
-        print("  WARNING: P_phi_code indicates open/untrapped orbit, falling back to field-line L-shell")
-
-    print(f"\n{'='*60}")
-    print(f"  Dragt Info")
-    print(f"{'='*60}")
-    print(f"Dragt L-shell (from conserved canonical momentum): {L_shell_dragt:.4f} R_E")
-
-    if USE_PS:
-        # --- Initial state from h5 ---
-        with h5py.File(cache_path, "r") as _h5_init:
-            _y0 = _h5_init["ps"]["y"][:6, 0].astype(float)
-
-        # --- Cache consistency check ---
-        _v_mag_ps0 = float(np.sqrt(_y0[3]**2 + _y0[4]**2 + _y0[5]**2))
-        _v_tau_expected = float(v_tau)
-        _v_rel_err = abs(_v_mag_ps0 - _v_tau_expected) / _v_tau_expected
-        if _v_rel_err > CACHE_VELOCITY_RTOL:
-            print(f"\n  *** CACHE MISMATCH WARNING ***")
-            print(f"  PS trajectory v_mag = {_v_mag_ps0:.6f}  (from cached run)")
-            print(f"  Current v_tau       = {_v_tau_expected:.6f}  (from current KE_particle/mass_si)")
-            print(f"  Relative error      = {_v_rel_err*100:.2f}%")
-            print(f"  The cached trajectory does not match the current input parameters.")
-            print(f"  Re-run the simulation (disable cache loading) to get consistent results.\n")
-
-        # --- Dragt parameters from initial conditions only ---
-        _x0a  = np.array([_y0[0]]); _y0a = np.array([_y0[1]]); _z0a = np.array([_y0[2]])
-        _vx0a = np.array([_y0[3]]); _vy0a = np.array([_y0[4]]); _vz0a = np.array([_y0[5]])
-        dp         = compute_dragt_params(_x0a, _y0a, _z0a, _vx0a, _vy0a, _vz0a, L_shell_dragt,
-                                          charge_sign=charge_sign)
-        W0_sq_calc = dp["W0_sq"]
-        P_phi      = dp["P_phi"]
-        rho_0_sim  = dp["rho_0_sim"]
-        _rho_dot_0_sim = float((_y0[0]*_y0[3] + _y0[1]*_y0[4]) / rho_0_sim)
-
-        # --- Analytical boundary ---
-        rho_bnd, rho_dot_bnd = compute_dragt_boundary(W0_sq_calc, P_phi, charge_sign=charge_sign)
-
-        # --- Chunked Dragt analysis (adiabaticity, meridian, crossings) ---
-        _dragt = dragt_analysis_chunked(cache_path, L_shell_dragt, ps_step, time_factor)
-        _dragt_eps_arr     = _dragt["eps_arr"]
-        _dragt_t_arr       = _dragt["t_arr"]
-        _dragt_rho_arr     = _dragt["rho_arr"]
-        _dragt_z_arr       = _dragt["z_arr"]
-        _dragt_eps_initial = _dragt["eps_initial"]
-        _dragt_eps_mean    = _dragt["eps_mean"]
-        _dragt_eps_max     = _dragt["eps_max"]
-        crossings          = _dragt["crossings"]
-
-        # --- Poincaré surface of section ---
-        plot_dragt_poincare(
-            run_folder=fig_folder, L_shell_dragt=L_shell_dragt, gamma=gamma,
-            rho_bnd=rho_bnd, rho_dot_bnd=rho_dot_bnd,
-            rho_0_sim=rho_0_sim, rho_dot_0_sim=_rho_dot_0_sim,
-            crossings=crossings,
-        )
-
-        # --- Gyrophase / magnetic moment plots (only if crossings exist) ---
-        if crossings is not None:
-            rho_dragt, rho_dot_dragt, x_cross, y_cross, vx_cross, vy_cross = crossings
-            gyrophase, mu_cross = compute_gyrophase_mu(x_cross, y_cross, vx_cross, vy_cross)
-            plot_gyrophase_mu(fig_folder, gyrophase, mu_cross)
-            plot_polar_phase_space(fig_folder, gyrophase, mu_cross)
-
-        # --- Meridian plane ---
-        plot_meridian_plane(fig_folder, _dragt_rho_arr, _dragt_z_arr)
-
-        # --- Adiabaticity parameter ---
-        plot_adiabaticity(fig_folder, _dragt_t_arr, _dragt_eps_arr,
-                          _dragt_eps_initial, _dragt_eps_mean, _dragt_eps_max)
-
-        # --- Populate Dragt physics log ---
-        dragt_log["L_eff"]           = L_shell_dragt
-        dragt_log["W0_sq"]           = W0_sq_calc
-        dragt_log["boundary"]        = dp["boundary_status"]
-        dragt_log["mu_sq"]           = dp["mu_sq"]
-        dragt_log["orbit_character"] = dp["orbit_character"]
-        dragt_log["eps_initial"]     = _dragt_eps_initial
-        dragt_log["eps_mean"]        = _dragt_eps_mean
-        dragt_log["eps_max"]         = _dragt_eps_max
-
-        # --- Atmosphere flag from h5 ---
-        try:
-            with h5py.File(cache_path, "r") as _h5:
-                if "ps" in _h5 and "hit_atmosphere" in _h5["ps"].attrs:
-                    dragt_log["hit_atmosphere"] = bool(_h5["ps"].attrs["hit_atmosphere"])
-                    dragt_log["hit_atm_r"]     = float(_h5["ps"].attrs["hit_atm_r"])
-        except Exception:
-            pass
-
-    else:
-        print("PS is not enabled. Cannot run Dragt Comparison.")
-
-    plt.close('all')
-
+    dragt_log, L_shell_dragt = df.run_section(
+        x_initial, y_initial, z_initial,
+        vx_initial, vy_initial, v_tau,
+        charge_sign, gamma,
+        USE_PS=USE_PS, cache_path=cache_path,
+        ps_step=ps_step, time_factor=time_factor,
+        CACHE_VELOCITY_RTOL=CACHE_VELOCITY_RTOL,
+        fig_folder=fig_folder, stem=stem,
+        dragt_poincare_func=dplt.dragt_poincare,
+        gyrophase_mu_func=dplt.gyrophase_mu,
+        polar_phase_space_func=dplt.polar_phase_space,
+        meridian_plane_func=dplt.meridian_plane,
+        adiabaticity_func=dplt.adiabaticity,
+    )
 
     # =========================================================
     # PLOT RELATIVE ERROR OF CANONICAL ANGULAR MOMENTUM
     # =========================================================
 
-    pphi = compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
-    plot_pphi_error(fig_folder, pphi["t_gyro"], pphi["rel_error_log"],
-                    pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"])
+    pphi = dp.compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
+    dplt.pphi_error(fig_folder, pphi["t_gyro"], pphi["rel_error_log"],
+                    pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"], stem=stem)
 
 
     # ============================================================
@@ -1369,25 +1004,25 @@ def main(cfg_path, replot=False):
     mu_rk4_result = mu_rkg_result = mu_rk45_result = mu_ps_result = None
 
     if USE_RK4:
-        mu_rk4_result = compute_mu_deviation_rk(
+        mu_rk4_result = dp.compute_mu_deviation_rk(
             solution_rk4, steps_rk4, rk4_step,
             N_GYRO, N_STEPS_PER_GYRO_rk4, mass, gyro_window, time_factor,
             solver_type="rk4")
 
     if USE_RKG:
-        mu_rkg_result = compute_mu_deviation_rk(
+        mu_rkg_result = dp.compute_mu_deviation_rk(
             solution_rkg, steps_rkg, rkg_step,
             N_GYRO, N_STEPS_PER_GYRO_rkg, mass, gyro_window, time_factor,
             solver_type="rkg")
 
     if USE_RK45:
-        mu_rk45_result = compute_mu_deviation_rk(
+        mu_rk45_result = dp.compute_mu_deviation_rk(
             y_rk45_common, steps_ps, ps_step,
             N_GYRO, N_STEPS_PER_GYRO_ps, mass, gyro_window, time_factor,
             solver_type="rk45")
 
     if USE_PS:
-        mu_ps_result = compute_mu_deviation_ps(
+        mu_ps_result = dp.compute_mu_deviation_ps(
             cache_path, steps_ps, ps_step, PS_decimate,
             N_GYRO, N_STEPS_PER_GYRO_ps, mass, mu0_ps,
             gyro_window, time_factor, max_plot_points=MAX_PLOT_POINTS_local)
@@ -1398,7 +1033,7 @@ def main(cfg_path, replot=False):
     mu0_rkg  = mu_rkg_result["mu0"]  if mu_rkg_result  else None
     mu0_rk45 = mu_rk45_result["mu0"] if mu_rk45_result else None
 
-    plot_mu_deviation(
+    dplt.mu_deviation(
         summary, fig_folder, stem, particle_type, ps_order_label,
         USE_PLOT_TITLES,
         ps_data=(mu_ps_result["t"], mu_ps_result["mudrift_plot"]) if mu_ps_result else None,
@@ -1437,8 +1072,8 @@ def main(cfg_path, replot=False):
         v_eps = npfloat(velocity_epsilon_scale) * v_tau
         user_min_gap = max(min_gap_steps, int(gap_gyro_fraction * T_gyro / ps_step))
 
-        bounce_state = init_bounce_stream_state()
-        drift_state  = init_drift_stream_state()
+        bounce_state = dp.init_bounce_stream_state()
+        drift_state  = dp.init_drift_stream_state()
 
         ps_store_stride = PS_decimate if PS_decimate > 1 else 1
         dt_store = ps_step * ps_store_stride
@@ -1450,10 +1085,10 @@ def main(cfg_path, replot=False):
             for j0_chunk in range(0, n_store, PS_chunk_steps):
                 j1 = min(j0_chunk + PS_chunk_steps, n_store)
 
-                y_chunk = expand_h5_to_full(ps_y[:, j0_chunk:j1])
+                y_chunk = wr.expand_h5_to_full(ps_y[:, j0_chunk:j1])
                 t_chunk = dt_store * np.arange(j0_chunk, j1, dtype=npfloat)
 
-                process_bounce_and_drift_chunk(
+                dp.process_bounce_and_drift_chunk(
                     y_chunk=y_chunk,
                     t_chunk=t_chunk,
                     bounce_state=bounce_state,
@@ -1463,7 +1098,7 @@ def main(cfg_path, replot=False):
                 )
 
         # --- Bounce ---
-        bounce_stats = bounce_summary(
+        bounce_stats = dp.bounce_summary(
             bounce_state["crossing_times"],
             time_scale_sec=tau_time
         )
@@ -1487,7 +1122,7 @@ def main(cfg_path, replot=False):
         }
 
         # --- Drift ---
-        drift_stats = finalize_drift_stream(
+        drift_stats = dp.finalize_drift_stream(
             drift_state,
             time_scale_sec=tau_time,
             min_phase_rad=user_min_phase,
@@ -1522,8 +1157,8 @@ def main(cfg_path, replot=False):
 
     if DEBUG: tracemalloc.start()
 
-    write_summary_txt(
-        summary=summary, run_folder=out_folder, stem=stem,
+    wr.write_summary_txt(
+        summary=summary, run_folder=run_folder, stem=stem,
         dragt_log=dragt_log, bounce_results=bounce_results, drift_results=drift_results,
         gyroperiods=gyroperiods, norm_time=norm_time, mass=mass, cache_path=cache_path,
         USE_PS=USE_PS, USE_RK4=USE_RK4, USE_RK45=USE_RK45, USE_RKG=USE_RKG,
@@ -1544,9 +1179,9 @@ def main(cfg_path, replot=False):
         y_rk45_common=y_rk45_common if USE_RK45 else None,
         ps_store_stride=ps_store_stride if USE_PS else 1,
         npfloat=npfloat,
-        compute_mu_ps=compute_mu_ps,
-        compute_mu_rk=compute_mu_rk,
-        vector_potential_dipole=vector_potential_dipole,
+        compute_mu_ps=dp.compute_mu_ps,
+        compute_mu_rk=dp.compute_mu_rk,
+        vector_potential=dp.vector_potential,
     )
 
     if DEBUG:
@@ -1563,7 +1198,7 @@ def main(cfg_path, replot=False):
     if USE_RKG:  _method_records.append(("RKG",  steps_rkg, rkg_step, rel_drift_rkg,  mu_rkg_result["mudrift"]))
     if USE_PS:   _method_records.append(("PS",   steps_ps,  ps_step,  rel_drift_ps,   mu_ps_result["mudrift"]))
 
-    write_master_csv(
+    wr.write_master_csv(
         output_folder=output_folder, stem=stem, particle_type=particle_type,
         KE_particle=KE_particle, x_initial=x_initial, y_initial=y_initial,
         z_initial=z_initial, pitch_deg=pitch_deg, phi_deg=phi_deg,
@@ -1573,7 +1208,6 @@ def main(cfg_path, replot=False):
 
     print(f"\nRun Complete → {run_folder}")
     print(f"  Figures → {fig_folder}")
-    print(f"  Output  → {out_folder}")
 
 
     if DEBUG:

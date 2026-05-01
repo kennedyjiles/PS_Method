@@ -9,7 +9,7 @@ from ps_method.constants import RE, spdlight, B_0
 # ===================================================================
 # === W0^2 / P_phi Conservation Monitor (per-step, no dt needed) ===
 # ===================================================================
-class DragtMonitor:
+class conservation_monitor:
     """
     Monitors conservation of W0^2 and P_phi during PS integration.
 
@@ -18,7 +18,7 @@ class DragtMonitor:
     energy injection or removal by the integrator.
 
     Usage:
-        mon = DragtMonitor(L_shell, charge_sign,
+        mon = conservation_monitor(L_shell, charge_sign,
                            check_every=100, rtol=1e-6)
         # inside chunk loop:
         mon.check(sol_chunk)          # checks last column of chunk
@@ -113,7 +113,7 @@ class DragtMonitor:
         if dW > self.rtol or dP > self.rtol:
             ok = False
             warnings.warn(
-                f"DragtMonitor step {idx}: W0^2 drift {dW:.2e} "
+                f"conservation_monitor step {idx}: W0^2 drift {dW:.2e} "
                 f"(ref {self.W0sq_0:.6f} -> {W0sq:.6f}), "
                 f"P_phi drift {dP:.2e} "
                 f"(ref {self.Pphi_0:.6f} -> {Pphi:.6f})",
@@ -123,7 +123,7 @@ class DragtMonitor:
         # Check for escape past trapping threshold
         if (self.halt_on_escape and self.W0_threshold is not None
                 and W0sq > self.W0_threshold):
-            msg = (f"DragtMonitor step {idx}: W0^2 = {W0sq:.6f} "
+            msg = (f"conservation_monitor step {idx}: W0^2 = {W0sq:.6f} "
                    f"EXCEEDED trapping threshold {self.W0_threshold:.6f}. "
                    f"Particle has numerically escaped.")
             raise RuntimeError(msg)
@@ -133,7 +133,7 @@ class DragtMonitor:
     def summary(self):
         """Print a summary of conservation quality."""
         if not self.history:
-            print("DragtMonitor: no data collected.")
+            print("conservation_monitor: no data collected.")
             return
 
         steps = [h[0] for h in self.history]
@@ -144,7 +144,7 @@ class DragtMonitor:
         dP_rel = np.abs(Pphis - self.Pphi_0) / max(abs(self.Pphi_0), 1e-30)
 
         print(f"\n{'='*60}")
-        print(f"  DragtMonitor Conservation Report")
+        print(f"  Conservation Monitor Report")
         print(f"{'='*60}")
         print(f"  Samples:        {len(self.history)}")
         print(f"  Step range:     {steps[0]} .. {steps[-1]}")
@@ -178,7 +178,7 @@ class DragtMonitor:
         }
 
 
-def calculate_adiabaticity(x_arr, y_arr, z_arr, vx_arr, vy_arr, vz_arr):
+def compute_adiabaticity(x_arr, y_arr, z_arr, vx_arr, vy_arr, vz_arr):
     """
     Calculates the adiabaticity parameter epsilon = r_g * |grad B| / B
     along a trajectory, using the full dipole gradient (not the equatorial
@@ -205,7 +205,7 @@ def calculate_adiabaticity(x_arr, y_arr, z_arr, vx_arr, vy_arr, vz_arr):
     r5 = r**5
 
     # Dipole B field components in normalized units (downward moment / upward B at equator)
-    # Sign convention matches the simulator (lorentz_force_dipole): Bz = +1/r^3 at equator
+    # Sign convention matches the simulator (lorentz_force): Bz = +1/r^3 at equator
     Bx = -3.0 * x_arr * z_arr / r5
     By = -3.0 * y_arr * z_arr / r5
     Bz = -(3.0 * z_arr**2 - r**2) / r5
@@ -238,7 +238,7 @@ def calculate_adiabaticity(x_arr, y_arr, z_arr, vx_arr, vy_arr, vz_arr):
     return epsilon
 
 
-def compute_dragt_params(x_ps, y_ps, z_ps, vx_ps, vy_ps, vz_ps, L_shell, charge_sign=1):
+def compute_params(x_ps, y_ps, z_ps, vx_ps, vy_ps, vz_ps, L_shell, charge_sign=1):
     """
     Computes Dragt diagnostic parameters from the initial conditions of a PS trajectory.
 
@@ -320,7 +320,7 @@ def compute_dragt_params(x_ps, y_ps, z_ps, vx_ps, vy_ps, vz_ps, L_shell, charge_
     }
 
 
-def compute_dragt_boundary(W0_sq, P_phi, charge_sign=1):
+def compute_boundary(W0_sq, P_phi, charge_sign=1):
     """
     Computes the accessible boundary curve for the Dragt Poincaré surface of section.
     Uses a dynamic upper rho limit based on P_phi to ensure the closure is always visible.
@@ -384,7 +384,7 @@ def compute_z_crossings(x_ps, y_ps, z_ps, vx_ps, vy_ps, L_shell):
     rho_sim       = np.sqrt(x_cross**2 + y_cross**2)
     rho_dot_sim   = (x_cross * vx_cross + y_cross * vy_cross) / rho_sim
     rho_dragt     = rho_sim / L_shell
-    rho_dot_dragt = rho_dot_sim * L_shell**2            # v_dragt = v_sim * L^2 (no gamma; see compute_dragt_params)
+    rho_dot_dragt = rho_dot_sim * L_shell**2            # v_dragt = v_sim * L^2 (no gamma; see compute_params)
 
     return rho_dragt, rho_dot_dragt, x_cross, y_cross, vx_cross, vy_cross
 
@@ -454,7 +454,7 @@ def calculate_w0_squared(speed, L_shell, mass_si, q_e, M_earth=None):
 # ===================================================================
 # === Chunked Dragt Analysis (adiabaticity, meridian, crossings) ====
 # ===================================================================
-def dragt_analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000_000):
+def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000_000):
     """
     Stream through an h5 trajectory file in fixed-size chunks and compute:
       - adiabaticity parameter epsilon (decimated for plotting)
@@ -495,7 +495,7 @@ def dragt_analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size
             cvx, cvy, cvz = chunk[3], chunk[4], chunk[5]
 
             # --- adiabaticity ---
-            eps = calculate_adiabaticity(cx, cy, cz, cvx, cvy, cvz)
+            eps = compute_adiabaticity(cx, cy, cz, cvx, cvy, cvz)
             if eps_initial is None:
                 eps_initial = float(eps[0])
             eps_sum   += float(np.nansum(eps))
@@ -559,3 +559,143 @@ def dragt_analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size
         eps_max=eps_max,
         crossings=crossings,
     )
+
+
+# ------------------------------------------------------------------
+#  run_section — full Dragt analysis + plots, returns dragt_log
+# ------------------------------------------------------------------
+def run_section(
+    # Initial conditions (normalised)
+    x_initial, y_initial, z_initial,
+    vx_initial, vy_initial, v_tau,
+    charge_sign, gamma,
+    # PS cache info
+    USE_PS, cache_path, ps_step, time_factor,
+    CACHE_VELOCITY_RTOL,
+    # Output
+    fig_folder, stem,
+    # Plot functions (passed in to avoid circular imports)
+    dragt_poincare_func,
+    gyrophase_mu_func,
+    polar_phase_space_func,
+    meridian_plane_func,
+    adiabaticity_func,
+):
+    """Run the complete Dragt analysis section.
+
+    Computes L-shell from canonical momentum, runs Dragt parameter
+    calculation, boundary analysis, adiabaticity, and generates all
+    Dragt-related plots.
+
+    Returns
+    -------
+    dragt_log : dict
+        Populated log dictionary for the summary writer.
+    L_shell_dragt : float
+        L-shell used for Dragt normalisation.
+    """
+    dragt_log = {
+        "L_eff": None, "W0_sq": None, "boundary": None,
+        "mu_sq": None, "orbit_character": None,
+        "eps_initial": None, "eps_mean": None, "eps_max": None,
+        "hit_atmosphere": False, "hit_atm_r": None,
+    }
+
+    # --- L-shell from conserved canonical momentum ---
+    _rho_init   = np.sqrt(x_initial**2 + y_initial**2)
+    _v_phi_init = (x_initial * vy_initial - y_initial * vx_initial) / _rho_init
+    _P_phi_code = _rho_init * _v_phi_init - charge_sign / _rho_init
+
+    if charge_sign * _P_phi_code < 0:
+        L_shell_dragt = float(-charge_sign / _P_phi_code)
+    else:
+        _r_init = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
+        L_shell_dragt = float(_r_init**3 / _rho_init**2)
+        print("  WARNING: P_phi_code indicates open/untrapped orbit, "
+              "falling back to field-line L-shell")
+
+    print(f"\n{'='*60}")
+    print(f"  Dragt Info")
+    print(f"{'='*60}")
+    print(f"Dragt L-shell (from conserved canonical momentum): "
+          f"{L_shell_dragt:.4f} R_E")
+
+    if not USE_PS:
+        print("PS is not enabled. Cannot run Dragt Comparison.")
+        return dragt_log, L_shell_dragt
+
+    # --- Initial state from h5 ---
+    with h5py.File(cache_path, "r") as _h5_init:
+        _y0 = _h5_init["ps"]["y"][:6, 0].astype(float)
+
+    # --- Cache consistency check ---
+    _v_mag_ps0     = float(np.sqrt(_y0[3]**2 + _y0[4]**2 + _y0[5]**2))
+    _v_tau_expected = float(v_tau)
+    _v_rel_err     = abs(_v_mag_ps0 - _v_tau_expected) / _v_tau_expected
+    if _v_rel_err > CACHE_VELOCITY_RTOL:
+        print(f"\n  *** CACHE MISMATCH WARNING ***")
+        print(f"  PS trajectory v_mag = {_v_mag_ps0:.6f}  (from cached run)")
+        print(f"  Current v_tau       = {_v_tau_expected:.6f}  (from current KE_particle/mass_si)")
+        print(f"  Relative error      = {_v_rel_err*100:.2f}%")
+        print(f"  The cached trajectory does not match the current input parameters.")
+        print(f"  Re-run the simulation (disable cache loading) to get consistent results.\n")
+
+    # --- Dragt parameters from initial conditions ---
+    _x0a  = np.array([_y0[0]]); _y0a  = np.array([_y0[1]]); _z0a  = np.array([_y0[2]])
+    _vx0a = np.array([_y0[3]]); _vy0a = np.array([_y0[4]]); _vz0a = np.array([_y0[5]])
+    dp = compute_params(
+        _x0a, _y0a, _z0a, _vx0a, _vy0a, _vz0a,
+        L_shell_dragt, charge_sign=charge_sign)
+    W0_sq_calc = dp["W0_sq"]
+    P_phi      = dp["P_phi"]
+    rho_0_sim  = dp["rho_0_sim"]
+    _rho_dot_0_sim = float((_y0[0]*_y0[3] + _y0[1]*_y0[4]) / rho_0_sim)
+
+    # --- Analytical boundary ---
+    rho_bnd, rho_dot_bnd = compute_boundary(
+        W0_sq_calc, P_phi, charge_sign=charge_sign)
+
+    # --- Chunked Dragt analysis (adiabaticity, meridian, crossings) ---
+    _dragt = analysis_chunked(
+        cache_path, L_shell_dragt, ps_step, time_factor)
+
+    # --- Plots ---
+    dragt_poincare_func(
+        run_folder=fig_folder, L_shell_dragt=L_shell_dragt, gamma=gamma,
+        rho_bnd=rho_bnd, rho_dot_bnd=rho_dot_bnd,
+        rho_0_sim=rho_0_sim, rho_dot_0_sim=_rho_dot_0_sim,
+        crossings=_dragt["crossings"], stem=stem,
+    )
+
+    if _dragt["crossings"] is not None:
+        _rho_d, _rho_dot_d, x_c, y_c, vx_c, vy_c = _dragt["crossings"]
+        gyrophase, mu_cross = compute_gyrophase_mu(x_c, y_c, vx_c, vy_c)
+        gyrophase_mu_func(fig_folder, gyrophase, mu_cross, stem=stem)
+        polar_phase_space_func(fig_folder, gyrophase, mu_cross, stem=stem)
+
+    meridian_plane_func(
+        fig_folder, _dragt["rho_arr"], _dragt["z_arr"], stem=stem)
+    adiabaticity_func(
+        fig_folder, _dragt["t_arr"], _dragt["eps_arr"],
+        _dragt["eps_initial"], _dragt["eps_mean"], _dragt["eps_max"], stem=stem)
+
+    # --- Populate Dragt log ---
+    dragt_log["L_eff"]           = L_shell_dragt
+    dragt_log["W0_sq"]           = W0_sq_calc
+    dragt_log["boundary"]        = dp["boundary_status"]
+    dragt_log["mu_sq"]           = dp["mu_sq"]
+    dragt_log["orbit_character"] = dp["orbit_character"]
+    dragt_log["eps_initial"]     = _dragt["eps_initial"]
+    dragt_log["eps_mean"]        = _dragt["eps_mean"]
+    dragt_log["eps_max"]         = _dragt["eps_max"]
+
+    # --- Atmosphere flag from h5 ---
+    try:
+        with h5py.File(cache_path, "r") as _h5:
+            if "ps" in _h5 and "hit_atmosphere" in _h5["ps"].attrs:
+                dragt_log["hit_atmosphere"] = bool(_h5["ps"].attrs["hit_atmosphere"])
+                dragt_log["hit_atm_r"]     = float(_h5["ps"].attrs["hit_atm_r"])
+    except Exception:
+        pass
+
+    return dragt_log, L_shell_dragt

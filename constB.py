@@ -283,27 +283,16 @@ def main(cfg_path, replot=False):
 
     # === Create run-specific output subfolders ===
     # data/constB/<config>/<stem>/figures/   ← plots
-    # data/constB/<config>/<stem>/output/    ← text summaries
-    _run_name = f"{stem}_ConstB_{particle_type}_{KE_particle:.1e}eV_{ps_step}step_PS{orders_used.max()}_{gyroperiods:.1e}_{npfloat.__name__}"
-    run_folder = os.path.join(output_folder, _run_name)
+    # data/constB/<config>/<stem>/           ← summary, config copy
+    run_folder = os.path.join(output_folder, stem)
     fig_folder = os.path.join(run_folder, "figures")
-    out_folder = os.path.join(run_folder, "output")
     os.makedirs(fig_folder, exist_ok=True)
-    os.makedirs(out_folder, exist_ok=True)
 
-    # --- Write config log to output folder ---
-    if _config_log:
-        _config_log_path = os.path.join(out_folder, "config_log.txt")
-        with open(_config_log_path, "w") as _f:
-            _f.write("\n".join(_config_log))
-        print(f"Config log written to {_config_log_path}\n")
-
-    # --- Copy config YAML to output folder (with git hash) ---
-    copy_config_to_output(cfg_path, output_folder)   # replot copy (overwritten each run)
-    copy_config_to_output(cfg_path, out_folder)      # permanent snapshot for this run
+    # --- Copy config YAML to run folder (with git hash) ---
+    copy_config_to_output(cfg_path, run_folder)
 
     # --- Filename helper (shared stem for all plots) ---
-    _base = f"{fig_folder}/{_run_name}"
+    _base = f"{fig_folder}/{stem}"
     _field_label = "Constant B Field"
     _plot_kw = dict(particle_type=particle_type, field_label=_field_label, use_plot_titles=USE_PLOT_TITLES)
 
@@ -493,7 +482,7 @@ def main(cfg_path, replot=False):
     # ======= Write Summary Output to File =======
     # ============================================
 
-    output_filename = f"{out_folder}/{_run_name}_SimSummary.txt"
+    output_filename = f"{run_folder}/{stem}_summary.txt"
 
     write_summary_txt_constB(
         output_filename,

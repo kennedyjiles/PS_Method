@@ -12,8 +12,8 @@ So W₀·v_scale = γv (relativistic momentum per rest mass), NOT physical speed
 And: v_dragt = v_sim · L²  (NO gamma division)
 """
 import numpy as np
-import sys
-sys.path.insert(0, "/sessions/elegant-brave-darwin/mnt/code/PS_Method")
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from ps_method.dragt_physics import calculate_w0_squared
 
 RE = 6378137.0; B0 = 3.12e-5; M = B0*RE**3

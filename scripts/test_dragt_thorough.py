@@ -10,13 +10,13 @@ Tests:
   6. Verify energy equation ρ̇² + ż² + (1/ρ - ρ/r³)² = W₀² (eq 2.52)
   7. Non-relativistic limit: γ→1, formulas reduce to simple v = W₀·v_scale
   8. Ultra-relativistic limit: check no overflow/NaN
-  9. Consistency: calculate_w0_squared ↔ compute_dragt_params ↔ dragt.py forward
+  9. Consistency: calculate_w0_squared ↔ compute_params ↔ dragt.py forward
   10. Verify P_φ = -1 at thalweg ρ=1 (paper's normalization property)
 """
 import numpy as np
-import sys
-sys.path.insert(0, "/sessions/elegant-brave-darwin/mnt/code/PS_Method")
-from ps_method.dragt_physics import calculate_w0_squared, compute_dragt_params
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from ps_method.dragt_physics import calculate_w0_squared, compute_params
 
 RE = 6378137.0; B0 = 3.12e-5; M = B0*RE**3
 q = 1.602176634e-19; m_p = 1.67262192595e-27; m_e = 9.1093837139e-31
@@ -221,7 +221,7 @@ for desc, mass, L, W0sq in [
 # =====================================================================
 print()
 print("="*90)
-print("TEST 8: compute_dragt_params matches manual calculation")
+print("TEST 8: compute_params matches manual calculation")
 print("="*90)
 # Simulate a proton: build fake trajectory arrays from known Dragt parameters
 for L in [4, 7]:
@@ -245,11 +245,11 @@ for L in [4, 7]:
     vz = np.array([v_tau*np.cos(pitch)])
     x = np.array([rho_d*L]); y = np.array([0.0]); z = np.array([0.0])
 
-    dp = compute_dragt_params(x, y, z, vx, vy, vz, L, charge_sign=1)
+    dp = compute_params(x, y, z, vx, vy, vz, L, charge_sign=1)
     err_w0 = abs(dp["W0_sq"] - W0sq)/W0sq
     err_pphi = abs(dp["P_phi"] + 1.0)  # should be near -1
 
-    check(f"compute_dragt_params L={L}: W₀² err={err_w0:.2e}, P_φ≈-1 (off by {err_pphi:.6f})",
+    check(f"compute_params L={L}: W₀² err={err_w0:.2e}, P_φ≈-1 (off by {err_pphi:.6f})",
           err_w0 < 1e-9 and err_pphi < 0.15)
 
 # =====================================================================

@@ -12,7 +12,7 @@ five = npfloat(5.0)
 twopointfive = npfloat(2.5)
 
 @maybe_njit
-def lorentz_force_dipole(t, y, qoverm):
+def lorentz_force(t, y, qoverm):
     # Unpack position and velocity
     x, y_, z, vx, vy, vz = y
     r2 = x**two + y_**two + z**two
@@ -31,7 +31,7 @@ def lorentz_force_dipole(t, y, qoverm):
     return np.array([vx, vy, vz, ax, ay, az], dtype=npfloat)
 
 @maybe_njit
-def PS_dipoleB(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
+def PS_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     n_total = 17
     final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=npfloat)
 
@@ -221,7 +221,7 @@ def compute_mu_rk(solution_rk, mass):
 # ========================
 
 @maybe_njit
-def vector_potential_dipole(r):
+def vector_potential(r):
     x, y, z = r
     r2 = x**2 + y**2 + z**2
     r3 = r2 * np.sqrt(r2)
@@ -825,7 +825,7 @@ def run_ps_streaming_with_decimation(
         while remaining > 0:
             this_chunk = min(chunk_steps, remaining)
 
-            sol_chunk, orders_chunk = PS_dipoleB(
+            sol_chunk, orders_chunk = PS_integrate(
                 PS_order, this_chunk, cur_state, tol, qoverm, ps_step
             )
 
@@ -1156,7 +1156,7 @@ def compute_mu_deviation_rk(
         # RKG stores (N, 6) with canonical momentum — need to convert to velocity
         r0 = solution[0, 0:3]
         p0 = solution[0, 3:6]
-        A0 = vector_potential_dipole(r0)
+        A0 = vector_potential(r0)
         v0 = p0 - A0
         state0 = np.hstack((r0, v0))[None, :]
         mu0 = compute_mu_rk(state0, mass)[0]
@@ -1165,7 +1165,7 @@ def compute_mu_deviation_rk(
         p_win = solution[i0:i1, 3:6]
         A_win = np.empty_like(r_win)
         for i in range(len(r_win)):
-            A_win[i] = vector_potential_dipole(r_win[i])
+            A_win[i] = vector_potential(r_win[i])
         v_win = p_win - A_win
         state_win = np.hstack((r_win, v_win))
         mu_win = compute_mu_rk(state_win, mass)
@@ -1260,4 +1260,216 @@ def compute_mu_deviation_ps(
         "mudrift":        mudrift,
         "mudrift_plot":   mudrift_plot,
         "ps_order_label": ps_order_label,
+    }
+
+
+# ------------------------------------------------------------------
+#  compute_ke_errors  — kinetic-energy relative error for all solvers
+# ------------------------------------------------------------------
+def compute_ke_errors(
+    T_gyro, n_ps=None,
+    MAX_PLOT_POINTS=1_000_000,
+    # PS
+    USE_PS=False, cache_path=None, ps_step=None, PS_decimate=1, E0_ps=None,
+    # RK4
+    USE_RK4=False, solution_rk4=None, rk4_step=None,
+    # RKG
+    USE_RKG=False, solution_rkg=None, rkg_step=None,
+    # RK45
+    USE_RK45=False, y_rk45_common=None,
+    # External h5 overlay files
+    USE_EXTERNAL_H5_ps=False,  external_h5_ps=None,
+    USE_EXTERNAL_H5_rk4=False, external_h5_rk4=None,
+    USE_EXTERNAL_H5_rk45=False, external_h5_rk45=None,
+    USE_EXTERNAL_H5_rkg=False,  external_h5_rkg=None,
+    # Needed for RKG Hamiltonian energy
+    vector_potential_func=None,
+    # For loading external rk4/rk45 files
+    load_results_h5_func=None,
+):
+    """Compute KE relative error arrays for every enabled solver.
+
+    Returns a dict with keys:
+        time_factor, energy_stride,
+        rel_drift_ps, rel_drift_rk4, rel_drift_rk45, rel_drift_rkg,
+        ke_ps, ke_rk4, ke_rk45, ke_rkg,           (plot-ready tuples or None)
+        ke_ext_ps, ke_ext_rk4, ke_ext_rk45, ke_ext_rkg  (external overlay tuples or None)
+    """
+    time_factor = 1.0 / T_gyro
+
+    energy_stride = 1
+    if USE_PS and n_ps is not None:
+        energy_stride = max(1, n_ps // MAX_PLOT_POINTS)
+
+    # --- External H5 overlays ---
+    ke_ext_ps = ke_ext_rk4 = ke_ext_rk45 = ke_ext_rkg = None
+
+    if USE_EXTERNAL_H5_ps:
+        with h5py.File(external_h5_ps, 'r') as external:
+            ext_ps = external["ps"]
+            y_ext = ext_ps["y"]
+            n_store = y_ext.shape[1]
+            ps_step_ext = ext_ps.attrs["dt"]
+            ps_decimate_ext = ext_ps.attrs.get("decimate", 1)
+            dt_store_ext = ps_step_ext * ps_decimate_ext
+            energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS)
+            idx = np.arange(0, n_store, energy_stride_ext)
+            t_eval_ps_ext = idx * dt_store_ext
+            vxe = y_ext[3, ::energy_stride_ext].astype(np.float64)
+            vye = y_ext[4, ::energy_stride_ext].astype(np.float64)
+            vze = y_ext[5, ::energy_stride_ext].astype(np.float64)
+            E_ext = 0.5 * (vxe*vxe + vye*vye + vze*vze)
+            rel_drift_ps_ext = (E_ext - E_ext[0]) / E_ext[0]
+            PS_order_ext = ext_ps.attrs.get("max_ps", None)
+        ke_ext_ps = (t_eval_ps_ext, rel_drift_ps_ext, PS_order_ext)
+
+    if USE_EXTERNAL_H5_rk4:
+        external_rk4 = load_results_h5_func(external_h5_rk4)
+        ext_rk4 = external_rk4["rk4"]
+        y_rk4_ext = ext_rk4["y"]
+        if "t" in ext_rk4 and ext_rk4["t"] is not None:
+            t_eval_rk4_ext = ext_rk4["t"]
+        elif "dt" in ext_rk4 and "steps" in ext_rk4:
+            t_eval_rk4_ext = ext_rk4["dt"] * np.arange(ext_rk4["steps"] + 1, dtype=npfloat)
+        else:
+            raise ValueError(
+                "External RK4 H5 file has no time information "
+                "(no 't', no 'dt/steps').")
+        if y_rk4_ext.shape[0] != 6:
+            y_rk4_ext = y_rk4_ext.T
+        v_rk4_ext = y_rk4_ext[3:6]
+        E_rk4_ext = 0.5 * np.sum(v_rk4_ext**2, axis=0)
+        rel_drift_rk4_ext = np.abs(E_rk4_ext - E_rk4_ext[0]) / E_rk4_ext[0]
+        ke_ext_rk4 = (t_eval_rk4_ext, rel_drift_rk4_ext)
+
+    if USE_EXTERNAL_H5_rk45:
+        externalb = load_results_h5_func(external_h5_rk45)
+        ext_rk45 = externalb["rk45"]
+        y_rk45_ext = ext_rk45["y"]
+        if y_rk45_ext.shape[0] != 6:
+            y_rk45_ext = y_rk45_ext.T
+        n_store = y_rk45_ext.shape[1]
+        if "t" in ext_rk45 and ext_rk45["t"] is not None:
+            t_ext = np.asarray(ext_rk45["t"])
+        else:
+            ps_step_ext = ext_rk45.get("dt", ps_step)
+            ps_decimate_ext = ext_rk45.get("decimate", 1)
+            dt_store_ext = ps_step_ext * ps_decimate_ext
+            t_ext = dt_store_ext * np.arange(n_store, dtype=npfloat)
+        energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS)
+        idx = np.arange(0, n_store, energy_stride_ext)
+        t_eval_rk45_ext = t_ext[idx]
+        v = y_rk45_ext[3:6, idx].astype(np.float64)
+        E = 0.5 * np.sum(v*v, axis=0)
+        rel_drift_rk45_ext = (E - E[0]) / E[0]
+        ke_ext_rk45 = (t_eval_rk45_ext, rel_drift_rk45_ext)
+
+    if USE_EXTERNAL_H5_rkg:
+        with h5py.File(external_h5_rkg, 'r') as external_file:
+            ext_rkg = external_file["rkg"]
+            y_dataset = ext_rkg["y"]
+            is_transposed = (y_dataset.shape[0] == 6)
+            n_steps = y_dataset.shape[1] if is_transposed else y_dataset.shape[0]
+            rkg_stride = max(1, n_steps // MAX_PLOT_POINTS)
+            if "t" in ext_rkg:
+                t_ext_rkg = ext_rkg["t"][::rkg_stride]
+            else:
+                import json as _json
+                dt_rkg = ext_rkg.attrs.get("dt", ext_rkg.get("dt", None))
+                if dt_rkg is None and "params_json" in external_file.attrs:
+                    params = _json.loads(external_file.attrs["params_json"])
+                    dt_rkg = params.get("rkg_step")
+                if dt_rkg is not None:
+                    if hasattr(dt_rkg, 'value'): dt_rkg = dt_rkg[()]
+                    idx = np.arange(0, n_steps, rkg_stride)
+                    t_ext_rkg = dt_rkg * idx.astype(npfloat)
+                else:
+                    raise ValueError("External RKG H5 file has no time info.")
+            if is_transposed:
+                y_ext_rkg = y_dataset[:, ::rkg_stride].T
+            else:
+                y_ext_rkg = y_dataset[::rkg_stride, :]
+
+        r_rkg_ext = y_ext_rkg[:, 0:3]
+        p_rkg_ext = y_ext_rkg[:, 3:6]
+        A_rkg_ext = np.zeros_like(r_rkg_ext)
+        for i in range(len(r_rkg_ext)):
+            A_rkg_ext[i] = vector_potential_func(r_rkg_ext[i])
+        v_rkg_ext = p_rkg_ext - A_rkg_ext
+        E_rkg_ext = npfloat(0.5) * np.sum(v_rkg_ext**2, axis=1, dtype=npfloat)
+        rel_drift_ext_rkg = np.abs(E_rkg_ext - E_rkg_ext[0]) / E_rkg_ext[0]
+        ke_ext_rkg = (t_ext_rkg, rel_drift_ext_rkg)
+
+    # --- Current-run PS energy (chunked from h5) ---
+    rel_drift_ps = t_ps_plot = None
+    if USE_PS:
+        with h5py.File(cache_path, "r") as ps_h5:
+            ps_y_h5 = ps_h5["ps"]["y"]
+            t_ps_plot, rel_drift_ps = compute_energy_ps_chunked(
+                ps_y_h5=ps_y_h5,
+                E0_ps=E0_ps,
+                dt_ps_store=ps_step * (PS_decimate if PS_decimate > 1 else 1),
+                chunk_cols=MAX_PLOT_POINTS,
+                stride=energy_stride,
+                return_plot_data=True,
+            )
+
+    # --- Current-run RKG (Hamiltonian) ---
+    rel_drift_rkg = None
+    if USE_RKG:
+        r_rkg = solution_rkg[:, 0:3]
+        p_rkg = solution_rkg[:, 3:6]
+        A_rkg = np.zeros_like(r_rkg)
+        for i in range(len(r_rkg)):
+            A_rkg[i] = vector_potential_func(r_rkg[i])
+        v_rkg = p_rkg - A_rkg
+        E_rkg = npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=npfloat)
+        E_rkg_0 = E_rkg[0]
+        rel_drift_rkg = np.abs(E_rkg - E_rkg_0) / E_rkg_0
+
+    # --- Current-run RK45 ---
+    rel_drift_rk45 = None
+    if USE_RK45:
+        v_rk45 = y_rk45_common[3:6]
+        E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
+        E_rk45_0 = E_rk45[0]
+        rel_drift_rk45 = np.abs(E_rk45 - E_rk45_0) / E_rk45_0
+
+    # --- Current-run RK4 ---
+    rel_drift_rk4 = None
+    if USE_RK4:
+        v_rk4 = solution_rk4[3:6]
+        E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
+        E_rk4_0 = E_rk4[0]
+        rel_drift_rk4 = np.abs(E_rk4 - E_rk4_0) / E_rk4_0
+
+    # --- Build time arrays ---
+    t_rk4 = rk4_step * np.arange(len(rel_drift_rk4), dtype=npfloat) if USE_RK4 else None
+    t_rkg = rkg_step * np.arange(len(rel_drift_rkg), dtype=npfloat) if USE_RKG else None
+    t_rk45 = ps_step * np.arange(len(rel_drift_rk45), dtype=npfloat) if USE_RK45 else None
+
+    # --- Assemble plot-ready tuples ---
+    ke_ps   = (t_ps_plot, rel_drift_ps)    if USE_PS   else None
+    ke_rk4  = (t_rk4, rel_drift_rk4)      if USE_RK4  else None
+    ke_rk45 = (t_rk45, rel_drift_rk45)    if USE_RK45 else None
+    ke_rkg  = (t_rkg, rel_drift_rkg)       if USE_RKG  else None
+
+    return {
+        "time_factor":    time_factor,
+        "energy_stride":  energy_stride,
+        # raw arrays (needed by summary writer + CSV log)
+        "rel_drift_ps":   rel_drift_ps,
+        "rel_drift_rk4":  rel_drift_rk4,
+        "rel_drift_rk45": rel_drift_rk45,
+        "rel_drift_rkg":  rel_drift_rkg,
+        # plot-ready tuples
+        "ke_ps":   ke_ps,
+        "ke_rk4":  ke_rk4,
+        "ke_rk45": ke_rk45,
+        "ke_rkg":  ke_rkg,
+        # external overlays
+        "ke_ext_ps":   ke_ext_ps,
+        "ke_ext_rk4":  ke_ext_rk4,
+        "ke_ext_rk45": ke_ext_rk45,
+        "ke_ext_rkg":  ke_ext_rkg,
     }

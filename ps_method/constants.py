@@ -1,7 +1,8 @@
 """
 Shared physical constants for the PS_Method project.
 
-npfloat is resolved at import time via builtins (set by project_setup.py).
+npfloat is resolved at import time via builtins (set by the driver script,
+e.g. dipoleB.py, before physics modules are imported).
 Falls back to np.float64 if builtins.npfloat has not been set yet.
 """
 
