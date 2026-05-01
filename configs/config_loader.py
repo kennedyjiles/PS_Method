@@ -96,6 +96,73 @@ def _resolve_output_paths(config_name, field_prefix=""):
     return output_folder, run_storage
 
 
+def copy_config_to_output(cfg_path, output_folder):
+    """Write the fully-merged config into the output folder with the git hash.
+
+    The saved file is self-contained (includes all base defaults) so it can
+    be loaded directly from data/ without needing base.yml nearby.  A
+    ``base_config: none`` key tells load_config to skip the base merge.
+
+    Parameters
+    ----------
+    cfg_path      : str – path to the original YAML config.
+    output_folder : str – the run's output directory (e.g. data/dipoleB/demo/).
+    """
+    import subprocess
+
+    # --- Load and merge (same logic as load_config, but we keep the result) ---
+    with open(cfg_path, "r") as f:
+        run_cfg = yaml.safe_load(f) or {}
+
+    # Find the base config
+    if "base_config" in run_cfg:
+        base_path = run_cfg.pop("base_config")
+        if base_path and base_path.lower() != "none" and not os.path.isabs(base_path):
+            base_path = os.path.join(os.path.dirname(os.path.abspath(cfg_path)), base_path)
+    else:
+        base_path = os.path.join(os.path.dirname(os.path.abspath(cfg_path)), "base.yml")
+
+    if base_path and str(base_path).lower() != "none" and os.path.isfile(base_path):
+        with open(base_path, "r") as f:
+            merged = yaml.safe_load(f) or {}
+        _deep_merge(merged, run_cfg)
+    else:
+        merged = run_cfg
+
+    # --- Add git commit hash ---
+    try:
+        _hash = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(cfg_path)),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        _dirty = subprocess.call(
+            ["git", "diff", "--quiet"],
+            cwd=os.path.dirname(os.path.abspath(cfg_path)),
+            stderr=subprocess.DEVNULL,
+        )
+        if _dirty:
+            _hash += "-dirty"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        _hash = "unavailable"
+
+    merged["git_commit"] = _hash
+
+    # Mark as self-contained so load_config skips the base merge
+    merged["base_config"] = "none"
+
+    # --- Write ---
+    basename = os.path.basename(cfg_path)
+    dest = os.path.join(output_folder, basename)
+    with open(dest, "w") as f:
+        f.write(f"# Fully merged config — generated from {os.path.basename(cfg_path)}\n")
+        f.write(f"# Re-run with: python run.py {dest}\n\n")
+        yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
+
+    print(f"Config copied → {dest}")
+    return dest
+
+
 # ---------------------------------------------------------------------------
 # Dipole-specific helper
 # ---------------------------------------------------------------------------
@@ -162,24 +229,32 @@ def load_config(conf_file):
     # --- Load base config ---
     if "base_config" in run_cfg:
         base_path = run_cfg.pop("base_config")  # consumed, not passed through
-        if not os.path.isabs(base_path):
-            base_path = os.path.join(os.path.dirname(os.path.abspath(conf_file)), base_path)
+        if base_path and str(base_path).lower() != "none":
+            if not os.path.isabs(base_path):
+                base_path = os.path.join(os.path.dirname(os.path.abspath(conf_file)), base_path)
+        else:
+            base_path = None  # self-contained config (e.g. copied to data/)
     else:
         # Look for base.yml in the same directory as the run config
         run_dir = os.path.dirname(os.path.abspath(conf_file))
         base_path = os.path.join(run_dir, "base.yml")
 
-    with open(base_path, "r") as f:
-        base_cfg = yaml.safe_load(f)
+    if base_path is not None:
+        with open(base_path, "r") as f:
+            base_cfg = yaml.safe_load(f)
 
-    log.append("=" * 60)
-    log.append(f"Base config: {base_path}")
-    log.append("=" * 60)
-    log.append(yaml.dump(base_cfg, default_flow_style=False, sort_keys=False).rstrip())
-    log.append("")
+        log.append("=" * 60)
+        log.append(f"Base config: {base_path}")
+        log.append("=" * 60)
+        log.append(yaml.dump(base_cfg, default_flow_style=False, sort_keys=False).rstrip())
+        log.append("")
+    else:
+        base_cfg = {}
+        log.append("Base config: none (self-contained)")
+        log.append("")
 
     # --- Validate: warn about unknown keys ---
-    base_keys = _collect_keys(base_cfg)
+    base_keys = _collect_keys(base_cfg) if base_cfg else _collect_keys(run_cfg)
     run_keys  = _collect_keys(run_cfg)
     unknown   = run_keys - base_keys
     _known_extras = {
