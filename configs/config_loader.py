@@ -10,13 +10,13 @@ Two-stage design (following advisor's config pattern):
 
 Usage:
     cfg    = load_config("configs/dipoleb/demo.yml")
-    params = compute_derived_dipole(cfg, npfloat=npfloat)
+    params = compute_derived_dipoleb(cfg, npfloat=npfloat)
 
     cfg    = load_config("configs/constb/demo.yml")
     params = compute_derived_constb(cfg, npfloat=npfloat)
 
     cfg    = load_config("configs/hyperb/demo.yml")
-    params = compute_derived_hyper(cfg, npfloat=npfloat)
+    params = compute_derived_hyperb(cfg, npfloat=npfloat)
 """
 
 import os
@@ -319,7 +319,7 @@ def load_config(conf_file):
 # Stage 2a: Compute derived — dipole
 # ---------------------------------------------------------------------------
 
-def compute_derived_dipole(cfg, npfloat=np.float64):
+def compute_derived_dipoleb(cfg, npfloat=np.float64):
     """
     Dipole-specific derived quantities.
 
@@ -483,7 +483,7 @@ def compute_derived_dipole(cfg, npfloat=np.float64):
 
 
 # Backward compatibility alias
-compute_derived = compute_derived_dipole
+compute_derived = compute_derived_dipoleb
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +610,7 @@ def compute_derived_constb(cfg, npfloat=np.float64):
 # Stage 2c: Compute derived — hyperbolic B
 # ---------------------------------------------------------------------------
 
-def compute_derived_hyper(cfg, npfloat=np.float64):
+def compute_derived_hyperb(cfg, npfloat=np.float64):
     """
     Hyperbolic-B specific derived quantities.
 

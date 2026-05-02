@@ -20,7 +20,7 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 
-from configs.config_loader import load_config, compute_derived_hyper, copy_config_to_output
+from configs.config_loader import load_config, compute_derived_hyperb, copy_config_to_output
 from ps_method.constants import q_e, evtoj
 
 
@@ -51,7 +51,7 @@ def main(cfg_path, replot=False):
     from ps_method import field_plots as fplt
     from ps_method import writers as wr
 
-    p = compute_derived_hyper(cfg, npfloat=npfloat)
+    p = compute_derived_hyperb(cfg, npfloat=npfloat)
 
     # === Unpack Config ===
     READ_DATA       = p["READ_DATA"]
@@ -161,7 +161,7 @@ def main(cfg_path, replot=False):
         t_eval_rk45 = np.float64(t_eval_rk4)      # for plots, it's doing it's own thing mostly
 
     # === Build parameter signature & check cache ===
-    params = wr.get_run_params_hyper(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
+    params = wr.get_run_params_hyperb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                        mass_si, q_e, B_0, delta,
                        x_initial, y_initial, z_initial,
                        pitch_deg, phi_deg,
@@ -171,7 +171,7 @@ def main(cfg_path, replot=False):
 
     if os.path.exists(cache_path) and READ_DATA:
         print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
-        cached = wr.load_results_h5_hyper(cache_path)
+        cached = wr.load_results_h5_hyperb(cache_path)
 
         # Rehydrate what you need for plotting/analysis:
         solution_ps = cached["ps"]["y"] if cached["ps"] else None
@@ -248,7 +248,7 @@ def main(cfg_path, replot=False):
 
         # Save to cache
         if WRITE_DATA:
-            wr.save_results_h5_hyper(cache_path, params, results)
+            wr.save_results_h5_hyperb(cache_path, params, results)
             print(f"Saved results → {os.path.basename(cache_path)}")
         stem = os.path.splitext(os.path.basename(cache_path))[0]
 
@@ -369,7 +369,7 @@ def main(cfg_path, replot=False):
         ext_data = None
         extb_data = None
         if USE_EXTERNAL_H5:
-            external = wr.load_results_h5_hyper(external_h5)
+            external = wr.load_results_h5_hyperb(external_h5)
             ext_ps = external["ps"]
             t_ext, y_ext = ext_ps["t"], ext_ps["y"]
             vxe, vye, vze = y_ext[3].astype(np.float128), y_ext[4].astype(np.float128), y_ext[5].astype(np.float128)
@@ -378,7 +378,7 @@ def main(cfg_path, replot=False):
             ext_data = (t_ext, rel_drift_ext, PS_order_ext)
 
         if USE_EXTERNAL_H5b:
-            externalb = wr.load_results_h5_hyper(external_h5b)
+            externalb = wr.load_results_h5_hyperb(external_h5b)
             ext_psb = externalb["ps"]
             t_extb, y_extb = ext_psb["t"], ext_psb["y"]
             vxeb, vyeb, vzeb = y_extb[3].astype(np.float128), y_extb[4].astype(np.float128), y_extb[5].astype(np.float128)
@@ -430,7 +430,7 @@ def main(cfg_path, replot=False):
 
     output_filename = f"{run_folder}/{stem}_summary.txt"
 
-    wr.write_summary_txt_hyper(
+    wr.summary_txt_hyperb(
         output_filename,
         stem=stem, WRITE_DATA=WRITE_DATA, READ_DATA=READ_DATA,
         particle_type=particle_type, KE_particle=KE_particle, mass_si=mass_si,

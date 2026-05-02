@@ -1,37 +1,30 @@
 """
-Consolidated I/O for all field types (dipole, constb, hyperb).
+Consolidated I/O for all field types (dipoleb, constb, hyperb).
 
-Shared functions:
-    _to_serializable, run_hash, h5_path_for
-
-Field-specific save/load (named by field type):
-    save_results_h5_dipole / load_results_h5_dipole / append_results_h5_dipole
-    save_results_h5_constb / load_results_h5_constb
-    save_results_h5_hyper  / load_results_h5_hyper
+Shared utilities:
+    _to_serializable, run_hash, h5_path_for,
+    build_filename, summarize, summarize_to_file, write_dict
 
 Field-specific run-param builders:
-    get_run_params_dipole
-    get_run_params_constb
-    get_run_params_hyper
+    get_run_params_dipoleb, get_run_params_constb, get_run_params_hyperb
 
-Shared helpers:
-    summarize_error, summarize, write_dict
-
-Dipole-only extras:
-    expand_h5_to_full, load_legacy_file,
-    build_figure_filename, build_run_stem
-    write_summary_txt, write_master_csv
+Field-specific save/load:
+    save_results_h5_dipoleb / load_results_h5_dipoleb / append_results_h5_dipoleb
+    save_results_h5_constb  / load_results_h5_constb
+    save_results_h5_hyperb  / load_results_h5_hyperb
 
 Field-specific summaries:
-    write_summary_txt_constb
-    write_summary_txt_hyper
+    summary_txt_dipoleb, summary_txt_constb, summary_txt_hyperb
+
+Dipoleb-only extras:
+    expand_h5_to_full, _make_tail_mask, master_csv
 """
 
 import os
 import gc
-import re
 import json
 import hashlib
+
 import numpy as np
 import pandas as pd
 import h5py
@@ -64,7 +57,13 @@ def run_hash(params: dict) -> str:
 
 
 def h5_path_for(params, output_folder):
+    """Return the HDF5 cache path for a given run-parameter dict."""
     return os.path.join(output_folder, f"{run_hash(params)}.h5")
+
+
+def build_filename(summary, output_folder, stem, figure_tag, ext="png"):
+    """Build the full path for a figure or output file."""
+    return os.path.join(output_folder, f"{stem}_{figure_tag}.{ext}")
 
 
 def write_dict(f, d, indent=0):
@@ -78,41 +77,38 @@ def write_dict(f, d, indent=0):
             f.write(f"{pad}{k} = {v}\n")
 
 
-def summarize_error(label, err, f):
-    """Write mean / max / rms of |err| to an open file handle."""
-    err = np.abs(err)
-    mean_val = np.mean(err)
-    max_val  = np.max(err)
-    rms_val  = np.sqrt(np.mean(err**2))
-    f.write(
-        f"  {label:<8}: "
-        f"mean = {mean_val:.2e}, "
-        f"max = {max_val:.2e}, "
-        f"rms = {rms_val:.2e}\n"
-    )
-
-
 def summarize(err):
-    """Return a dict of mean / max / rms statistics (same as summarize_error
-    but returns a dict instead of writing to a file)."""
+    """Return mean / max / rms of |err| as a dict."""
+    ae = np.abs(err)
     return {
-        "mean": np.mean(err),
-        "max":  np.max(np.abs(err)),
-        "rms":  np.sqrt(np.mean(err**2))
+        "mean": np.mean(ae),
+        "max":  np.max(ae),
+        "rms":  np.sqrt(np.mean(ae**2)),
     }
 
 
+def summarize_to_file(label, err, f):
+    """Compute summarize(err) and write a formatted line to file handle *f*."""
+    s = summarize(err)
+    f.write(
+        f"  {label:<8}: "
+        f"mean = {s['mean']:.2e}, "
+        f"max = {s['max']:.2e}, "
+        f"rms = {s['rms']:.2e}\n"
+    )
+
+
 # =====================================================================
-# ===============  Dipole: run params & filename helpers  =============
+# =================  Run-param builders  ==============================
 # =====================================================================
 
-def get_run_params_dipole(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUNKING,
+def get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUNKING,
                           mass_si, q_e, B_0, gamma, user_min_phase,
                           x_initial, y_initial, z_initial,
                           pitch_deg, phi_deg,
                           norm_time, ps_step, rk4_step, rkg_step,
                           PS_order, tol, qoverm, rtol_rk45, atol_rk45):
-    """Collect all knobs that define a unique dipole run."""
+    """Collect all knobs that define a unique dipoleb run."""
     return {
         # toggles
         "USE_RK45": bool(USE_RK45),
@@ -153,281 +149,6 @@ def get_run_params_dipole(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUNK
     }
 
 
-def build_run_stem(summary, stem):
-    """Build a human-readable stem string from a summary dict."""
-    r = summary["meta"]
-    ps = summary["ps"]
-
-    parts = [
-        stem,
-        "DipoleB_",
-        r["particle"],
-        f"{r['energy_eV']:.1e}eV",
-        f"pitch{r['pitch_deg']}",
-        f"phi{r['phi_deg']}",
-        f"{r['norm_time']:.2e}s",
-        r["dtype"],
-    ]
-
-    if ps["enabled"]:
-        parts.insert(4, f"{ps['dt']}step_PS{ps['max_ps']}")
-
-    return "_".join(parts)
-
-
-def build_figure_filename(summary, output_folder, stem, figure_tag, ext="png"):
-    """Build the full path for a figure or output file."""
-    return os.path.join(output_folder, f"{stem}_{figure_tag}.{ext}")
-
-
-# =====================================================================
-# ====================  Dipole: h5 save / load  =======================
-# =====================================================================
-
-# Compact h5 storage: only these rows are saved (pos, vel, B-field)
-SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
-n_save = len(SAVE_ROWS)
-
-
-def expand_h5_to_full(compact_arr):
-    """Expand a 9-row compact h5 array back to 17-row full layout.
-    If the array already has 17 rows, return it unchanged. Protects legacy"""
-    if compact_arr.shape[0] == 17:
-        return compact_arr
-    full = np.zeros((17, compact_arr.shape[1]), dtype=compact_arr.dtype)
-    for i_new, i_old in enumerate(SAVE_ROWS):
-        full[i_old, :] = compact_arr[i_new, :]
-    return full
-
-
-def save_results_h5_dipole(h5_path, results, summary):
-    with h5py.File(h5_path, "w") as f:
-        f.attrs["summary_json"] = json.dumps(summary)
-
-        for k in ("ps", "rk4", "rk45", "rkg"):
-            if k not in results or results[k] is None:
-                continue
-            grp = f.create_group(k)
-            for name, val in results[k].items():
-                if val is None:
-                    continue
-                if isinstance(val, np.ndarray):
-                    grp.create_dataset(
-                        name, data=val,
-                        compression="gzip", compression_opts=2)
-                else:
-                    grp.attrs[name] = val
-
-        meta = results.get("meta", {})
-        gmeta = f.create_group("meta")
-        for mk, mv in meta.get("timing", {}).items():
-            gmeta.attrs[f"timing_{mk}"] = float(mv)
-        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
-            if sk in meta:
-                gmeta.attrs[sk] = meta[sk]
-
-
-def load_results_h5_dipole(h5_path):
-    with h5py.File(h5_path, "r") as f:
-        loaded = {"meta": {"timing": {}}}
-
-        if "params_json" in f.attrs:
-            loaded["params"] = json.loads(f.attrs["params_json"])
-        else:
-            loaded["params"] = None
-
-        def _read_grp(name):
-            if name not in f:
-                return None
-            g = f[name]
-            out = {}
-            for ds in g:
-                out[ds] = g[ds][...]
-            for k, v in g.attrs.items():
-                out[k] = v
-            return out
-
-        for k in ("ps", "rk4", "rk45", "rkg"):
-            loaded[k] = _read_grp(k)
-
-        gmeta = f["meta"]
-        for a in gmeta.attrs:
-            if a.startswith("timing_"):
-                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
-            else:
-                loaded["meta"][a] = gmeta.attrs[a]
-
-        return loaded
-
-
-def append_results_h5_dipole(h5_path, results, summary):
-    """
-    Append non-PS solver results and metadata to an existing HDF5 file.
-    Ensures dictionary is written exactly once (for streaming PS files).
-    """
-    with h5py.File(h5_path, "a") as f:
-        if "summary_json" not in f.attrs:
-            f.attrs["summary_json"] = json.dumps(summary)
-
-        if "meta" not in f:
-            gmeta = f.create_group("meta")
-        else:
-            gmeta = f["meta"]
-
-        for mk, mv in results["meta"]["timing"].items():
-            gmeta.attrs[f"timing_{mk}"] = float(mv)
-
-        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
-            if sk in results["meta"]:
-                gmeta.attrs[sk] = results["meta"][sk]
-
-        for k in ("rk4", "rk45", "rkg"):
-            if results.get(k) is None:
-                continue
-            if k in f:
-                del f[k]
-            grp = f.create_group(k)
-            for name, val in results[k].items():
-                if isinstance(val, np.ndarray):
-                    grp.create_dataset(
-                        name, data=val,
-                        compression="gzip", compression_opts=2)
-                else:
-                    grp.attrs[name] = val
-
-
-def load_legacy_file(h5_path):
-    """Loader for legacy HDF5 files."""
-    f = h5py.File(h5_path, "r")
-
-    params = {}
-    if "params_json" in f.attrs:
-        params = json.loads(f.attrs["params_json"])
-
-    meta = f["meta"]
-    timing = {
-        k.replace("timing_", ""): float(v)
-        for k, v in meta.attrs.items()
-        if k.startswith("timing_")
-    }
-
-    particle_label = meta.attrs.get("particle_label", "")
-    label_l = particle_label.lower()
-
-    if "proton" in label_l:
-        particle = "Proton"
-    elif "electron" in label_l:
-        particle = "Electron"
-    else:
-        particle = "Unknown"
-
-    m = re.search(r"([0-9.+\-eE]+)\s*ev", label_l)
-    if m:
-        KE_particle = float(m.group(1))
-    else:
-        raise RuntimeError(f"Could not parse energy from particle_label: '{particle_label}'")
-
-    x_initial = params["x_initial"]
-    ps_step = params.get("ps_step", 0)
-    rk4_step = params.get("rk4_step", 0)
-    rkg_step = params.get("rkg_step", 0)
-    norm_time = params["norm_time"]
-    T_gyro = 2.0 * np.pi * (x_initial**3)
-    gyroperiods = norm_time / T_gyro
-    npfloat = np.float64
-
-    summary = {
-        "meta": {
-            "stem": h5_path.split("/")[-1].replace(".h5", ""),
-            "legacy": True,
-            "particle": particle,
-            "mass_si": params["mass_si"],
-            "q_e": params["q_e"],
-            "energy_eV": npfloat(KE_particle),
-            "pitch_deg": params["pitch_deg"],
-            "phi_deg": params["phi_deg"],
-            "x0": params["x_initial"],
-            "y0": params["y_initial"],
-            "z0": params["z_initial"],
-            "B0_T": params["B_0"],
-            "gyroperiods": gyroperiods,
-            "norm_time": float(meta.attrs.get("norm_time")),
-            "physical_time": float(meta.attrs.get("physical_time")),
-            "percent_c": float(meta.attrs.get("percent_c")),
-            "qoverm": params["qoverm"],
-            "dtype": npfloat.__name__,
-            "timing": timing,
-        },
-        "ps": {"enabled": False},
-        "rk4": {"enabled": False},
-        "rk45": {"enabled": False},
-        "rkg": {"enabled": False},
-    }
-
-    datasets = {}
-
-    if "ps" in f:
-        g = f["ps"]
-        streaming = bool(g.attrs.get("streaming", False))
-        datasets["ps_y"] = g["y"] if "y" in g else None
-        datasets["ps_orders"] = g["orders"] if "orders" in g else None
-
-        max_ps_used = (
-            int(g.attrs["max_ps"])
-            if "max_ps" in g.attrs
-            else None
-        )
-
-        summary["ps"].update({
-            "enabled": True,
-            "dt": float(g.attrs.get("dt", ps_step)),
-            "steps": int(g.attrs.get("steps", int(norm_time / ps_step))),
-            "streaming": streaming,
-            "ordercap": params["PS_order"],
-            "max_ps": max_ps_used,
-            "decimate": int(g.attrs.get("decimate", 1)),
-            "numberstepspergyro": int(np.round(T_gyro / g.attrs.get("dt", ps_step))),
-            "E0": float(g.attrs.get("E0")),
-            "mu0": float(g.attrs.get("mu0")),
-            "tol": params["tol"],
-        })
-
-    if "rk4" in f:
-        g = f["rk4"]
-        summary["rk4"].update({
-            "enabled": True,
-            "dt": g.attrs.get("dt", rk4_step),
-            "steps": g.attrs.get("steps", int(norm_time / rk4_step)),
-            "numberstepspergyro": int(np.round(T_gyro / g.attrs.get("dt", rk4_step)))
-        })
-        datasets["rk4_y"] = g["y"]
-
-    if "rk45" in f:
-        summary["rk45"].update({
-            "enabled": True,
-            "atol": params["atol_rk45"],
-            "rtol": params["rtol_rk45"],
-        })
-        datasets["rk45_t"] = f["rk45"]["t"]
-        datasets["rk45_y"] = f["rk45"]["y"]
-
-    if "rkg" in f:
-        g = f["rkg"]
-        summary["rkg"].update({
-            "enabled": True,
-            "dt": g.attrs.get("dt", rkg_step),
-            "steps": g.attrs.get("steps", int(norm_time / rkg_step)),
-            "numberstepspergyro": int(np.round(T_gyro / g.attrs.get("dt", rkg_step)))
-        })
-        datasets["rkg_y"] = g["y"]
-
-    return summary, datasets, params, f
-
-
-# =====================================================================
-# ====================  ConstB: run params & h5  ======================
-# =====================================================================
-
 def get_run_params_constb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                           mass_si, q_e, B_0,
                           x_initial, y_initial, z_initial,
@@ -463,59 +184,7 @@ def get_run_params_constb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
     }
 
 
-def save_results_h5_constb(h5_path, params, results):
-    with h5py.File(h5_path, "w") as f:
-        f.attrs["params_json"] = json.dumps(params, sort_keys=True, default=_to_serializable)
-
-        for k in ("ps", "rk4", "rk45"):
-            if k in results and results[k] is not None:
-                grp = f.create_group(k)
-                for name, arr in results[k].items():
-                    if arr is None:
-                        continue
-                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=2)
-
-        meta = results.get("meta", {})
-        gmeta = f.create_group("meta")
-        for mk, mv in meta.get("timing", {}).items():
-            gmeta.attrs[f"timing_{mk}"] = float(mv)
-        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
-            if sk in meta:
-                gmeta.attrs[sk] = meta[sk]
-
-
-def load_results_h5_constb(h5_path):
-    with h5py.File(h5_path, "r") as f:
-        loaded = {"meta": {"timing": {}}}
-        loaded["params"] = json.loads(f.attrs["params_json"])
-
-        def _read_grp(name):
-            if name not in f:
-                return None
-            g = f[name]
-            out = {}
-            for ds in g:
-                out[ds] = g[ds][...]
-            return out
-
-        for k in ("ps", "rk4", "rk45"):
-            loaded[k] = _read_grp(k)
-
-        gmeta = f["meta"]
-        for a in gmeta.attrs:
-            if a.startswith("timing_"):
-                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
-            else:
-                loaded["meta"][a] = gmeta.attrs[a]
-
-        return loaded
-
-
-# =====================================================================
-# ====================  HyperB: run params & h5  =====================
-# =====================================================================
-
-def get_run_params_hyper(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
+def get_run_params_hyperb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                          mass_si, q_e, B_0, delta,
                          x_initial, y_initial, z_initial,
                          pitch_deg, phi_deg,
@@ -551,7 +220,161 @@ def get_run_params_hyper(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
     }
 
 
-def save_results_h5_hyper(h5_path, params, results):
+# =====================================================================
+# =================  Save / load  =====================================
+# =====================================================================
+
+# Compact h5 storage: only these rows are saved (pos, vel, B-field)
+SAVE_ROWS = [0, 1, 2, 3, 4, 5, 14, 15, 16]
+n_save = len(SAVE_ROWS)
+
+
+def save_results_h5_dipoleb(h5_path, results, summary):
+    """Write solver arrays and metadata to a new HDF5 cache file."""
+    with h5py.File(h5_path, "w") as f:
+        f.attrs["summary_json"] = json.dumps(summary)
+
+        for k in ("ps", "rk4", "rk45", "rkg"):
+            if k not in results or results[k] is None:
+                continue
+            grp = f.create_group(k)
+            for name, val in results[k].items():
+                if val is None:
+                    continue
+                if isinstance(val, np.ndarray):
+                    grp.create_dataset(
+                        name, data=val,
+                        compression="gzip", compression_opts=2)
+                else:
+                    grp.attrs[name] = val
+
+        meta = results.get("meta", {})
+        gmeta = f.create_group("meta")
+        for mk, mv in meta.get("timing", {}).items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in meta:
+                gmeta.attrs[sk] = meta[sk]
+
+
+def load_results_h5_dipoleb(h5_path):
+    """Load solver arrays and metadata from an HDF5 cache file."""
+    with h5py.File(h5_path, "r") as f:
+        loaded = {"meta": {"timing": {}}}
+
+        if "params_json" in f.attrs:
+            loaded["params"] = json.loads(f.attrs["params_json"])
+        else:
+            loaded["params"] = None
+
+        def _read_grp(name):
+            if name not in f:
+                return None
+            g = f[name]
+            out = {}
+            for ds in g:
+                out[ds] = g[ds][...]
+            for k, v in g.attrs.items():
+                out[k] = v
+            return out
+
+        for k in ("ps", "rk4", "rk45", "rkg"):
+            loaded[k] = _read_grp(k)
+
+        gmeta = f["meta"]
+        for a in gmeta.attrs:
+            if a.startswith("timing_"):
+                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+            else:
+                loaded["meta"][a] = gmeta.attrs[a]
+
+        return loaded
+
+
+def append_results_h5_dipoleb(h5_path, results, summary):
+    """Append non-PS solver results and metadata to an existing HDF5 file.
+    Ensures dictionary is written exactly once (for streaming PS files)."""
+    with h5py.File(h5_path, "a") as f:
+        if "summary_json" not in f.attrs:
+            f.attrs["summary_json"] = json.dumps(summary)
+
+        if "meta" not in f:
+            gmeta = f.create_group("meta")
+        else:
+            gmeta = f["meta"]
+
+        for mk, mv in results["meta"]["timing"].items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in results["meta"]:
+                gmeta.attrs[sk] = results["meta"][sk]
+
+        for k in ("rk4", "rk45", "rkg"):
+            if results.get(k) is None:
+                continue
+            if k in f:
+                del f[k]
+            grp = f.create_group(k)
+            for name, val in results[k].items():
+                if isinstance(val, np.ndarray):
+                    grp.create_dataset(
+                        name, data=val,
+                        compression="gzip", compression_opts=2)
+                else:
+                    grp.attrs[name] = val
+
+def save_results_h5_constb(h5_path, params, results):
+    """Write solver arrays and metadata to a new HDF5 cache file."""
+    with h5py.File(h5_path, "w") as f:
+        f.attrs["params_json"] = json.dumps(params, sort_keys=True, default=_to_serializable)
+
+        for k in ("ps", "rk4", "rk45"):
+            if k in results and results[k] is not None:
+                grp = f.create_group(k)
+                for name, arr in results[k].items():
+                    if arr is None:
+                        continue
+                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=2)
+
+        meta = results.get("meta", {})
+        gmeta = f.create_group("meta")
+        for mk, mv in meta.get("timing", {}).items():
+            gmeta.attrs[f"timing_{mk}"] = float(mv)
+        for sk in ("physical_time", "norm_time", "percent_c", "particle_label"):
+            if sk in meta:
+                gmeta.attrs[sk] = meta[sk]
+
+
+def load_results_h5_constb(h5_path):
+    """Load solver arrays and metadata from an HDF5 cache file."""
+    with h5py.File(h5_path, "r") as f:
+        loaded = {"meta": {"timing": {}}}
+        loaded["params"] = json.loads(f.attrs["params_json"])
+
+        def _read_grp(name):
+            if name not in f:
+                return None
+            g = f[name]
+            out = {}
+            for ds in g:
+                out[ds] = g[ds][...]
+            return out
+
+        for k in ("ps", "rk4", "rk45"):
+            loaded[k] = _read_grp(k)
+
+        gmeta = f["meta"]
+        for a in gmeta.attrs:
+            if a.startswith("timing_"):
+                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+            else:
+                loaded["meta"][a] = gmeta.attrs[a]
+
+        return loaded
+
+def save_results_h5_hyperb(h5_path, params, results):
+    """Write solver arrays and metadata to a new HDF5 cache file."""
     with h5py.File(h5_path, "w") as f:
         f.attrs["params_json"] = json.dumps(params, sort_keys=True, default=_to_serializable)
 
@@ -572,7 +395,8 @@ def save_results_h5_hyper(h5_path, params, results):
                 gmeta.attrs[sk] = meta[sk]
 
 
-def load_results_h5_hyper(h5_path):
+def load_results_h5_hyperb(h5_path):
+    """Load solver arrays and metadata from an HDF5 cache file."""
     with h5py.File(h5_path, "r") as f:
         loaded = {"meta": {"timing": {}}}
         loaded["params"] = json.loads(f.attrs["params_json"])
@@ -600,29 +424,10 @@ def load_results_h5_hyper(h5_path):
 
 
 # =====================================================================
-# ====================  Dipole: Summary & CSV Writers  ================
+# =================  Field-specific summaries  ========================
 # =====================================================================
 
-def _make_tail_mask(n_points, step_size, tail_start, max_tail_steps):
-    """Build a boolean mask for the last fraction of a time series."""
-    j0 = int(tail_start / step_size)
-    j0 = max(0, min(j0, n_points - 1))
-
-    if n_points - j0 > max_tail_steps:
-        j0 = n_points - max_tail_steps
-
-    mask = np.zeros(n_points, dtype=bool)
-    mask[j0:] = True
-
-    if not np.any(mask):
-        NMIN = min(1000, n_points)
-        mask[-NMIN:] = True
-        j0 = n_points - NMIN
-
-    return mask, j0
-
-
-def write_summary_txt(
+def summary_txt_dipoleb(
     summary, run_folder, stem, dragt_log, bounce_results, drift_results,
     gyroperiods, norm_time, mass, cache_path,
     # Solver flags
@@ -642,10 +447,8 @@ def write_summary_txt(
     # Physics functions (injected to avoid circular imports)
     compute_mu_ps=None, compute_mu_rk=None, vector_potential=None,
 ):
-    """
-    Write the simulation summary text file, including tail-averaged energy
-    and mu errors, Dragt diagnostics, and bounce/drift statistics.
-    """
+    """Write the dipoleb summary text file, including tail-averaged energy
+    and mu errors, Dragt diagnostics, and bounce/drift statistics."""
     # --- Tail fraction setup ---
     if gyroperiods < 1e6:
         TAIL_FRAC = 0.01
@@ -672,8 +475,8 @@ def write_summary_txt(
         _, j0_rkg = _make_tail_mask(len(rel_drift_rkg), rkg_step, tail_start, MAX_TAIL_STEPS)
 
     # --- Write file ---
-    output_filename = build_figure_filename(summary, run_folder, stem,
-                                            figure_tag="summary", ext="txt")
+    output_filename = build_filename(summary, run_folder, stem,
+                                     figure_tag="summary", ext="txt")
 
     with open(output_filename, "w") as f:
         f.write("=== Simulation Summary ===\n")
@@ -683,13 +486,13 @@ def write_summary_txt(
         # --- Energy tail errors ---
         f.write("\n=== |delta E|/E0 (tail average) ===\n")
         if USE_RK45:
-            summarize_error("RK45", rel_drift_rk45[j0_rk45:], f)
+            summarize_to_file("RK45", rel_drift_rk45[j0_rk45:], f)
         if USE_RK4:
-            summarize_error("RK4", rel_drift_rk4[j0_rk4:], f)
+            summarize_to_file("RK4", rel_drift_rk4[j0_rk4:], f)
         if USE_RKG:
-            summarize_error("RKG", rel_drift_rkg[j0_rkg:], f)
+            summarize_to_file("RKG", rel_drift_rkg[j0_rkg:], f)
         if USE_PS:
-            summarize_error("PS", rel_drift_ps[j0_ps:], f)
+            summarize_to_file("PS", rel_drift_ps[j0_ps:], f)
 
         # --- Mu tail errors ---
         f.write("\n=== |delta mu|/mu0 (tail average) ===\n")
@@ -697,14 +500,14 @@ def write_summary_txt(
         if USE_RK45:
             y_tail = y_rk45_common[:, j0_rk45:]
             mu_tail = compute_mu_rk(y_tail.T, mass)
-            summarize_error("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
+            summarize_to_file("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
             del y_tail, mu_tail
             gc.collect()
 
         if USE_RK4:
             y_tail = solution_rk4[:, j0_rk4:]
             mu_tail = compute_mu_rk(y_tail.T, mass)
-            summarize_error("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
+            summarize_to_file("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
             del y_tail, mu_tail
             gc.collect()
 
@@ -720,7 +523,7 @@ def write_summary_txt(
             state_tail = np.hstack((r_tail, v_tail))
 
             mu_tail = compute_mu_rk(state_tail, mass)
-            summarize_error("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
+            summarize_to_file("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
             del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
             gc.collect()
 
@@ -740,7 +543,7 @@ def write_summary_txt(
                 y_tail = expand_h5_to_full(ps_y[:, j0:])
 
             mu_tail = compute_mu_ps(y_tail, mass)
-            summarize_error("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
+            summarize_to_file("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
             del y_tail, mu_tail
             gc.collect()
 
@@ -783,15 +586,206 @@ def write_summary_txt(
             f.write("\n")
 
 
-def write_master_csv(
+def summary_txt_constb(
+    output_filename, *,
+    # Run identity
+    stem=None, WRITE_DATA=False, READ_DATA=False,
+    # Particle / field
+    particle_type, KE_particle, mass, pitch_deg, phi_deg,
+    tau_time, v_tau, gyro_radius_si,
+    x_initial, y_initial, z_initial,
+    vx_initial, vy_initial, vz_initial,
+    Bfield, B_0,
+    npfloat_name="float64",
+    # Time / stepping
+    norm_time, physical_time, gyroperiods,
+    ps_step, rk4_step, steps_ps, steps_rk4=None,
+    orders_used=None,
+    # Solver flags
+    USE_RK4=False, USE_RK45=False, USE_ANALYTICAL=False,
+    # Timing dict
+    timing=None,
+    analytical_time=None,
+    # Energy drift arrays (already computed, full length)
+    rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None,
+):
+    """Write a simulation summary text file for a constb run."""
+    finalnum = max(1, int(steps_ps * 0.01))
+
+    with open(output_filename, "w") as f:
+        if WRITE_DATA or READ_DATA:
+            f.write(f"Run Data: {stem}.h5\n\n")
+
+        f.write("=== Simulation Summary ===\n")
+        f.write("Initial Conditions:\n")
+        f.write(f"  Particle      = {particle_type}\n")
+        f.write(f"  Energy        = {KE_particle} eV\n")
+        f.write(f"  mass          = {mass} kg\n")
+        f.write(f"  pitch_deg     = {pitch_deg}\n")
+        f.write(f"  phi_deg       = {phi_deg}\n")
+        f.write(f"  tau_time      = {tau_time}\n")
+        f.write(f"  v_tau         = {v_tau}\n")
+        f.write(f"  gyroradius    = {gyro_radius_si}\n")
+        f.write(f"  x_initial     = {x_initial}\n")
+        f.write(f"  y_initial     = {y_initial}\n")
+        f.write(f"  z_initial     = {z_initial}\n")
+        f.write(f"  vx_initial    = {vx_initial}\n")
+        f.write(f"  vy_initial    = {vy_initial}\n")
+        f.write(f"  vz_initial    = {vz_initial}\n")
+        f.write(f"  Bfield        = {Bfield}\n")
+        f.write(f"  B_0           = {B_0} T\n")
+        f.write(f"  float type    = {npfloat_name}\n\n")
+
+        f.write("=== Timing Summary ===\n")
+        if timing:
+            f.write(f"  Run Time PS   = {timing['ps']:.2f} s\n")
+            if USE_RK4 and "rk4" in timing:
+                f.write(f"  Run Time RK4  = {timing['rk4']:.2f} s\n")
+            if USE_RK45 and "rk45" in timing:
+                f.write(f"  Run Time RK45 = {timing['rk45']:.2f} s\n")
+        if USE_ANALYTICAL and analytical_time is not None:
+            f.write(f"  Run Time Ana  = {analytical_time:.6f} s\n")
+        f.write(f"  norm time     = {norm_time}\n")
+        f.write(f"  physical time = {physical_time:.2e} s\n")
+        f.write(f"  gyroperiods   = {gyroperiods}\n")
+        f.write(f"  ps step size  = {ps_step}\n")
+        f.write(f"  ps steps      = {steps_ps}\n")
+        if USE_RK4:
+            f.write(f"  rk4 step size = {rk4_step}\n")
+            if steps_rk4 is not None:
+                f.write(f"  rk4 steps     = {steps_rk4}\n")
+        if orders_used is not None:
+            f.write(f"  PS Orders     = max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
+        f.write("\n")
+
+        f.write(f"=== |delta E|/E0 (last {finalnum} steps) ===\n")
+        if USE_RK45 and rel_drift_rk45 is not None:
+            summarize_to_file("RK45", rel_drift_rk45[-finalnum:], f)
+        if USE_RK4 and rel_drift_rk4 is not None:
+            summarize_to_file("RK4", rel_drift_rk4[-finalnum:], f)
+        if rel_drift_ps is not None:
+            summarize_to_file("PS", rel_drift_ps[-finalnum:], f)
+
+
+def summary_txt_hyperb(
+    output_filename, *,
+    # Run identity
+    stem=None, WRITE_DATA=False, READ_DATA=False,
+    # Particle / field
+    particle_type, KE_particle, mass_si, pitch_deg, phi_deg,
+    tau_time, v_tau, gyro_radius_si,
+    x_initial_si, y_initial_si, z_initial_si,
+    vx_initial, vy_initial, vz_initial,
+    delta, B_0, gamma,
+    npfloat_name="float64",
+    # Time / stepping
+    norm_time, physical_time, gyroperiods,
+    ps_step, rk4_step, steps_ps, steps_rk4=None,
+    orders_used=None,
+    # Solver flags
+    USE_RK4=False, USE_RK45=False,
+    # Timing dict
+    timing=None,
+    # Energy drift arrays (already computed, full length)
+    rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None,
+):
+    """Write a simulation summary text file for a hyperb run."""
+    finalnum = max(1, int(steps_ps * 0.01))
+
+    with open(output_filename, "w") as f:
+        if WRITE_DATA or READ_DATA:
+            f.write(f"Run Data: {stem}.h5\n\n")
+
+        f.write("=== Simulation Summary ===\n")
+        f.write("Initial Conditions:\n")
+        f.write(f"  particle      = {particle_type}\n")
+        f.write(f"  mass          = {mass_si} kg\n")
+        f.write(f"  Energy        = {KE_particle} eV\n")
+        f.write(f"  pitch_deg     = {pitch_deg}\n")
+        f.write(f"  phi_deg       = {phi_deg}\n")
+        f.write(f"  tau           = {tau_time} s\n")
+        f.write(f"  v_tau         = {v_tau}\n")
+        f.write(f"  gyroradius    = {gyro_radius_si} km\n")
+        f.write(f"  x_initial     = {x_initial_si} km\n")
+        f.write(f"  y_initial     = {y_initial_si} km\n")
+        f.write(f"  z_initial     = {z_initial_si} km\n")
+        f.write(f"  vx_initial    = {vx_initial}\n")
+        f.write(f"  vy_initial    = {vy_initial}\n")
+        f.write(f"  vz_initial    = {vz_initial}\n")
+        f.write(f"  delta         = {delta} km\n")
+        f.write(f"  gamma         = {gamma}\n")
+        f.write(f"  B_0           = {B_0} T\n")
+        f.write(f"  float type    = {npfloat_name}\n\n")
+
+        f.write("=== Timing Summary ===\n")
+        if timing:
+            if USE_RK45 and "rk45" in timing:
+                f.write(f"  Run Time RK45 = {timing['rk45']:.2f} s\n")
+            if USE_RK4 and "rk4" in timing:
+                f.write(f"  Run Time RK4  = {timing['rk4']:.2f} s\n")
+            f.write(f"  Run Time PS   = {timing['ps']:.2f} s\n")
+        if orders_used is not None:
+            f.write(f"  PS Orders     = max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
+        f.write(f"  norm time     = {norm_time}\n")
+        f.write(f"  physical time = {physical_time:.2e} s\n")
+        f.write(f"  gyroperiods   = {gyroperiods}\n")
+        if USE_RK4:
+            f.write(f"  rk4 step size = {rk4_step}\n")
+            if steps_rk4 is not None:
+                f.write(f"  rk4 steps     = {steps_rk4}\n")
+        f.write(f"  ps step size  = {ps_step}\n")
+        f.write(f"  ps steps      = {steps_ps}\n\n")
+
+        f.write(f"=== |delta E|/E0 (last {finalnum} steps) ===\n")
+        if USE_RK45 and rel_drift_rk45 is not None:
+            summarize_to_file("RK45", rel_drift_rk45[-finalnum:], f)
+        if USE_RK4 and rel_drift_rk4 is not None:
+            summarize_to_file("RK4", rel_drift_rk4[-finalnum:], f)
+        if rel_drift_ps is not None:
+            summarize_to_file("PS", rel_drift_ps[-finalnum:], f)
+
+
+# =====================================================================
+# =================  Dipoleb-only extras  =============================
+# =====================================================================
+
+def expand_h5_to_full(compact_arr):
+    """Expand a 9-row compact h5 array back to 17-row full layout.
+    If the array already has 17 rows, return it unchanged."""
+    if compact_arr.shape[0] == 17:
+        return compact_arr
+    full = np.zeros((17, compact_arr.shape[1]), dtype=compact_arr.dtype)
+    for i_new, i_old in enumerate(SAVE_ROWS):
+        full[i_old, :] = compact_arr[i_new, :]
+    return full
+
+
+def _make_tail_mask(n_points, step_size, tail_start, max_tail_steps):
+    """Build a boolean mask for the last fraction of a time series."""
+    j0 = int(tail_start / step_size)
+    j0 = max(0, min(j0, n_points - 1))
+
+    if n_points - j0 > max_tail_steps:
+        j0 = n_points - max_tail_steps
+
+    mask = np.zeros(n_points, dtype=bool)
+    mask[j0:] = True
+
+    if not np.any(mask):
+        NMIN = min(1000, n_points)
+        mask[-NMIN:] = True
+        j0 = n_points - NMIN
+
+    return mask, j0
+
+
+def master_csv(
     output_folder, stem, particle_type,
     KE_particle, x_initial, y_initial, z_initial, pitch_deg, phi_deg,
     dragt_log,
     method_records,
 ):
-    """
-    Build records and append to master_simulation_log.csv with duplicate detection.
-    """
+    """Build records and append to master_simulation_log.csv with duplicate detection."""
     records = []
     for method, steps, dt, e_drift, mu_drift in method_records:
         e = summarize(e_drift)
@@ -844,170 +838,3 @@ def write_master_csv(
         df_out = df_new
 
     df_out.to_csv(csv_path, index=False)
-
-
-# =====================================================================
-# ============  ConstB summary  =======================================
-# =====================================================================
-
-def write_summary_txt_constb(
-    output_filename, *,
-    # Run identity
-    stem=None, WRITE_DATA=False, READ_DATA=False,
-    # Particle / field
-    particle_type, KE_particle, mass, pitch_deg, phi_deg,
-    tau_time, v_tau, gyro_radius_si,
-    x_initial, y_initial, z_initial,
-    vx_initial, vy_initial, vz_initial,
-    Bfield, B_0,
-    npfloat_name="float64",
-    # Time / stepping
-    norm_time, physical_time, gyroperiods,
-    ps_step, rk4_step, steps_ps, steps_rk4=None,
-    orders_used=None,
-    # Solver flags
-    USE_RK4=False, USE_RK45=False, USE_ANALYTICAL=False,
-    # Timing dict
-    timing=None,
-    analytical_time=None,
-    # Energy drift arrays (already computed, full length)
-    rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None,
-):
-    """Write a simulation summary text file for a constant-B run."""
-    finalnum = max(1, int(steps_ps * 0.01))
-
-    with open(output_filename, "w") as f:
-        if WRITE_DATA or READ_DATA:
-            f.write(f"Run Data: {stem}.h5\n\n")
-
-        f.write("=== Simulation Summary ===\n")
-        f.write("Initial Conditions:\n")
-        f.write(f"  Particle      = {particle_type}\n")
-        f.write(f"  Energy        = {KE_particle} eV\n")
-        f.write(f"  mass          = {mass} kg\n")
-        f.write(f"  pitch_deg     = {pitch_deg}\n")
-        f.write(f"  phi_deg       = {phi_deg}\n")
-        f.write(f"  tau_time      = {tau_time}\n")
-        f.write(f"  v_tau         = {v_tau}\n")
-        f.write(f"  gyroradius    = {gyro_radius_si}\n")
-        f.write(f"  x_initial     = {x_initial}\n")
-        f.write(f"  y_initial     = {y_initial}\n")
-        f.write(f"  z_initial     = {z_initial}\n")
-        f.write(f"  vx_initial    = {vx_initial}\n")
-        f.write(f"  vy_initial    = {vy_initial}\n")
-        f.write(f"  vz_initial    = {vz_initial}\n")
-        f.write(f"  Bfield        = {Bfield}\n")
-        f.write(f"  B_0           = {B_0} T\n")
-        f.write(f"  float type    = {npfloat_name}\n\n")
-
-        f.write("=== Timing Summary ===\n")
-        if timing:
-            f.write(f"  Run Time PS   = {timing['ps']:.2f} s\n")
-            if USE_RK4 and "rk4" in timing:
-                f.write(f"  Run Time RK4  = {timing['rk4']:.2f} s\n")
-            if USE_RK45 and "rk45" in timing:
-                f.write(f"  Run Time RK45 = {timing['rk45']:.2f} s\n")
-        if USE_ANALYTICAL and analytical_time is not None:
-            f.write(f"  Run Time Ana  = {analytical_time:.6f} s\n")
-        f.write(f"  norm time     = {norm_time}\n")
-        f.write(f"  physical time = {physical_time:.2e} s\n")
-        f.write(f"  gyroperiods   = {gyroperiods}\n")
-        f.write(f"  ps step size  = {ps_step}\n")
-        f.write(f"  ps steps      = {steps_ps}\n")
-        if USE_RK4:
-            f.write(f"  rk4 step size = {rk4_step}\n")
-            if steps_rk4 is not None:
-                f.write(f"  rk4 steps     = {steps_rk4}\n")
-        if orders_used is not None:
-            f.write(f"  PS Orders     = max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
-        f.write("\n")
-
-        f.write(f"=== |delta E|/E0 (last {finalnum} steps) ===\n")
-        if USE_RK45 and rel_drift_rk45 is not None:
-            summarize_error("RK45", rel_drift_rk45[-finalnum:], f)
-        if USE_RK4 and rel_drift_rk4 is not None:
-            summarize_error("RK4", rel_drift_rk4[-finalnum:], f)
-        if rel_drift_ps is not None:
-            summarize_error("PS", rel_drift_ps[-finalnum:], f)
-
-
-# =====================================================================
-# ============  HyperB summary  =======================================
-# =====================================================================
-
-def write_summary_txt_hyper(
-    output_filename, *,
-    # Run identity
-    stem=None, WRITE_DATA=False, READ_DATA=False,
-    # Particle / field
-    particle_type, KE_particle, mass_si, pitch_deg, phi_deg,
-    tau_time, v_tau, gyro_radius_si,
-    x_initial_si, y_initial_si, z_initial_si,
-    vx_initial, vy_initial, vz_initial,
-    delta, B_0, gamma,
-    npfloat_name="float64",
-    # Time / stepping
-    norm_time, physical_time, gyroperiods,
-    ps_step, rk4_step, steps_ps, steps_rk4=None,
-    orders_used=None,
-    # Solver flags
-    USE_RK4=False, USE_RK45=False,
-    # Timing dict
-    timing=None,
-    # Energy drift arrays (already computed, full length)
-    rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None,
-):
-    """Write a simulation summary text file for a hyperbolic-B run."""
-    finalnum = max(1, int(steps_ps * 0.01))
-
-    with open(output_filename, "w") as f:
-        if WRITE_DATA or READ_DATA:
-            f.write(f"Run Data: {stem}.h5\n\n")
-
-        f.write("=== Simulation Summary ===\n")
-        f.write("Initial Conditions:\n")
-        f.write(f"  particle      = {particle_type}\n")
-        f.write(f"  mass          = {mass_si} kg\n")
-        f.write(f"  Energy        = {KE_particle} eV\n")
-        f.write(f"  pitch_deg     = {pitch_deg}\n")
-        f.write(f"  phi_deg       = {phi_deg}\n")
-        f.write(f"  tau           = {tau_time} s\n")
-        f.write(f"  v_tau         = {v_tau}\n")
-        f.write(f"  gyroradius    = {gyro_radius_si} km\n")
-        f.write(f"  x_initial     = {x_initial_si} km\n")
-        f.write(f"  y_initial     = {y_initial_si} km\n")
-        f.write(f"  z_initial     = {z_initial_si} km\n")
-        f.write(f"  vx_initial    = {vx_initial}\n")
-        f.write(f"  vy_initial    = {vy_initial}\n")
-        f.write(f"  vz_initial    = {vz_initial}\n")
-        f.write(f"  delta         = {delta} km\n")
-        f.write(f"  gamma         = {gamma}\n")
-        f.write(f"  B_0           = {B_0} T\n")
-        f.write(f"  float type    = {npfloat_name}\n\n")
-
-        f.write("=== Timing Summary ===\n")
-        if timing:
-            if USE_RK45 and "rk45" in timing:
-                f.write(f"  Run Time RK45 = {timing['rk45']:.2f} s\n")
-            if USE_RK4 and "rk4" in timing:
-                f.write(f"  Run Time RK4  = {timing['rk4']:.2f} s\n")
-            f.write(f"  Run Time PS   = {timing['ps']:.2f} s\n")
-        if orders_used is not None:
-            f.write(f"  PS Orders     = max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
-        f.write(f"  norm time     = {norm_time}\n")
-        f.write(f"  physical time = {physical_time:.2e} s\n")
-        f.write(f"  gyroperiods   = {gyroperiods}\n")
-        if USE_RK4:
-            f.write(f"  rk4 step size = {rk4_step}\n")
-            if steps_rk4 is not None:
-                f.write(f"  rk4 steps     = {steps_rk4}\n")
-        f.write(f"  ps step size  = {ps_step}\n")
-        f.write(f"  ps steps      = {steps_ps}\n\n")
-
-        f.write(f"=== |delta E|/E0 (last {finalnum} steps) ===\n")
-        if USE_RK45 and rel_drift_rk45 is not None:
-            summarize_error("RK45", rel_drift_rk45[-finalnum:], f)
-        if USE_RK4 and rel_drift_rk4 is not None:
-            summarize_error("RK4", rel_drift_rk4[-finalnum:], f)
-        if rel_drift_ps is not None:
-            summarize_error("PS", rel_drift_ps[-finalnum:], f)

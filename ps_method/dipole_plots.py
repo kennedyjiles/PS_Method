@@ -31,7 +31,7 @@ Helpers:
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
-from ps_method.writers import build_figure_filename
+from ps_method.writers import build_filename
 from ps_method.universal import sparse_labels, data_to_fig, npfloat
 from ps_method.dipole_physics import slice_solution
 import h5py
@@ -71,7 +71,7 @@ def full_2d(
     ax.grid(True)
 
     fig.canvas.draw()
-    fig_path = build_figure_filename(summary, run_folder, stem, figure_tag="2D", ext="png")
+    fig_path = build_filename(summary, run_folder, stem, figure_tag="2D", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -110,7 +110,7 @@ def full_3d(
     ax.legend(loc="upper right")
 
     fig.canvas.draw()
-    fig_path = build_figure_filename(summary, run_folder, stem, figure_tag="3D", ext="png")
+    fig_path = build_filename(summary, run_folder, stem, figure_tag="3D", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -147,7 +147,7 @@ def slice_2d(
     ax.grid(True)
 
     fig.canvas.draw()
-    fig_path = build_figure_filename(summary, run_folder, stem, figure_tag="2Dslice", ext="png")
+    fig_path = build_filename(summary, run_folder, stem, figure_tag="2Dslice", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -190,7 +190,7 @@ def slice_3d(
     ax.legend(loc="upper right")
 
     fig.canvas.draw()
-    fig_path = build_figure_filename(summary, run_folder, stem, figure_tag="3Dslice", ext="png")
+    fig_path = build_filename(summary, run_folder, stem, figure_tag="3Dslice", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -346,7 +346,7 @@ def ke_error(
 
     # === Save and Close ===
     fig.canvas.draw()
-    fig_path = build_figure_filename(summary, run_folder, stem, figure_tag="KEerror", ext="png")
+    fig_path = build_filename(summary, run_folder, stem, figure_tag="KEerror", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -581,7 +581,7 @@ def mu_deviation(
         fig.text(x_fig_label, fy, label, color=color, va="center", ha="left", fontsize=11)
 
     # === Save and Close ===
-    fig_path_mu = build_figure_filename(summary, run_folder, stem, figure_tag="mu", ext="png")
+    fig_path_mu = build_filename(summary, run_folder, stem, figure_tag="mu", ext="png")
     plt.savefig(fig_path_mu, dpi=600, bbox_inches="tight")
     plt.close(fig)
 

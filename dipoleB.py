@@ -38,7 +38,7 @@ import h5py
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from ps_method.constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
-from configs.config_loader import load_config, compute_derived_dipole as compute_derived, copy_config_to_output
+from configs.config_loader import load_config, compute_derived_dipoleb as compute_derived, copy_config_to_output
 
 
 def main(cfg_path, replot=False):
@@ -354,7 +354,7 @@ def main(cfg_path, replot=False):
     Beware that these files can be GB size for dipole.
     """
     if not USE_MANUAL_FILE:
-        run_params = wr.get_run_params_dipole(USE_RK45, USE_RK4, USE_RKG, USE_PS, PS_decimate, PS_CHUNKING,   # parameters it is scanning
+        run_params = wr.get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, PS_decimate, PS_CHUNKING,   # parameters it is scanning
                         mass_si, q_e, B_0, gamma, user_min_phase,
                         x_initial, y_initial, z_initial,
                         pitch_deg, phi_deg,
@@ -702,10 +702,10 @@ def main(cfg_path, replot=False):
 
                 # ====== h5 file creation =============
                 if USE_PS:
-                    wr.append_results_h5_dipole(cache_path, results, summary)
+                    wr.append_results_h5_dipoleb(cache_path, results, summary)
                     print(f"Updated streamed file → {os.path.basename(cache_path)}")
                 else:
-                    wr.save_results_h5_dipole(cache_path, results, summary)
+                    wr.save_results_h5_dipoleb(cache_path, results, summary)
                     print(f"Saved results → {os.path.basename(cache_path)}")
 
     if DEBUG:
@@ -934,7 +934,7 @@ def main(cfg_path, replot=False):
         USE_EXTERNAL_H5_rk45=USE_EXTERNAL_H5_rk45, external_h5_rk45=external_h5_rk45,
         USE_EXTERNAL_H5_rkg=USE_EXTERNAL_H5_rkg,   external_h5_rkg=external_h5_rkg,
         vector_potential_func=dp.vector_potential,
-        load_results_h5_func=wr.load_results_h5_dipole,
+        load_results_h5_func=wr.load_results_h5_dipoleb,
     )
 
     time_factor    = _ke["time_factor"]
@@ -1157,7 +1157,7 @@ def main(cfg_path, replot=False):
 
     if DEBUG: tracemalloc.start()
 
-    wr.write_summary_txt(
+    wr.summary_txt_dipoleb(
         summary=summary, run_folder=run_folder, stem=stem,
         dragt_log=dragt_log, bounce_results=bounce_results, drift_results=drift_results,
         gyroperiods=gyroperiods, norm_time=norm_time, mass=mass, cache_path=cache_path,
@@ -1198,7 +1198,7 @@ def main(cfg_path, replot=False):
     if USE_RKG:  _method_records.append(("RKG",  steps_rkg, rkg_step, rel_drift_rkg,  mu_rkg_result["mudrift"]))
     if USE_PS:   _method_records.append(("PS",   steps_ps,  ps_step,  rel_drift_ps,   mu_ps_result["mudrift"]))
 
-    wr.write_master_csv(
+    wr.master_csv(
         output_folder=output_folder, stem=stem, particle_type=particle_type,
         KE_particle=KE_particle, x_initial=x_initial, y_initial=y_initial,
         z_initial=z_initial, pitch_deg=pitch_deg, phi_deg=phi_deg,

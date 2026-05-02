@@ -481,7 +481,7 @@ def main(cfg_path, replot=False):
 
     output_filename = f"{run_folder}/{stem}_summary.txt"
 
-    wr.write_summary_txt_constb(
+    wr.summary_txt_constb(
         output_filename,
         stem=stem, WRITE_DATA=WRITE_DATA, READ_DATA=READ_DATA,
         particle_type=particle_type, KE_particle=KE_particle, mass=mass,

@@ -51,7 +51,7 @@ import os
 import json, hashlib, h5py, time, re
 from numba import njit
 from ps_method.universal import npfloat, maybe_njit
-from ps_method.writers import SAVE_ROWS, n_save, expand_h5_to_full, build_figure_filename, build_run_stem
+from ps_method.writers import SAVE_ROWS, n_save, expand_h5_to_full, build_filename
 
 one = npfloat(1.0)
 two = npfloat(2.0)
@@ -1018,7 +1018,7 @@ def compute_energy_ps_chunked(
     if return_plot_data:
         return t_plot[:k], drift_plot[:k]
 
-# build_run_stem and build_figure_filename imported from writers.py (top of file)
+# build_filename imported from writers.py (top of file)
 
 # ===================================
 # ======= Debug/Sanity Check =======
