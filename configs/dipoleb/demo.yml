@@ -1,6 +1,7 @@
 # ===================================================================
 # Demo run — quick test with paper2 physics at reduced gyroperiods
 # ===================================================================
+use_float128: false         # true = use np.float128 for extended precision
 
 particle: electron
 energy_eV: 100.0e6

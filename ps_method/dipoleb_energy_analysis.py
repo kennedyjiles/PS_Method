@@ -17,13 +17,15 @@ def compute_energy_ps_chunked(
     dt_ps_store,
     chunk_cols=200000,
     stride=1,
-    dtype=np.float64,
+    dtype=None,
     return_plot_data=True,
 ):
     """
     Computes relative kinetic energy drift in a memory-efficient, chunked manner.
     Optionally returns decimated (stride-sampled) plot arrays only.
     """
+    if dtype is None:
+        dtype = npfloat
     n_store = ps_y_h5.shape[1]
 
     if return_plot_data:
@@ -131,7 +133,7 @@ def compute_pphi_error_chunked(
 
     rel_error = np.concatenate(err_dec)
     rel_error_log = np.where(rel_error == 0, 1e-16, rel_error)
-    t_gyro = ps_step * np.arange(len(rel_error_log), dtype=np.float64) * dec * time_factor
+    t_gyro = ps_step * np.arange(len(rel_error_log), dtype=npfloat) * dec * time_factor
 
     ylabel = (r"Absolute Error $|\Delta P_\phi|$" if P_phi_initial == 0
               else r"Relative Error $|(P_\phi - P_{\phi,0}) / P_{\phi,0}|$")

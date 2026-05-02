@@ -150,7 +150,7 @@ def compute_mu_deviation_rk(
         mu_win = compute_mu_rk(solution[:, i0:i1].T, mass)
 
     mudrift = np.abs(mu_win - mu0) / mu0
-    t = (i0 + np.arange(mudrift.size, dtype=np.float64)) * dt * time_factor
+    t = (i0 + np.arange(mudrift.size, dtype=npfloat)) * dt * time_factor
 
     return {"t": t, "mudrift": mudrift, "mu0": mu0}
 
@@ -225,7 +225,7 @@ def compute_mu_deviation_ps(
     mudrift = np.abs(mu_ps - mu0_ps) / mu0_ps
 
     dt_ps_store = ps_step * ps_store_stride
-    t_store = np.arange(j0, j1, dtype=np.float64) * dt_ps_store
+    t_store = np.arange(j0, j1, dtype=npfloat) * dt_ps_store
     moment_stride = max(1, round(len(mu_ps) // max_plot_points))
     t_plot = t_store[::moment_stride] * time_factor
     mudrift_plot = mudrift[::moment_stride]

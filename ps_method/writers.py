@@ -296,7 +296,7 @@ def append_results_h5_dipoleb(h5_path, results, summary):
     Ensures dictionary is written exactly once (for streaming PS files)."""
     with h5py.File(h5_path, "a") as f:
         if "summary_json" not in f.attrs:
-            f.attrs["summary_json"] = json.dumps(summary)
+            f.attrs["summary_json"] = json.dumps(summary, default=_to_serializable)
 
         if "meta" not in f:
             gmeta = f.create_group("meta")

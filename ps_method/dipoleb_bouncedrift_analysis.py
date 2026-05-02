@@ -201,7 +201,7 @@ def finalize_drift_stream(
         }
 
     # slope-based estimate
-    a, b = np.polyfit(t, phi, 1)
+    a, b = np.polyfit(t.astype(np.float64), phi.astype(np.float64), 1)
     dphi_span = phi.max() - phi.min()
 
     period_tau_fit = None
