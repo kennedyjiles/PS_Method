@@ -1,23 +1,23 @@
 """
 run.py — Unified entry point for all PS Method drivers.
 
-Infers the field type (constB, hyperB, dipoleB) from the config path
+Infers the field type (constb, hyperb, dipoleb) from the config path
 and dispatches to the appropriate driver's main() function.
 
 Full run (solvers + post-processing):
-    python run.py configs/constB/demo.yml
-    python run.py configs/hyper/demo.yml
-    python run.py configs/dipole/demo.yml
+    python run.py configs/constb/demo.yml
+    python run.py configs/hyperb/demo.yml
+    python run.py configs/dipoleb/demo.yml
 
 Post-processing only (replot from cached h5 data):
-    python run.py data/constB/demo/demo.yml
-    python run.py data/hyperB/demo/demo.yml
-    python run.py data/dipoleB/demo/demo.yml
+    python run.py data/constb/demo/demo.yml
+    python run.py data/hyperb/demo/demo.yml
+    python run.py data/dipoleb/demo/demo.yml
 
 Shorthand (field type + config name):
-    python run.py constB demo
-    python run.py hyperB demo
-    python run.py dipoleB paper1
+    python run.py constb demo
+    python run.py hyperb demo
+    python run.py dipoleb paper1
 """
 
 import os
@@ -26,21 +26,16 @@ import sys
 
 # Map field keywords → (config subdirectory, data subdirectory)
 _DRIVERS = {
-    "constb":  ("constB",  "constB"),
-    "hyperb":  ("hyper",   "hyperB"),
-    "dipoleb": ("dipole",  "dipoleB"),
+    "constb":  ("constb",  "constb"),
+    "hyperb":  ("hyperb",  "hyperb"),
+    "dipoleb": ("dipoleb", "dipoleb"),
 }
 
 # Map directory names → field keyword (for path-based inference)
 _DIR_TO_FIELD = {
-    # configs/ subdirectories
-    "constB":  "constb",
     "constb":  "constb",
-    "hyper":   "hyperb",
-    "dipole":  "dipoleb",
-    # data/ subdirectories
-    "dipoleB": "dipoleb",
-    "hyperB":  "hyperb",
+    "hyperb":  "hyperb",
+    "dipoleb": "dipoleb",
 }
 
 
@@ -48,10 +43,10 @@ def _resolve(args):
     """Return (field_key, yaml_path, replot) from the command-line arguments.
 
     Supports these calling conventions:
-        run.py configs/dipole/demo.yml          → full run
-        run.py data/dipoleB/demo/demo.yml       → replot only
-        run.py dipoleB demo                     → full run (shorthand)
-        run.py dipoleB configs/dipole/demo.yml  → full run (explicit)
+        run.py configs/dipoleb/demo.yml          → full run
+        run.py data/dipoleb/demo/demo.yml        → replot only
+        run.py dipoleb demo                      → full run (shorthand)
+        run.py dipoleb configs/dipoleb/demo.yml  → full run (explicit)
     """
     if len(args) == 1:
         path = args[0]
@@ -70,7 +65,7 @@ def _resolve(args):
                 else:
                     raise ValueError(
                         f"Cannot infer field type from data path: {path}\n"
-                        f"Expected data/<field>/... where field is constB, hyperB, or dipoleB"
+                        f"Expected data/<field>/... where field is constb, hyperb, or dipoleb"
                     )
                 if not os.path.isfile(path):
                     raise FileNotFoundError(f"Config file not found: {path}")
@@ -94,7 +89,7 @@ def _resolve(args):
         if field_key not in _DRIVERS:
             raise ValueError(
                 f"Unknown field type: '{field_raw}'\n"
-                f"Expected one of: constB, hyperB, dipoleB"
+                f"Expected one of: constb, hyperb, dipoleb"
             )
         config_subdir = _DRIVERS[field_key][0]
         configs_dir = os.path.join(os.path.dirname(__file__), "configs", config_subdir)
@@ -118,9 +113,9 @@ def _resolve(args):
     else:
         raise SystemExit(
             "Usage:\n"
-            "  python run.py configs/dipole/demo.yml       # full run\n"
-            "  python run.py data/dipoleB/demo/demo.yml    # replot only\n"
-            "  python run.py dipoleB demo                  # shorthand"
+            "  python run.py configs/dipoleb/demo.yml      # full run\n"
+            "  python run.py data/dipoleb/demo/demo.yml    # replot only\n"
+            "  python run.py dipoleb demo                  # shorthand"
         )
 
 
@@ -131,7 +126,7 @@ def main():
 
     field_key, yaml_path, replot = _resolve(sys.argv[1:])
 
-    driver_label = _DRIVERS[field_key][1]
+    driver_label = field_key
     mode = "replot (post-processing only)" if replot else "full run"
 
     print(f"Field type : {driver_label}")
@@ -139,11 +134,11 @@ def main():
     print(f"Mode       : {mode}\n")
 
     if field_key == "constb":
-        from constB import main as driver_main
+        from constb import main as driver_main
     elif field_key == "hyperb":
-        from hyperB import main as driver_main
+        from hyperb import main as driver_main
     elif field_key == "dipoleb":
-        from dipoleB import main as driver_main
+        from dipoleb import main as driver_main
 
     driver_main(yaml_path, replot=replot)
 

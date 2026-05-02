@@ -3,8 +3,8 @@ hyper_physics.py — Physics kernels for charged particle motion in a
                    hyperbolic-tangent magnetic field.
 
 Two solvers are provided:
-  • PS_hyperB            – Power-series integrator with adaptive truncationorder.
-  • lorentz_force_hyperB – RHS function for scipy / RK4 integrators.
+  • ps_hyperb            – Power-series integrator with adaptive truncationorder.
+  • lorentz_force_hyperb – RHS function for scipy / RK4 integrators.
 
 Because Bz = tanh(γy) is nonlinear, the PS method must track auxiliary
 series for sinh(γy) and cosh(γy) alongside the physical state.  The Taylor
@@ -25,7 +25,7 @@ from .universal import cauchy_sum, maybe_njit, npfloat
 
 
 @maybe_njit
-def lorentz_force_hyperB(t, y, gamma, qoverm):
+def lorentz_force_hyperb(t, y, gamma, qoverm):
     """Right-hand side for the Lorentz equation in a tanh magnetic field.
 
     B = ẑ tanh(γy), so the force is (q/m)(v × B):
@@ -48,7 +48,7 @@ def lorentz_force_hyperB(t, y, gamma, qoverm):
 
 
 @maybe_njit
-def PS_hyperB(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol):
+def ps_hyperb(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol):
     """Advance a charged particle through B = ẑ tanh(γy) using power-series method.
 
     The state vector has 9 components: the 6 physical variables [x, y, z, vx,

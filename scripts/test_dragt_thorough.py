@@ -2,21 +2,21 @@
 Thorough validation of corrected Dragt ↔ SI conversions.
 
 Tests:
-  1. Round-trip: Dragt → SI → dipoleB sim → Dragt (protons, wide energy range)
-  2. Round-trip: SI → dipoleB sim → Dragt → SI (electrons)
+  1. Round-trip: Dragt → SI → dipoleb sim → Dragt (protons, wide energy range)
+  2. Round-trip: SI → dipoleb sim → Dragt → SI (electrons)
   3. Verify γ₁ relation (Dragt eq 2.20): γ₁⁴ = (1/16)(qM/(γm))²Γ⁴
   4. Verify W₀ = 1/(4γ₁²)  (eq 2.22)
   5. Verify dimensionless potential V = ½(1/ρ - ρ/r³)² at equator (eq 2.17)
   6. Verify energy equation ρ̇² + ż² + (1/ρ - ρ/r³)² = W₀² (eq 2.52)
   7. Non-relativistic limit: γ→1, formulas reduce to simple v = W₀·v_scale
   8. Ultra-relativistic limit: check no overflow/NaN
-  9. Consistency: calculate_w0_squared ↔ compute_params ↔ dragt.py forward
+  9. Consistency: compute_w0_squared ↔ compute_params ↔ dragt.py forward
   10. Verify P_φ = -1 at thalweg ρ=1 (paper's normalization property)
 """
 import numpy as np
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from ps_method.dragt_physics import calculate_w0_squared, compute_params
+from ps_method.dragt_physics import compute_w0_squared, compute_params
 
 RE = 6378137.0; B0 = 3.12e-5; M = B0*RE**3
 q = 1.602176634e-19; m_p = 1.67262192595e-27; m_e = 9.1093837139e-31
@@ -37,7 +37,7 @@ def check(name, condition, detail=""):
 
 # =====================================================================
 print("="*90)
-print("TEST 1: Round-trip Dragt → SI → dipoleB → Dragt (protons, wide energy range)")
+print("TEST 1: Round-trip Dragt → SI → dipoleb → Dragt (protons, wide energy range)")
 print("="*90)
 # Sweep L from 2 to 10 (covering deep inner belt to outer)
 for L in [2, 3, 4, 5, 7, 10]:
@@ -55,7 +55,7 @@ for L in [2, 3, 4, 5, 7, 10]:
         u = gv/c; gam = np.sqrt(1+u**2); spd = gv/gam
         KE = (gam-1)*m0c2
 
-        # Reverse via dipoleB path
+        # Reverse via dipoleb path
         KE_J = KE*evtoj; g2 = 1+KE_J/(mass*c**2)
         v_si = c*np.sqrt(1-1/g2**2)
         tau = g2*mass/(q*B0); v_tau = v_si*tau/RE
@@ -70,7 +70,7 @@ for L in [2, 3, 4, 5, 7, 10]:
 # =====================================================================
 print()
 print("="*90)
-print("TEST 2: Round-trip SI → dipoleB → Dragt → SI (electrons)")
+print("TEST 2: Round-trip SI → dipoleb → Dragt → SI (electrons)")
 print("="*90)
 for KE_MeV in [0.1, 0.5, 1.0, 5.0, 10.0, 50.0]:
     for L in [4, 7]:
@@ -255,9 +255,9 @@ for L in [4, 7]:
 # =====================================================================
 print()
 print("="*90)
-print("TEST 9: calculate_w0_squared consistency across energy range")
+print("TEST 9: compute_w0_squared consistency across energy range")
 print("="*90)
-# For each (W₀², L), compute physical speed, feed to calculate_w0_squared, verify round-trip
+# For each (W₀², L), compute physical speed, feed to compute_w0_squared, verify round-trip
 for L in [2, 4, 7, 10]:
     for W0sq in [0.001, 0.005, 0.01, 0.05]:
         Gam = 1.0/(L*RE); vs = q*M*Gam**2/m_p
@@ -265,7 +265,7 @@ for L in [2, 4, 7, 10]:
         spd = gv/gam
         if spd >= c: continue
 
-        w0sq_func = calculate_w0_squared(spd, L, m_p, q, M_earth=M)
+        w0sq_func = compute_w0_squared(spd, L, m_p, q, M_earth=M)
         err = abs(w0sq_func - W0sq)/W0sq
         check(f"calc_w0sq L={L:2d} W₀²={W0sq:.3f}: err={err:.2e} (v={spd/c*100:.1f}%c)",
               err < 1e-10)

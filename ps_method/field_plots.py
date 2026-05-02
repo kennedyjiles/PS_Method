@@ -1,5 +1,5 @@
 """
-Shared plotting functions for constB and hyperB drivers.
+Shared plotting functions for constb and hyperb drivers.
 
 Each function is self-contained: creates a figure, plots, saves, and closes.
 Drivers call these with pre-computed data — no globals are referenced.
@@ -12,13 +12,13 @@ Helpers:
     f64                 — float128 → float64 for matplotlib
 
 High-level plots:
-    plot_full_2d        — full-run 2D trajectory
-    plot_full_3d        — full-run 3D trajectory
-    plot_ke_error       — single KE error over time (RK4, RK45, PS max order)
-    plot_slice_2d       — sliced 2D trajectory (last/first N gyroperiods)
-    plot_slice_3d       — sliced 3D trajectory
-    plot_ke_error_multi — multi-PS-order KE error comparison
-    plot_trajectory_error — position error vs analytical (constB only)
+    full_2d        — full-run 2D trajectory
+    full_3d        — full-run 3D trajectory
+    ke_error       — single KE error over time (RK4, RK45, PS max order)
+    slice_2d       — sliced 2D trajectory (last/first N gyroperiods)
+    slice_3d       — sliced 3D trajectory
+    ke_error_multi — multi-PS-order KE error comparison
+    trajectory_error — position error vs analytical (constb only)
 """
 
 import numpy as np
@@ -125,7 +125,7 @@ def place_endpoint_labels(fig, ax, endpoints, fontsize=11, min_gap=0.025):
 # Full 2D trajectory
 # =====================================================================
 
-def plot_full_2d(
+def full_2d(
     save_path, *,
     solution_ps, orders_used,
     solution_rk45=None, solution_rk4=None, solution_analytical=None,
@@ -165,7 +165,7 @@ def plot_full_2d(
 # Full 3D trajectory
 # =====================================================================
 
-def plot_full_3d(
+def full_3d(
     save_path, *,
     solution_ps, orders_used,
     solution_rk45=None, solution_rk4=None, solution_analytical=None,
@@ -205,7 +205,7 @@ def plot_full_3d(
 # KE error — single run (RK4, RK45, PS max order)
 # =====================================================================
 
-def plot_ke_error(
+def ke_error(
     save_path, *,
     t_eval_ps, rel_drift_ps, orders_used,
     t_eval_rk4=None, rel_drift_rk4=None,
@@ -217,7 +217,7 @@ def plot_ke_error(
 ):
     """Relative kinetic energy error over time (log-log)."""
     if time_factor is None:
-        time_factor = 1.0 / (2.0 * np.pi)   # default T_gyro for constB/hyperB
+        time_factor = 1.0 / (2.0 * np.pi)   # default T_gyro for constb/hyperb
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -262,7 +262,7 @@ def plot_ke_error(
 # 2D trajectory slice
 # =====================================================================
 
-def plot_slice_2d(
+def slice_2d(
     save_path, *,
     ps_x, ps_y, orders_used,
     rk45_x=None, rk45_y=None,
@@ -310,7 +310,7 @@ def plot_slice_2d(
 # 3D trajectory slice
 # =====================================================================
 
-def plot_slice_3d(
+def slice_3d(
     save_path, *,
     ps_x, ps_y, ps_z, orders_used,
     rk45_x=None, rk45_y=None, rk45_z=None,
@@ -351,7 +351,7 @@ def plot_slice_3d(
 # Multi-PS-order KE error comparison
 # =====================================================================
 
-def plot_ke_error_multi(
+def ke_error_multi(
     save_path, *,
     t_eval_ps, orders_used,
     ps_drifts,
@@ -375,7 +375,7 @@ def plot_ke_error_multi(
         Second external h5 comparison data.
     """
     if time_factor is None:
-        time_factor = 1.0 / (2.0 * np.pi)   # default T_gyro for constB/hyperB
+        time_factor = 1.0 / (2.0 * np.pi)   # default T_gyro for constb/hyperb
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -457,10 +457,10 @@ def plot_ke_error_multi(
 
 
 # =====================================================================
-# Trajectory error vs analytical solution (constB only)
+# Trajectory error vs analytical solution (constb only)
 # =====================================================================
 
-def plot_trajectory_error(
+def trajectory_error(
     save_path, *,
     t_eval_ps, rel_err_ps, orders_used,
     t_eval_rk4=None, rel_err_rk4=None,
@@ -474,10 +474,10 @@ def plot_trajectory_error(
     """
     Position error (gyro-radius normalized) vs analytical solution.
 
-    Only applicable for constB where an exact solution exists.
+    Only applicable for constb where an exact solution exists.
     """
     if time_factor is None:
-        time_factor = 1.0 / (2.0 * np.pi)   # default T_gyro for constB/hyperB
+        time_factor = 1.0 / (2.0 * np.pi)   # default T_gyro for constb/hyperb
 
     fig, ax = plt.subplots(figsize=(10, 5))
 

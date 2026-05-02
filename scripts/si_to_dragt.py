@@ -5,7 +5,7 @@ Given physical inputs (KE, pitch angle, launch phi, target L-shell,
 particle type), computes:
   - x_initial such that the conserved canonical momentum gives L_dragt = L_target exactly
   - Dragt dimensionless parameters (W0^2, rho, P_phi)
-  - Simulator initial conditions ready to paste into dipoleB_testparticles.py
+  - Simulator initial conditions ready to paste into dipoleb_testparticles.py
   - Trapping and stability diagnostics
 
 The launch position is computed from the exact constraint:

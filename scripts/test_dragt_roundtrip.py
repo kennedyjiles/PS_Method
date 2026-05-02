@@ -1,5 +1,5 @@
 """
-Round-trip test: Dragt paper ↔ dipoleB.py conversions (CORRECTED per Dragt 1965).
+Round-trip test: Dragt paper ↔ dipoleb.py conversions (CORRECTED per Dragt 1965).
 
 Key identity from paper eqs 2.7 + 2.15d + 2.16:
     γmv = qMΓ² · W₀
@@ -14,7 +14,7 @@ And: v_dragt = v_sim · L²  (NO gamma division)
 import numpy as np
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from ps_method.dragt_physics import calculate_w0_squared
+from ps_method.dragt_physics import compute_w0_squared
 
 RE = 6378137.0; B0 = 3.12e-5; M = B0*RE**3
 q = 1.602176634e-19; m_p = 1.67262192595e-27; m_e = 9.1093837139e-31
@@ -61,7 +61,7 @@ for i, (W0sq, rho, rho_dot, L, label) in enumerate(proton_cases):
     phi_deg = np.degrees(np.arctan2(-v_phi, rho_dot)) if (rho_dot != 0 or v_phi != 0) else -90.0
     x_initial = rho * L
 
-    # --- REVERSE: SI → dipoleB.py → Dragt ---
+    # --- REVERSE: SI → dipoleb.py → Dragt ---
     KE_J = KE_eV * evtoj
     gamma_sim = 1.0 + KE_J/(mass*c**2)
     v_si = c*np.sqrt(1.0 - 1.0/gamma_sim**2)
@@ -82,8 +82,8 @@ for i, (W0sq, rho, rho_dot, L, label) in enumerate(proton_cases):
     v_phi_d = v_phi_sim * L**2
     P_phi_rec = rho_d * v_phi_d - charge_sign/rho_d
 
-    # calculate_w0_squared (takes physical speed, returns W₀² with γ correction)
-    w0sq_func = calculate_w0_squared(speed, L, mass, q, M_earth=M)
+    # compute_w0_squared (takes physical speed, returns W₀² with γ correction)
+    w0sq_func = compute_w0_squared(speed, L, mass, q, M_earth=M)
 
     # v_perp check
     v_perp_dragt_si = v_dragt_perp * v_scale / gamma_correct  # corrected
@@ -102,14 +102,14 @@ for i, (W0sq, rho, rho_dot, L, label) in enumerate(proton_cases):
     print(f"    KE={KE_eV/1e6:.4f} MeV | γ={gamma_correct:.8f} | β={speed/c*100:.4f}%c")
     print(f"    W0^2: {W0sq} -> {W0sq_rec:.10f} (err={w0_err:.2e})")
     print(f"    γ round-trip: {gamma_correct:.10f} -> {gamma_sim:.10f} (err={gamma_err:.2e})")
-    print(f"    v_perp: dragt={v_perp_dragt_si:.2f}, dipoleB={v_perp_dipole_si:.2f} (err={vp_err:.2e})")
+    print(f"    v_perp: dragt={v_perp_dragt_si:.2f}, dipoleb={v_perp_dipole_si:.2f} (err={vp_err:.2e})")
     print(f"    calc_w0sq: {w0sq_func:.10f} (err={func_err:.2e})")
     print(f"    >>> {'PASS' if passed else 'FAIL'}")
     print()
 
 # --- ELECTRON PATH (from SI → Dragt) ---
 print("="*90)
-print("ELECTRON PATH: SI -> dipoleB -> Dragt (corrected)")
+print("ELECTRON PATH: SI -> dipoleb -> Dragt (corrected)")
 print("="*90)
 
 electron_cases = [
@@ -139,8 +139,8 @@ for i, (KE_eV, pitch_deg, phi_deg, x_init, L, label) in enumerate(electron_cases
     trapped = charge_sign*P_phi < 0
     W0_thresh = P_phi**4/16 if trapped else None
 
-    # calculate_w0_squared
-    w0sq_func = calculate_w0_squared(v_si, L, mass, q, M_earth=M)
+    # compute_w0_squared
+    w0sq_func = compute_w0_squared(v_si, L, mass, q, M_earth=M)
     func_err = abs(w0sq_func - W0sq)/W0sq
     passed = func_err < threshold
     if not passed: all_pass = False

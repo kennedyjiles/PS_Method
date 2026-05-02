@@ -1,6 +1,6 @@
 """
 Adaptive Power Series stepping for dipole B field.
-Hybrid approach: uses the original fast PS_integrate for easy chunks,
+Hybrid approach: uses the original fast ps_integrate for easy chunks,
 falls back to per-step adaptive mode only when the series needs it.
 
 All other functions are imported unchanged from dipole_physics.
@@ -99,7 +99,7 @@ def _ps_adaptive_chunk(
     """
     Process n_output grid points with adaptive substeps.
     BATCHED: for each output point, compute n_sub from local |B| and call
-    PS_integrate once.  If a step diverges mid-batch, accept the good prefix,
+    ps_integrate once.  If a step diverges mid-batch, accept the good prefix,
     recompute dt_B at the new position, and retry the remainder.
 
     Key design rules to prevent hangs:
@@ -109,7 +109,7 @@ def _ps_adaptive_chunk(
       - Only first_bad == 0 (zero progress) counts as a retry toward max_retries
     """
     n_state = 17
-    MAX_SUB = 2000          # cap: never ask PS_integrate for more than this
+    MAX_SUB = 2000          # cap: never ask ps_integrate for more than this
 
     sol_chunk    = np.zeros((n_state, n_output + 1), dtype=npfloat)
     orders_chunk = np.zeros(n_output + 1, dtype=np.int32)
@@ -145,7 +145,7 @@ def _ps_adaptive_chunk(
                 dt_actual = npfloat(t_remaining / n_sub)   # exact coverage
 
             # ---- ONE Numba call ----
-            sol_batch, orders_batch = PS_integrate(
+            sol_batch, orders_batch = ps_integrate(
                 PS_order, n_sub, cur_state[:6].copy(),
                 tol, qoverm, dt_actual,
             )
@@ -298,7 +298,7 @@ def run_ps_streaming_adaptive(
     min_fast_path_N=10,
 ):
     """
-    Hybrid PS integration: uses the original fast PS_integrate when the
+    Hybrid PS integration: uses the original fast ps_integrate when the
     orbit is easy, drops to per-step adaptive mode only in hard regions.
 
     Output format is identical to run_ps_streaming_with_decimation.
@@ -402,10 +402,10 @@ def run_ps_streaming_adaptive(
 
             if not force_adaptive and _use_fast_path(cur_state, ps_step, min_fast_path_N):
                 # =============================================
-                #  FAST PATH: use original PS_integrate batch
+                #  FAST PATH: use original ps_integrate batch
                 #  (ps_step is small enough for the local field)
                 # =============================================
-                sol_chunk, orders_chunk = PS_integrate(
+                sol_chunk, orders_chunk = ps_integrate(
                     PS_order, this_chunk, cur_state[:6].copy(),
                     tol, qoverm, ps_step,
                 )

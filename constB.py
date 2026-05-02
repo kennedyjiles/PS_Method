@@ -1,13 +1,13 @@
 """
-constB.py — Driver for charged particle trajectory simulation in a
+constb.py — Driver for charged particle trajectory simulation in a
             uniform magnetic field using power series, RK4, RK45, and
             analytical solutions.
 
 Usage:
-    python constB.py                          # default config (demo)
-    python constB.py demo                     # named config → configs/constB/demo.yml
-    python constB.py paper                    # named config → configs/constB/paper.yml
-    python constB.py configs/constB/my.yml    # direct path to a custom YAML config
+    python constb.py                          # default config (demo)
+    python constb.py demo                     # named config → configs/constb/demo.yml
+    python constb.py paper                    # named config → configs/constb/paper.yml
+    python constb.py configs/constb/my.yml    # direct path to a custom YAML config
 """
 
 import numpy as np
@@ -20,7 +20,7 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 
-from configs.config_loader import load_config, compute_derived_constB, copy_config_to_output
+from configs.config_loader import load_config, compute_derived_constb, copy_config_to_output
 from ps_method.constants import q_e, evtoj
 
 
@@ -48,15 +48,12 @@ def main(cfg_path, replot=False):
 
     # --- Import physics modules AFTER builtins.npfloat is set so @maybe_njit
     #     sees the correct float type (float128 skips njit, float64 compiles). ---
-    from ps_method.constB_physics import PS_constB, analytical_constantB, lorentz_force_constB
-    from ps_method.universal import rk4_fixed_step, extract_v, compute_energy_drift, plt_config, slice_solution
-    from ps_method.field_plots import (
-        plot_full_2d, plot_full_3d, plot_ke_error, plot_slice_2d, plot_slice_3d,
-        plot_ke_error_multi, plot_trajectory_error, f64,
-    )
-    from ps_method.writers import get_run_params_constB as get_run_params, h5_path_for, save_results_h5_constB as save_results_h5, load_results_h5_constB as load_results_h5, write_summary_txt_constB
+    from ps_method import constb_physics as cb
+    from ps_method import universal as ul
+    from ps_method import field_plots as fplt
+    from ps_method import writers as wr
 
-    p = compute_derived_constB(cfg, npfloat=npfloat)
+    p = compute_derived_constb(cfg, npfloat=npfloat)
 
     # === Unpack Config ===
     READ_DATA       = p["READ_DATA"]
@@ -102,7 +99,7 @@ def main(cfg_path, replot=False):
 
     # === Misc Odds and Ends ===
     os.makedirs(output_folder, exist_ok=True)
-    plt_config(scale=1)
+    ul.plt_config(scale=1)
     plt.ioff()
 
     if USE_FLOAT128:
@@ -168,24 +165,24 @@ def main(cfg_path, replot=False):
 
     if USE_ANALYTICAL:
         start_time_analytical = time.time()
-        solution_analytical = analytical_constantB(
+        solution_analytical = cb.analytical_constb(
             t_eval_ps,
             initial_pos_vel, qoverm)
         end_time_analytical = time.time()
 
     # === Build parameter signature & check cache ===
-    params = get_run_params(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
+    params = wr.get_run_params_constb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                        mass, q_e, B_0,
                        x_initial, y_initial, z_initial,
                        pitch_deg, phi_deg,
                        norm_time, ps_step, rk4_step,
                        PS_order, tol, qoverm)
-    cache_path = h5_path_for(params, run_storage)
+    cache_path = wr.h5_path_for(params, run_storage)
     os.makedirs(run_storage, exist_ok=True)
 
     if os.path.exists(cache_path) and READ_DATA:
         print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
-        cached = load_results_h5(cache_path)
+        cached = wr.load_results_h5_constb(cache_path)
 
         # Rehydrate what you need for plotting/analysis:
         solution_ps = cached["ps"]["y"] if cached["ps"] else None
@@ -208,7 +205,7 @@ def main(cfg_path, replot=False):
         if USE_RK45:
             start_time_rk45 = time.time()
             solution_rk45 = solve_ivp(
-                lorentz_force_constB, (0, norm_time),
+                cb.lorentz_force_constb, (0, norm_time),
                 initial_pos_vel, method='RK45',
                 t_eval=t_eval_rk45, args=(Bfield, qoverm),
                 rtol=rtol_rk45,
@@ -219,14 +216,14 @@ def main(cfg_path, replot=False):
         if USE_RK4:
             start_time_rk4 = time.time()
             rk4_dt = npfloat(t_eval_rk4[1] - t_eval_rk4[0])
-            solution_rk4 = rk4_fixed_step(
-                lorentz_force_constB, initial_pos_vel,
+            solution_rk4 = ul.rk4_fixed_step(
+                cb.lorentz_force_constb, initial_pos_vel,
                 rk4_dt, steps_rk4, args=(Bfield, qoverm))
             end_time_rk4 = time.time()
 
         # ===== Run PS Method ====
         start_time_ps = time.time()
-        solution_ps, orders_used = PS_constB(
+        solution_ps, orders_used = cb.ps_constb(
             PS_order, steps_ps, initial_pos_vel,
             ps_step, Bfield, qoverm, tol)
         end_time_ps = time.time()
@@ -261,7 +258,7 @@ def main(cfg_path, replot=False):
 
         # Save to cache
         if WRITE_DATA:
-            save_results_h5(cache_path, params, results)
+            wr.save_results_h5_constb(cache_path, params, results)
             print(f"Saved results → {os.path.basename(cache_path)}")
         stem = os.path.splitext(os.path.basename(cache_path))[0]
 
@@ -282,8 +279,8 @@ def main(cfg_path, replot=False):
         print(f"PS Orders       : max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
 
     # === Create run-specific output subfolders ===
-    # data/constB/<config>/<stem>/figures/   ← plots
-    # data/constB/<config>/<stem>/           ← summary, config copy
+    # data/constb/<config>/<stem>/figures/   ← plots
+    # data/constb/<config>/<stem>/           ← summary, config copy
     run_folder = os.path.join(output_folder, stem)
     fig_folder = os.path.join(run_folder, "figures")
     os.makedirs(fig_folder, exist_ok=True)
@@ -308,8 +305,8 @@ def main(cfg_path, replot=False):
             use_rk45=USE_RK45, use_rk4=USE_RK4, use_analytical=USE_ANALYTICAL,
             **_plot_kw,
         )
-        plot_full_2d(f"{_base}_2D.png", **_traj_kw)
-        plot_full_3d(f"{_base}_3D.png", **_traj_kw)
+        fplt.full_2d(f"{_base}_2D.png", **_traj_kw)
+        fplt.full_3d(f"{_base}_3D.png", **_traj_kw)
 
     # ================================================================
     # ==================KE Error Plot Over time Only =================
@@ -334,7 +331,7 @@ def main(cfg_path, replot=False):
         E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
         rel_drift_rk4 = (E_rk4 - E_rk4[0]) / E_rk4[0]
 
-    plot_ke_error(
+    fplt.ke_error(
         f"{_base}_KEerror.png",
         t_eval_ps=t_eval_ps, rel_drift_ps=rel_drift_ps, orders_used=orders_used,
         t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_drift_rk4=rel_drift_rk4,
@@ -348,15 +345,15 @@ def main(cfg_path, replot=False):
     window_duration = gyro_plot_slice * 2 * np.pi
 
     if USE_RK4:
-        rk4_x, rk4_y, rk4_z, *_ = slice_solution(t_eval_rk4, solution_rk4, window_duration, norm_time)
+        rk4_x, rk4_y, rk4_z, *_ = ul.slice_solution(t_eval_rk4, solution_rk4, window_duration, norm_time)
 
     if USE_RK45:
-        rk45_x, rk45_y, rk45_z, *_ = slice_solution(t_eval_rk45, solution_rk45.y, window_duration, norm_time)
+        rk45_x, rk45_y, rk45_z, *_ = ul.slice_solution(t_eval_rk45, solution_rk45.y, window_duration, norm_time)
 
     if USE_ANALYTICAL:
-        ana_x, ana_y, ana_z, *_ = slice_solution(t_eval_ps, solution_analytical, window_duration, norm_time)
+        ana_x, ana_y, ana_z, *_ = ul.slice_solution(t_eval_ps, solution_analytical, window_duration, norm_time)
 
-    ps_x, ps_y, ps_z, *_ = slice_solution(t_eval_ps, solution_ps, window_duration, norm_time)
+    ps_x, ps_y, ps_z, *_ = ul.slice_solution(t_eval_ps, solution_ps, window_duration, norm_time)
 
     _slice_kw = dict(
         ps_x=ps_x, ps_y=ps_y, orders_used=orders_used,
@@ -368,8 +365,8 @@ def main(cfg_path, replot=False):
     )
 
     if USE_FULL_PLOT:
-        plot_slice_2d(f"{_base}_2Dslice.png", **_slice_kw)
-        plot_slice_3d(
+        fplt.slice_2d(f"{_base}_2Dslice.png", **_slice_kw)
+        fplt.slice_3d(
             f"{_base}_3Dslice.png",
             ps_x=ps_x, ps_y=ps_y, ps_z=ps_z, orders_used=orders_used,
             rk45_x=rk45_x if USE_RK45 else None, rk45_y=rk45_y if USE_RK45 else None, rk45_z=rk45_z if USE_RK45 else None,
@@ -387,7 +384,7 @@ def main(cfg_path, replot=False):
         ext_data = None
         extb_data = None
         if USE_EXTERNAL_H5:
-            external = load_results_h5(external_h5)
+            external = wr.load_results_h5_constb(external_h5)
             ext_ps = external["ps"]
             t_ext, y_ext = ext_ps["t"], ext_ps["y"]
             vxe, vye, vze = y_ext[3].astype(np.float128), y_ext[4].astype(np.float128), y_ext[5].astype(np.float128)
@@ -396,7 +393,7 @@ def main(cfg_path, replot=False):
             ext_data = (t_ext, rel_drift_ext, PS_order_ext)
 
         if USE_EXTERNAL_H5b:
-            externalb = load_results_h5(external_h5b)
+            externalb = wr.load_results_h5_constb(external_h5b)
             ext_psb = externalb["ps"]
             t_extb, y_extb = ext_psb["t"], ext_psb["y"]
             vxeb, vyeb, vzeb = y_extb[3].astype(np.float128), y_extb[4].astype(np.float128), y_extb[5].astype(np.float128)
@@ -410,9 +407,9 @@ def main(cfg_path, replot=False):
         _ps_styles = [":", "-.", ":", "--", "-."]
         ps_drifts = []
         for order, color, ls in zip(_ps_orders, _ps_colors, _ps_styles):
-            sol, _ = PS_constB(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
-            vx, vy, vz = extract_v(sol)
-            drift = compute_energy_drift(vx, vy, vz)
+            sol, _ = cb.ps_constb(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
+            vx, vy, vz = ul.extract_v(sol)
+            drift = ul.compute_energy_drift(vx, vy, vz)
             ps_drifts.append((order, drift, color, ls))
 
         # Add the main PS (max order)
@@ -420,16 +417,16 @@ def main(cfg_path, replot=False):
             vx_rk4 = np.array(solution_rk4[3], dtype=npfloat)
             vy_rk4 = np.array(solution_rk4[4], dtype=npfloat)
             vz_rk4 = np.array(solution_rk4[5], dtype=npfloat)
-            rel_drift_rk4 = compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
+            rel_drift_rk4 = ul.compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
         if USE_RK45:
             vx_rk45 = np.array(solution_rk45.y[3], dtype=npfloat)
             vy_rk45 = np.array(solution_rk45.y[4], dtype=npfloat)
             vz_rk45 = np.array(solution_rk45.y[5], dtype=npfloat)
-            rel_drift_rk45 = compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
+            rel_drift_rk45 = ul.compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
 
         ps_drifts.append((orders_used.max(), rel_drift_ps, "#009E73", ":"))
 
-        plot_ke_error_multi(
+        fplt.ke_error_multi(
             f"{_base}_KEerror_manyPS.png",
             t_eval_ps=t_eval_ps, orders_used=orders_used,
             ps_drifts=ps_drifts,
@@ -460,13 +457,13 @@ def main(cfg_path, replot=False):
         t_ext_traj = None
         rel_err_ext = None
         if USE_EXTERNAL_H5:
-            external = load_results_h5(external_h5)
+            external = wr.load_results_h5_constb(external_h5)
             ext_ps = external["ps"]
             t_ext_traj = ext_ps["t"]
             y_ext = ext_ps["y"]
             rel_err_ext = np.sqrt((y_ext[0] - x_ana)**2 + (y_ext[1] - y_ana)**2) / gyro_radius_si
 
-        plot_trajectory_error(
+        fplt.trajectory_error(
             f"{_base}_TrajError.png",
             t_eval_ps=t_eval_ps, rel_err_ps=rel_err_ps, orders_used=orders_used,
             t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_err_rk4=rel_err_rk4,
@@ -484,7 +481,7 @@ def main(cfg_path, replot=False):
 
     output_filename = f"{run_folder}/{stem}_summary.txt"
 
-    write_summary_txt_constB(
+    wr.write_summary_txt_constb(
         output_filename,
         stem=stem, WRITE_DATA=WRITE_DATA, READ_DATA=READ_DATA,
         particle_type=particle_type, KE_particle=KE_particle, mass=mass,
@@ -518,7 +515,7 @@ if __name__ == "__main__":
     else:
         print(f"Using default run mode: {run}\n")
 
-    _configs_dir = os.path.join(os.path.dirname(__file__), "configs", "constB")
+    _configs_dir = os.path.join(os.path.dirname(__file__), "configs", "constb")
 
     if run.endswith((".yml", ".yaml")) and os.path.isfile(run):
         _yaml_path = run
@@ -527,7 +524,7 @@ if __name__ == "__main__":
     else:
         raise FileNotFoundError(
             f"No YAML config found for '{run}'. "
-            f"Expected configs/constB/{run}.yml or a direct path to a .yml file.\n"
+            f"Expected configs/constb/{run}.yml or a direct path to a .yml file.\n"
             f"Available configs: {[f.replace('.yml','') for f in os.listdir(_configs_dir) if f.endswith('.yml') and f != 'base.yml']}"
         )
 

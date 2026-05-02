@@ -59,7 +59,7 @@ elif particle=='electron':
 earth_radius = 6378137.0              # m  
 q_charge = 1.602176634e-19           # C (magnitude only; sign handled via phi_sign and charge_sign where needed)
 
-B0 = 3.12e-5                         # T  (equatorial surface field, matches dipoleB_testparticles.py)
+B0 = 3.12e-5                         # T  (equatorial surface field, matches dipoleb_testparticles.py)
 M_earth = B0 * (earth_radius**3)     # T m^3
 speed_light =  299792458             # m/s
 gamma_df = 1/(L_shell*earth_radius)  # Dragt's Gamma parameter (NOT Lorentz gamma). This is exact when L_shell

@@ -1,3 +1,17 @@
+"""
+Dragt (1965) diagnostic analysis for dipole trajectories.
+
+    conservation_monitor  — per-step W0^2 / P_phi drift monitor
+    compute_adiabaticity  — epsilon = r_g |grad B| / B along a trajectory
+    compute_params        — W0^2, P_phi, boundary status from initial conditions
+    compute_boundary      — accessible boundary curve for Poincaré section
+    compute_z_crossings   — equatorial (z=0) crossing finder via interpolation
+    compute_gyrophase_mu  — gyrophase and mu at equatorial crossings
+    compute_w0_squared    — W0^2 from physical speed and L-shell
+    analysis_chunked      — stream h5 file for adiabaticity, meridian, crossings
+    run_section           — full Dragt analysis + plots, returns dragt_log
+"""
+
 import numpy as np
 import warnings
 import os
@@ -415,7 +429,7 @@ def compute_gyrophase_mu(x_cross, y_cross, vx_cross, vy_cross):
     return gyrophase, mu_cross
 
 
-def calculate_w0_squared(speed, L_shell, mass_si, q_e, M_earth=None):
+def compute_w0_squared(speed, L_shell, mass_si, q_e, M_earth=None):
     """
     Calculates Dragt's dimensionless energy constant W0^2.
 

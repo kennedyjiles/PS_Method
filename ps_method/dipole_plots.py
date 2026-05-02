@@ -1,8 +1,31 @@
 """
-Plotting functions extracted from dipoleB.py — trajectory visualizations.
+Plotting functions for dipoleb.py — trajectory visualizations.
 
 Each function receives only the data it needs (no globals). Called from
-dipoleB.py after data loading / slice setup is complete.
+dipoleb.py after data loading / slice setup is complete.
+
+Trajectory:
+    full_2d              — full-run 2D trajectory (x vs y)
+    full_3d              — full-run 3D trajectory
+    slice_2d             — windowed 2D trajectory slice
+    slice_3d             — windowed 3D trajectory slice
+
+Energy:
+    ke_error             — kinetic energy relative error vs time
+
+Dragt:
+    dragt_poincare       — Poincaré surface of section (rho vs rho_dot)
+    gyrophase_mu         — gyrophase vs magnetic moment at crossings
+    polar_phase_space    — polar phase space (mu, gyrophase)
+    meridian_plane       — meridian plane projection (rho/L vs z/L)
+    adiabaticity         — adiabaticity parameter epsilon vs time
+
+Conservation:
+    pphi_error           — P_phi relative error vs time
+    mu_deviation         — magnetic moment deviation vs time
+
+Helpers:
+    prepare_slice_window — extract a time window for slice plots
 """
 
 import numpy as np

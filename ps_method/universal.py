@@ -1,6 +1,6 @@
 """
 universal.py — Shared utilities used by all three field drivers
-               (constB, hyperB, dipoleB).
+               (constb, hyperb, dipoleb).
 
 Contents:
   • maybe_njit          – Decorator that compiles with numba when using float64
@@ -9,7 +9,7 @@ Contents:
     compute_energy_drift /
     extract_v           – Kinetic-energy helpers for post-processing.
   • cauchy_sum          – Cauchy product for power-series
-                          multiplication; used by hyperB and dipoleB recurrences.
+                          multiplication; used by hyperb and dipoleb recurrences.
   • rk4_fixed_step      – Classical 4th-order Runge–Kutta integrator.
   • plt_config /
     sparse_labels /

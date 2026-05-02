@@ -2,15 +2,15 @@
 """
 Batch Flux Map Runner
 =====================
-Orchestrates a parameter sweep of dipoleB.py across (energy, L-shell, pitch angle)
+Orchestrates a parameter sweep of dipoleb.py across (energy, L-shell, pitch angle)
 to generate the trajectory data needed for an AP-8-comparable meridian-plane flux map.
 
 Supports parallel execution on multi-core machines (e.g. M4 Max with 16 cores).
 Each worker gets its own JSON config file to avoid race conditions.
 
-This script does NOT modify dipoleB.py or any core library files. It writes a
-JSON config per run, then calls `python dipoleB.py batch:/path/to/config.json`.
-The "batch" run mode in dipoleB_testparticles.py reads from that config.
+This script does NOT modify dipoleb.py or any core library files. It writes a
+JSON config per run, then calls `python dipoleb.py batch:/path/to/config.json`.
+The "batch" run mode in dipoleb_testparticles.py reads from that config.
 Adaptive vs fixed stepping is controlled via the USE_ADAPTIVE flag in the config.
 
 Usage:
@@ -230,12 +230,12 @@ def write_config(run, config_path):
 
 def execute_single_run(run):
     """
-    Execute one dipoleB batch run.
+    Execute one dipoleb batch run.
     Called by worker processes — must be a top-level function for pickling.
     Returns (run_key, status, elapsed_min, error_msg).
 
     The run dict may include a "use_adaptive" key (True/False) which is passed
-    through the JSON config to dipoleB.py's USE_ADAPTIVE toggle.
+    through the JSON config to dipoleb.py's USE_ADAPTIVE toggle.
     """
     key = run_key(run)
 
@@ -246,7 +246,7 @@ def execute_single_run(run):
     start = time.time()
     try:
         result = subprocess.run(
-            [sys.executable, "dipoleB.py", f"batch:{config_path}"],
+            [sys.executable, "dipoleb.py", f"batch:{config_path}"],
             cwd=PROJECT_ROOT,
             timeout=3600 * 24,   # 24-hour timeout
             capture_output=True,
@@ -393,7 +393,7 @@ def run_sequential(runs, dry_run=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Batch flux map runner for dipoleB.py",
+        description="Batch flux map runner for dipoleb.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -509,7 +509,7 @@ Examples:
 
     progress["started"] = datetime.now().isoformat()
 
-    # Set use_adaptive flag for each run (passed through JSON config to dipoleB.py)
+    # Set use_adaptive flag for each run (passed through JSON config to dipoleb.py)
     # Phase 2 & 3: always adaptive (non-adiabatic regime)
     # Phase 1: adaptive for low pitch angles (< 30°), user-chosen otherwise
     ADAPTIVE_PITCH_THRESHOLD = 30.0

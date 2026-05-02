@@ -1,3 +1,51 @@
+"""
+Physics kernels and analysis for charged particle motion in a magnetic dipole.
+
+Core solvers:
+    lorentz_force                — dipole Lorentz force (numba-compiled)
+    ps_integrate                 — power series integrator (chunked, streamed to h5)
+    hamiltonian_rhs              — Hamilton's equations for symplectic integrator
+    rkgl4_hamiltonian_step       — single implicit Gauss-Legendre RK4 step
+    rkgl4_hamiltonian            — full symplectic integration loop
+
+Magnetic moment:
+    compute_mu_ps                — mu from PS solution array
+    compute_mu_rk                — mu from RK solution array
+    compute_mu_deviation_rk      — mu deviation over time (RK solvers)
+    compute_mu_deviation_ps      — mu deviation over time (PS, chunked from h5)
+
+Vector potential:
+    vector_potential             — A_phi for canonical momentum
+
+Bounce / drift analysis:
+    mirror_times_from_ps         — mirror points from PS coefficient matrix
+    init_bounce_stream_state     — initialize streaming bounce detector
+    init_drift_stream_state      — initialize streaming drift detector
+    record_drift_sample_at_time  — record one drift sample
+    process_bounce_and_drift_chunk — process one chunk for bounce/drift
+    finalize_bounce_stream       — compute bounce period from collected crossings
+    finalize_drift_stream        — compute drift period from collected samples
+    bounce_summary               — formatted bounce period statistics
+    drift_period_from_ps         — drift period from PS coefficients
+
+Streaming / decimation:
+    run_ps_streaming_with_decimation — full PS run with decimated output
+
+Energy diagnostics:
+    compute_energy_ps_chunked    — KE error from h5 in chunks
+    compute_ke_errors            — KE errors for all enabled solvers
+
+Time / window helpers:
+    check_time_grids             — validate step sizes and build time arrays
+    slice_solution               — extract a time window from a solution
+    compute_pphi_error_chunked   — P_phi error from h5 in chunks
+
+Internal helpers:
+    _gyro_window_indices         — index range for a gyro-window slice
+    _unwrap_phi_from_ps          — unwrap azimuthal angle from PS coefficients
+    _pick_samples                — sample selection for drift analysis
+"""
+
 import numpy as np
 import os
 import json, hashlib, h5py, time, re
@@ -31,7 +79,7 @@ def lorentz_force(t, y, qoverm):
     return np.array([vx, vy, vz, ax, ay, az], dtype=npfloat)
 
 @maybe_njit
-def PS_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
+def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     n_total = 17
     final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=npfloat)
 
@@ -825,7 +873,7 @@ def run_ps_streaming_with_decimation(
         while remaining > 0:
             this_chunk = min(chunk_steps, remaining)
 
-            sol_chunk, orders_chunk = PS_integrate(
+            sol_chunk, orders_chunk = ps_integrate(
                 PS_order, this_chunk, cur_state, tol, qoverm, ps_step
             )
 

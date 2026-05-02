@@ -1,5 +1,5 @@
 # ===================================================================
-# Default configuration for dipoleB simulations
+# Default configuration for dipoleb simulations
 # ===================================================================
 # These are the baseline values. A run config only needs to specify
 # the values it wants to CHANGE — everything else falls back here.

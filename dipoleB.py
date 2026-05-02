@@ -1,21 +1,21 @@
 """
-dipoleB.py — Main driver for charged particle trajectory simulation in a
+dipoleb.py — Main driver for charged particle trajectory simulation in a
              magnetic dipole field using the power series (PS) method with
              optional RK4, RK45, and RKG (symplectic) solvers for comparison.
 
 Usage:
-    python dipoleB.py                       # runs the default config (demo)
-    python dipoleB.py demo                  # named config  → configs/dipole/demo.yml
-    python dipoleB.py paper1                # named config  → configs/dipole/paper1.yml
-    python dipoleB.py configs/dipole/my_run.yml    # direct path to a custom YAML config
+    python dipoleb.py                       # runs the default config (demo)
+    python dipoleb.py demo                  # named config  → configs/dipoleb/demo.yml
+    python dipoleb.py paper1                # named config  → configs/dipoleb/paper1.yml
+    python dipoleb.py configs/dipoleb/my_run.yml   # direct path to a custom YAML config
 
 Available named configs:
     demo, paper1, paper2, paper3, dragt, walt, monster_ps, manual, testrun
 
 To create a custom run:
-    1. Copy configs/dipole/base.yml to configs/dipole/my_run.yml
+    1. Copy configs/dipoleb/base.yml to configs/dipoleb/my_run.yml
     2. Edit the parameters you want to change (energy, pitch, x_initial, etc.)
-    3. Run:  python dipoleB.py my_run
+    3. Run:  python dipoleb.py my_run
 
 Your config is automatically merged with base.yml — any parameter you don't
 specify falls back to the default value. Do NOT edit base.yml directly; it
@@ -75,7 +75,7 @@ def main(cfg_path, replot=False):
 
     DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
     if DEBUG:
-        logger = setup_logger("dipole_logger", "dipoleB.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
+        logger = setup_logger("dipole_logger", "dipoleb.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
         tracemalloc.start()
 
     params     = compute_derived(cfg, npfloat=npfloat)
@@ -1224,7 +1224,7 @@ if __name__ == "__main__":
     else:
         print(f"Using default run mode: {run}\n")
 
-    _configs_dir = os.path.join(os.path.dirname(__file__), "configs", "dipole")
+    _configs_dir = os.path.join(os.path.dirname(__file__), "configs", "dipoleb")
 
     if run.endswith((".yml", ".yaml")) and os.path.isfile(run):
         _yaml_path = run
@@ -1233,7 +1233,7 @@ if __name__ == "__main__":
     else:
         raise FileNotFoundError(
             f"No YAML config found for '{run}'. "
-            f"Expected configs/dipole/{run}.yml or a direct path to a .yml file.\n"
+            f"Expected configs/dipoleb/{run}.yml or a direct path to a .yml file.\n"
             f"Available configs: {[f.replace('.yml','') for f in os.listdir(_configs_dir) if f.endswith('.yml') and f != 'base.yml']}"
         )
 

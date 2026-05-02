@@ -1,5 +1,5 @@
 """
-YAML config loader for all field types (dipole, constB, hyperB).
+YAML config loader for all field types (dipoleb, constb, hyperb).
 
 Two-stage design (following advisor's config pattern):
   1. load_config()               — loads YAML, merges with base, validates, prints.
@@ -9,13 +9,13 @@ Two-stage design (following advisor's config pattern):
                                    Returns a flat params dict ready for the driver script.
 
 Usage:
-    cfg    = load_config("configs/dipole/demo.yml")
+    cfg    = load_config("configs/dipoleb/demo.yml")
     params = compute_derived_dipole(cfg, npfloat=npfloat)
 
-    cfg    = load_config("configs/constB/demo.yml")
-    params = compute_derived_constB(cfg, npfloat=npfloat)
+    cfg    = load_config("configs/constb/demo.yml")
+    params = compute_derived_constb(cfg, npfloat=npfloat)
 
-    cfg    = load_config("configs/hyper/demo.yml")
+    cfg    = load_config("configs/hyperb/demo.yml")
     params = compute_derived_hyper(cfg, npfloat=npfloat)
 """
 
@@ -106,7 +106,7 @@ def copy_config_to_output(cfg_path, output_folder):
     Parameters
     ----------
     cfg_path      : str – path to the original YAML config.
-    output_folder : str – the run's output directory (e.g. data/dipoleB/demo/).
+    output_folder : str – the run's output directory (e.g. data/dipoleb/demo/).
     """
     import subprocess
 
@@ -199,7 +199,7 @@ def load_config(conf_file):
     Base config discovery:
       1. If the run YAML contains a 'base_config' key, that path is used.
       2. Otherwise, base.yml in the SAME directory as the run YAML is used.
-         This makes subdirectory layout (configs/dipole/, configs/constB/, …)
+         This makes subdirectory layout (configs/dipoleb/, configs/constb/, …)
          work automatically.
 
     Parameters
@@ -333,12 +333,12 @@ def compute_derived_dipole(cfg, npfloat=np.float64):
     Returns
     -------
     dict
-        Flat params dict ready for dipoleB.py.
+        Flat params dict ready for dipoleb.py.
     """
 
     mass_si = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
-    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="dipoleB")
+    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="dipoleb")
 
     # --- Physics seeds ---
     pitch_deg   = npfloat(cfg["pitch_deg"])
@@ -490,7 +490,7 @@ compute_derived = compute_derived_dipole
 # Stage 2b: Compute derived — constant B
 # ---------------------------------------------------------------------------
 
-def compute_derived_constB(cfg, npfloat=np.float64):
+def compute_derived_constb(cfg, npfloat=np.float64):
     """
     Constant-B specific derived quantities.
 
@@ -506,12 +506,12 @@ def compute_derived_constB(cfg, npfloat=np.float64):
     Returns
     -------
     dict
-        Flat params dict ready for constB.py.
+        Flat params dict ready for constb.py.
     """
 
     mass = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
-    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="constB")
+    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="constb")
 
     # --- Physics seeds ---
     pitch_deg   = npfloat(cfg["pitch_deg"])
@@ -626,12 +626,12 @@ def compute_derived_hyper(cfg, npfloat=np.float64):
     Returns
     -------
     dict
-        Flat params dict ready for hyperB.py.
+        Flat params dict ready for hyperb.py.
     """
 
     mass_si = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
-    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="hyperB")
+    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="hyperb")
 
     # --- Physics seeds ---
     pitch_deg    = npfloat(cfg["pitch_deg"])

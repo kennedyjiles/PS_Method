@@ -1,17 +1,17 @@
 """
-Consolidated I/O for all field types (dipole, constB, hyperB).
+Consolidated I/O for all field types (dipole, constb, hyperb).
 
 Shared functions:
     _to_serializable, run_hash, h5_path_for
 
 Field-specific save/load (named by field type):
     save_results_h5_dipole / load_results_h5_dipole / append_results_h5_dipole
-    save_results_h5_constB / load_results_h5_constB
+    save_results_h5_constb / load_results_h5_constb
     save_results_h5_hyper  / load_results_h5_hyper
 
 Field-specific run-param builders:
     get_run_params_dipole
-    get_run_params_constB
+    get_run_params_constb
     get_run_params_hyper
 
 Shared helpers:
@@ -23,7 +23,7 @@ Dipole-only extras:
     write_summary_txt, write_master_csv
 
 Field-specific summaries:
-    write_summary_txt_constB
+    write_summary_txt_constb
     write_summary_txt_hyper
 """
 
@@ -428,13 +428,13 @@ def load_legacy_file(h5_path):
 # ====================  ConstB: run params & h5  ======================
 # =====================================================================
 
-def get_run_params_constB(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
+def get_run_params_constb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                           mass_si, q_e, B_0,
                           x_initial, y_initial, z_initial,
                           pitch_deg, phi_deg,
                           norm_time, ps_step, rk4_step,
                           PS_order, tol, qoverm):
-    """Collect all knobs that define a unique constB run."""
+    """Collect all knobs that define a unique constb run."""
     return {
         "USE_RK45": bool(USE_RK45),
         "USE_RK4":  bool(USE_RK4),
@@ -463,7 +463,7 @@ def get_run_params_constB(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
     }
 
 
-def save_results_h5_constB(h5_path, params, results):
+def save_results_h5_constb(h5_path, params, results):
     with h5py.File(h5_path, "w") as f:
         f.attrs["params_json"] = json.dumps(params, sort_keys=True, default=_to_serializable)
 
@@ -484,7 +484,7 @@ def save_results_h5_constB(h5_path, params, results):
                 gmeta.attrs[sk] = meta[sk]
 
 
-def load_results_h5_constB(h5_path):
+def load_results_h5_constb(h5_path):
     with h5py.File(h5_path, "r") as f:
         loaded = {"meta": {"timing": {}}}
         loaded["params"] = json.loads(f.attrs["params_json"])
@@ -521,7 +521,7 @@ def get_run_params_hyper(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                          pitch_deg, phi_deg,
                          norm_time, ps_step, rk4_step,
                          PS_order, tol, qoverm):
-    """Collect all knobs that define a unique hyperB run."""
+    """Collect all knobs that define a unique hyperb run."""
     return {
         "USE_RK45": bool(USE_RK45),
         "USE_RK4":  bool(USE_RK4),
@@ -850,7 +850,7 @@ def write_master_csv(
 # ============  ConstB summary  =======================================
 # =====================================================================
 
-def write_summary_txt_constB(
+def write_summary_txt_constb(
     output_filename, *,
     # Run identity
     stem=None, WRITE_DATA=False, READ_DATA=False,
