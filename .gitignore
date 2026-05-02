@@ -18,9 +18,4 @@ scripts/batch_flux_progress.json
 # Archive
 Archive/
 
-
-# Old/removed files
-timestep.py
-test.py
-functions/functions_library_dipole2.py
-functions/functions_library_dipole\ OG\ DONT\ TOUCH.py
+testrun.yml

@@ -273,6 +273,18 @@ def main(cfg_path, replot=False):
                 if USE_PS and "ps" in cached:
                     solution_ps = None
                     orders_used = None
+                    # Trimmed files have fewer columns than the original run.
+                    # Override steps_ps and norm_time so downstream windowing
+                    # uses actual data size.
+                    n_store_actual = cached["ps"]["y"].shape[1]
+                    ps_store_stride = PS_decimate if PS_decimate > 1 else 1
+                    steps_ps_actual = n_store_actual * ps_store_stride
+                    if steps_ps_actual < steps_ps:
+                        print(f"  Trimmed file detected: {n_store_actual:,} stored columns "
+                              f"(original {steps_ps:,} steps → effective {steps_ps_actual:,})")
+                        steps_ps = steps_ps_actual
+                        norm_time = steps_ps * ps_step
+                        gyroperiods = norm_time / (2.0 * np.pi)
 
                 # === RK4 ===
                 if USE_RK4 and "rk4" in cached:
@@ -436,6 +448,16 @@ def main(cfg_path, replot=False):
                 if USE_PS and "ps" in cached:
                     solution_ps = None
                     orders_used = None
+                    # Guard against trimmed files with fewer columns than metadata claims
+                    n_store_actual = cached["ps"]["y"].shape[1]
+                    ps_store_stride = PS_decimate if PS_decimate > 1 else 1
+                    steps_ps_actual = n_store_actual * ps_store_stride
+                    if steps_ps_actual < steps_ps:
+                        print(f"  Trimmed file detected: {n_store_actual:,} stored columns "
+                              f"(original {steps_ps:,} steps → effective {steps_ps_actual:,})")
+                        steps_ps = steps_ps_actual
+                        norm_time = steps_ps * ps_step
+                        gyroperiods = norm_time / (2.0 * np.pi)
 
                 # === RK4 ===
                 if USE_RK4 and "rk4" in cached:

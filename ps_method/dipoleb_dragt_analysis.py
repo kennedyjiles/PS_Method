@@ -277,17 +277,17 @@ def compute_params(x_ps, y_ps, z_ps, vx_ps, vy_ps, vz_ps, L_shell, charge_sign=1
     W0_sq = (v_mag_0 * L_shell**2)**2
 
     rho_0_sim    = np.sqrt(x_ps[0]**2 + y_ps[0]**2)
+    r_0_sim      = np.sqrt(x_ps[0]**2 + y_ps[0]**2 + z_ps[0]**2)
     rho_0_dragt  = rho_0_sim / L_shell
+    r_0_dragt    = r_0_sim / L_shell
     v_phi_0_sim  = (x_ps[0]*vy_ps[0] - y_ps[0]*vx_ps[0]) / rho_0_sim
     v_phi_0_dragt = v_phi_0_sim * L_shell**2            # same: no gamma division
-    # Upward B-field convention: A_phi = -1/rho
-    # P_phi = rho*v_phi - charge_sign/rho
-    #   Proton  (charge_sign=+1): P_phi = rho*v_phi - 1/rho  (< 0 when trapped)
-    #   Electron (charge_sign=-1): P_phi = rho*v_phi + 1/rho  (> 0 when trapped)
+    # Dipole vector potential: A_phi = -rho/r^3 (valid for all z).
+    # P_phi = rho*v_phi - charge_sign * rho^2 / r^3
+    # In Dragt units (rho_d = rho/L, r_d = r/L, v_d = v*L^2):
+    #   P_phi = rho_d * v_phi_d - charge_sign * rho_d^2 / r_d^3
     # Trapped condition (both species): charge_sign * P_phi < 0
-    # Note: P_phi is dominated by the 1/rho (vector potential) term; the kinetic
-    # contribution (rho*v_phi) is small for trapped particles near the thalweg.
-    P_phi = (rho_0_dragt * v_phi_0_dragt) - (charge_sign / rho_0_dragt)
+    P_phi = (rho_0_dragt * v_phi_0_dragt) - (charge_sign * rho_0_dragt**2 / r_0_dragt**3)
 
     trapped = (charge_sign * P_phi < 0)
     W0_threshold    = P_phi**4 / 16 if trapped else None
@@ -614,15 +614,40 @@ def run_section(
         "hit_atmosphere": False, "hit_atm_r": None,
     }
 
-    # --- L-shell from conserved canonical momentum ---
-    _rho_init   = np.sqrt(x_initial**2 + y_initial**2)
-    _v_phi_init = (x_initial * vy_initial - y_initial * vx_initial) / _rho_init
-    _P_phi_code = _rho_init * _v_phi_init - charge_sign / _rho_init
+    if not USE_PS:
+        # --- L-shell from passed-in initial conditions (no h5 available) ---
+        _rho_init   = np.sqrt(x_initial**2 + y_initial**2)
+        _v_phi_init = (x_initial * vy_initial - y_initial * vx_initial) / _rho_init
+        _P_phi_code = _rho_init * _v_phi_init - charge_sign / _rho_init
+
+        if charge_sign * _P_phi_code < 0:
+            L_shell_dragt = float(-charge_sign / _P_phi_code)
+        else:
+            _r_init = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
+            L_shell_dragt = float(_r_init**3 / _rho_init**2)
+
+        print(f"\n{'='*60}")
+        print(f"  Dragt Info")
+        print(f"{'='*60}")
+        print("PS is not enabled. Cannot run Dragt Comparison.")
+        return dragt_log, L_shell_dragt
+
+    # --- Initial state from h5 (handles trimmed files correctly) ---
+    with h5py.File(cache_path, "r") as _h5_init:
+        _y0 = _h5_init["ps"]["y"][:6, 0].astype(float)
+
+    # --- L-shell from actual h5 initial state ---
+    # P_phi = rho * v_phi - charge_sign * rho^2 / r^3
+    # where A_phi = -rho/r^3 for the dipole (valid at any z, not just z=0).
+    # The simpler formula (charge_sign / rho) is only correct at z=0.
+    _rho_init   = np.sqrt(_y0[0]**2 + _y0[1]**2)
+    _r_init     = np.sqrt(_y0[0]**2 + _y0[1]**2 + _y0[2]**2)
+    _v_phi_init = (_y0[0] * _y0[4] - _y0[1] * _y0[3]) / _rho_init
+    _P_phi_code = _rho_init * _v_phi_init - charge_sign * _rho_init**2 / _r_init**3
 
     if charge_sign * _P_phi_code < 0:
         L_shell_dragt = float(-charge_sign / _P_phi_code)
     else:
-        _r_init = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
         L_shell_dragt = float(_r_init**3 / _rho_init**2)
         print("  WARNING: P_phi_code indicates open/untrapped orbit, "
               "falling back to field-line L-shell")
@@ -630,16 +655,8 @@ def run_section(
     print(f"\n{'='*60}")
     print(f"  Dragt Info")
     print(f"{'='*60}")
-    print(f"Dragt L-shell (from conserved canonical momentum): "
+    print(f"Dragt L-shell (from h5 initial state): "
           f"{L_shell_dragt:.4f} R_E")
-
-    if not USE_PS:
-        print("PS is not enabled. Cannot run Dragt Comparison.")
-        return dragt_log, L_shell_dragt
-
-    # --- Initial state from h5 ---
-    with h5py.File(cache_path, "r") as _h5_init:
-        _y0 = _h5_init["ps"]["y"][:6, 0].astype(float)
 
     # --- Cache consistency check ---
     _v_mag_ps0     = float(np.sqrt(_y0[3]**2 + _y0[4]**2 + _y0[5]**2))

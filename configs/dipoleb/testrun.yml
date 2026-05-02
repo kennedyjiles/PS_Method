@@ -1,7 +1,7 @@
 # ===================================================================
 # Paper 1 — 100 keV proton, 30° pitch, 5 R_E
 # ===================================================================
-use_float128: true         # true = use np.float128 for extended precision
+use_float128: false         # true = use np.float128 for extended precision
 
 particle: proton
 energy_eV: 100.0e3

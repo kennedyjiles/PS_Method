@@ -2,9 +2,9 @@
 # Manual — load a specific h5 file directly
 # ===================================================================
 
-manual_h5_path: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_60f693535958025f.h5"
+manual_h5_path: "data/dipoleb/tinker/trimmed/ccf693_last_6209.0s.h5"
 
 plotting:
   n_gyro: 150
 
-window_time: 5.0
+window_time: 6209.0

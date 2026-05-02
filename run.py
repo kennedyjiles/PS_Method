@@ -10,14 +10,15 @@ Full run (solvers + post-processing):
     python run.py configs/dipoleb/demo.yml
 
 Post-processing only (replot from cached h5 data):
-    python run.py data/constb/demo/demo.yml
-    python run.py data/hyperb/demo/demo.yml
-    python run.py data/dipoleb/demo/demo.yml
+    python run.py data/constb/demo/demo.yml            # auto-detected from data/ path
+    python run.py configs/dipoleb/manual.yml --replot   # explicit flag
 
 Shorthand (field type + config name):
     python run.py constb demo
     python run.py hyperb demo
     python run.py dipoleb paper1
+
+The --replot flag can be added to any invocation to force replot mode.
 """
 
 import os
@@ -44,10 +45,15 @@ def _resolve(args):
 
     Supports these calling conventions:
         run.py configs/dipoleb/demo.yml          → full run
-        run.py data/dipoleb/demo/demo.yml        → replot only
+        run.py configs/dipoleb/demo.yml --replot  → replot only
+        run.py data/dipoleb/demo/demo.yml        → replot only (auto-detected)
         run.py dipoleb demo                      → full run (shorthand)
         run.py dipoleb configs/dipoleb/demo.yml  → full run (explicit)
     """
+    # Strip --replot flag from args before positional parsing
+    force_replot = "--replot" in args
+    args = [a for a in args if a != "--replot"]
+
     if len(args) == 1:
         path = args[0]
 
@@ -76,7 +82,7 @@ def _resolve(args):
             if f"configs/{dirname}/" in path or f"configs{os.sep}{dirname}{os.sep}" in path:
                 if not os.path.isfile(path):
                     raise FileNotFoundError(f"Config file not found: {path}")
-                return field_key, path, False  # replot = False
+                return field_key, path, force_replot
 
         raise ValueError(
             f"Cannot infer field type from path: {path}\n"
@@ -96,7 +102,7 @@ def _resolve(args):
 
         # If run_name is already a full path
         if run_name.endswith((".yml", ".yaml")) and os.path.isfile(run_name):
-            replot = "data/" in run_name or f"data{os.sep}" in run_name
+            replot = force_replot or "data/" in run_name or f"data{os.sep}" in run_name
             return field_key, run_name, replot
 
         # Otherwise treat it as a config name
@@ -108,7 +114,7 @@ def _resolve(args):
                 f"No config found: {yaml_path}\n"
                 f"Available configs for {field_raw}: {available}"
             )
-        return field_key, yaml_path, False
+        return field_key, yaml_path, force_replot
 
     else:
         raise SystemExit(
