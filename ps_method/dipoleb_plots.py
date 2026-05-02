@@ -14,7 +14,7 @@ Energy:
     ke_error             — kinetic energy relative error vs time
 
 Dragt:
-    dragt_poincare       — Poincaré surface of section (rho vs rho_dot)
+    poincare             — Poincaré surface of section (rho vs rho_dot)
     gyrophase_mu         — gyrophase vs magnetic moment at crossings
     polar_phase_space    — polar phase space (mu, gyrophase)
     meridian_plane       — meridian plane projection (rho/L vs z/L)
@@ -32,8 +32,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 from ps_method.writers import build_filename
-from ps_method.universal import sparse_labels, data_to_fig, npfloat
-from ps_method.dipole_physics import slice_solution
+from ps_method.utils import sparse_labels, data_to_fig, setup_log_axes, place_endpoint_labels, npfloat
+from ps_method.utils import slice_solution_dipoleb as slice_solution
 import h5py
 import os
 
@@ -252,22 +252,7 @@ def ke_error(
                               label='RK45', color='#E69F00', linestyle='--')
 
     # ---- axis formatting ----
-    ax.margins(x=0.01)
-    ax.set_yscale('log')
-    ax.set_xscale('log')
-    ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
-    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-    ax.yaxis.set_minor_formatter(NullFormatter())
-    ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-    ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
-    ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-    ax.xaxis.set_minor_formatter(NullFormatter())
-    ax.grid(True, which='major', linestyle='--', linewidth=0.7)
-    ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
-
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    setup_log_axes(ax)
 
     ax.set_xlabel(r"$\tau/T$")
     ax.set_ylabel(r"$|\Delta E|/E_0$")
@@ -313,36 +298,7 @@ def ke_error(
     xmin, xmax = ax.get_xlim()
     ax.set_xlim(xmin, xmax * 1.05)
 
-    last_fy = None
-    min_gap = 0.025
-    endpoints_sorted = sorted(endpoints, key=lambda e: e[1])
-
-    for x, y, label, color in endpoints_sorted:
-        if ax.get_yscale() == "log" and y <= 0:
-            continue
-
-        _, fy = data_to_fig(x, y, ax, fig)
-
-        fy_adj = fy
-        if last_fy is not None and fy_adj - last_fy < min_gap:
-            fy_adj = last_fy + min_gap
-
-        dy_pts = (fy_adj - fy) * fig.get_figheight() * 72
-
-        ax.annotate(
-            label,
-            xy=(x, y),
-            xytext=(5, dy_pts),
-            textcoords="offset points",
-            ha="left",
-            va="center",
-            fontsize=11,
-            color=color,
-            clip_on=False,
-            zorder=10,
-        )
-
-        last_fy = fy_adj
+    place_endpoint_labels(fig, ax, endpoints)
 
     # === Save and Close ===
     fig.canvas.draw()
@@ -354,7 +310,7 @@ def ke_error(
 # =============================================================
 # ============== Dragt Poincaré Surface of Section ============
 # =============================================================
-def dragt_poincare(
+def poincare(
     run_folder, L_shell_dragt, gamma,
     rho_bnd, rho_dot_bnd, rho_0_sim, rho_dot_0_sim,
     crossings=None, stem="",
@@ -546,10 +502,8 @@ def mu_deviation(
 
     fig.subplots_adjust(right=0.9)
     fig.canvas.draw()
-    ax_pos = ax.get_position()
-    x_fig_label = ax_pos.x1
 
-    # Getting labels for end of graphs to work in log plotting, dear lord don't touch this
+    # ---- endpoint labels ----
     endpoints = []
     if rk45_data is not None:
         endpoints.append((t_rk45[-1], float(np.abs(mudrift_rk45[-1])), "RK45", lnrk45.get_color()))
@@ -560,25 +514,7 @@ def mu_deviation(
     if ps_data is not None:
         endpoints.append((t_ps[-1], float(np.abs(mudrift_ps[-1])), f"PS{ps_order_label}", lnps.get_color()))
 
-    labels = []
-    for x, y, label, color in endpoints:
-        _, fy = data_to_fig(x, y, ax, fig)
-        fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-        labels.append([fy, label, color])
-
-    labels.sort(key=lambda v: v[0])
-
-    min_gap = 0.025
-    for i in range(1, len(labels)):
-        if labels[i][0] - labels[i-1][0] < min_gap:
-            labels[i][0] = labels[i-1][0] + min_gap
-
-    for i in range(len(labels)-2, -1, -1):
-        if labels[i+1][0] - labels[i][0] < min_gap:
-            labels[i][0] = labels[i+1][0] - min_gap
-
-    for fy, label, color in labels:
-        fig.text(x_fig_label, fy, label, color=color, va="center", ha="left", fontsize=11)
+    place_endpoint_labels(fig, ax, endpoints)
 
     # === Save and Close ===
     fig_path_mu = build_filename(summary, run_folder, stem, figure_tag="mu", ext="png")

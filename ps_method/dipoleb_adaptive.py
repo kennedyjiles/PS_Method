@@ -3,15 +3,15 @@ Adaptive Power Series stepping for dipole B field.
 Hybrid approach: uses the original fast ps_integrate for easy chunks,
 falls back to per-step adaptive mode only when the series needs it.
 
-All other functions are imported unchanged from dipole_physics.
+All other functions are imported unchanged from dipoleb_physics.
 """
 
 import numpy as np
 import h5py
 import time
 import warnings
-from ps_method.dipole_physics import *          
-from ps_method.universal import npfloat
+from ps_method.dipoleb_physics import *          
+from ps_method.utils import npfloat
 
 _one   = npfloat(1.0)
 _two   = npfloat(2.0)
@@ -305,7 +305,7 @@ def run_ps_streaming_adaptive(
     """
     start_time_ps = time.time()
     n_state = 17
-    # SAVE_ROWS and n_save imported from dipole_physics
+    # SAVE_ROWS and n_save imported from dipoleb_physics
 
     # --- build initial 17-element state ---
     cur_state = np.zeros(n_state, dtype=npfloat)
@@ -368,7 +368,8 @@ def run_ps_streaming_adaptive(
             dtype=npfloat,
             chunks=(n_save, min(chunk_steps, steps_ps + 1)),
             compression="gzip",
-            compression_opts=2,
+            compression_opts=1,
+            shuffle=True,
         )
         dset_orders = ps_grp.create_dataset(
             "orders",
@@ -376,7 +377,8 @@ def run_ps_streaming_adaptive(
             maxshape=(None,),
             dtype=np.int16,
             compression="gzip",
-            compression_opts=2,
+            compression_opts=1,
+            shuffle=True,
         )
     else:
         f = None

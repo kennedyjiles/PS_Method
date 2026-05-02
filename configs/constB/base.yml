@@ -44,6 +44,11 @@ plotting:
   gyro_plot_slice: 1.5      # number of gyroperiods to slice for visual inspection
 
 # --- Output ---
+# By default, output goes to data/constb/<config-name>/.
+# Set output_root to prepend a path:
+#   output_root: "thesis/chapter3"  → thesis/chapter3/data/constb/<config-name>/
+# Leave null for the default layout.
+output_root: null  # relative path under data/ for output (without trailing slash)
 read_data: true            # scan for cached runs and load from disk
 write_data: true            # write trajectory data to h5 file
 

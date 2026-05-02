@@ -7,7 +7,7 @@ import os
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from ps_method.universal import plt_config, sparse_labels
+from ps_method.utils import plt_config, sparse_labels
 
 # === Load CSV ===
 csv_path = "proton_summary_results.csv"

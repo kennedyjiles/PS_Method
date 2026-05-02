@@ -3,9 +3,9 @@ constb_physics.py — Physics kernels for charged particle motion in a
                     uniform (constant) magnetic field.
 
 Three solvers are provided:
-  • ps_constb            – Power-series integrator with adaptive truncation order.
-  • analytical_constb    – Exact solution to system of equations.
-  • lorentz_force_constb – RHS function for scipy / RK4 integrators (dp/dt = qv × B).
+  • ps_integrate  – Power-series integrator with adaptive truncation order.
+  • analytical    – Exact solution to system of equations.
+  • lorentz_force – RHS function for scipy / RK4 integrators (dp/dt = qv × B).
 
 All functions are compiled with @maybe_njit (skipped when float128 is active).
 """
@@ -13,13 +13,13 @@ All functions are compiled with @maybe_njit (skipped when float128 is active).
 import numpy as np
 from numba import njit
 import os
-from ps_method.universal import maybe_njit, npfloat
+from ps_method.utils import maybe_njit, npfloat
 
 one = npfloat(1.0)
 
 
 @maybe_njit
-def ps_constb(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol):
+def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol):
     """Advance a charged particle through a uniform B field using a power-series method.
 
     At each time step the coefficients c[n] of position and velocity are
@@ -75,7 +75,7 @@ def ps_constb(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol)
 
 
 @maybe_njit
-def analytical_constb(tau, d, qoverm):
+def analytical(tau, d, qoverm):
     """Exact closed-form trajectory in a uniform magnetic field.
     In normalized coordinates (ω_c = |qB/m| = 1) 
 
@@ -108,7 +108,7 @@ def analytical_constb(tau, d, qoverm):
 
 
 @maybe_njit
-def lorentz_force_constb(t, d, Bfield, qoverm):
+def lorentz_force(t, d, Bfield, qoverm):
     """Right-hand side for the Lorentz equation of motion in a uniform B field.
 
     Returns d/dt [x, y, z, vx, vy, vz] 

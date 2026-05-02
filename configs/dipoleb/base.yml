@@ -51,10 +51,11 @@ plotting:
 window_time: 11.6         # time window for slice plots (normalized units)
 
 # --- Output ---
-# output_folder and run_storage are auto-derived from the config filename:
-#   output_folder → data/<config-name>/
-#   run_storage   → data/<config-name>/_rawdata/
-# Run-hash subfolders (plots, summaries) go under output_folder.
+# By default, output goes to data/dipoleb/<config-name>/.
+# Set output_root to prepend a path:
+#   output_root: "thesis/chapter3"  → thesis/chapter3/data/dipoleb/<config-name>/
+# Leave null for the default layout.
+output_root: null
 read_data: true                # scan for cached runs and load from disk
 
 # --- Special modes (leave null for normal runs) ---

@@ -84,12 +84,28 @@ def _apply_step_overrides(steps, overrides, npfloat=np.float64):
     return steps
 
 
-def _resolve_output_paths(config_name, field_prefix=""):
-    """Auto-derive output_folder and run_storage from config name."""
+def _resolve_output_paths(config_name, field_prefix="", output_root=None):
+    """Auto-derive output_folder and run_storage from config name.
+
+    Parameters
+    ----------
+    config_name  : str   — run config name (e.g. "demo")
+    field_prefix : str   — field type (e.g. "dipoleb", "constb", "hyperb")
+    output_root  : str or None — optional root path prepended to the
+                   default data/<field_prefix>/<config_name> layout.
+                   Examples:
+                       None              → data/dipoleb/demo/
+                       "thesis/chapter3" → thesis/chapter3/data/dipoleb/demo/
+    """
     if field_prefix:
-        output_folder = os.path.join("data", field_prefix, config_name)
+        data_path = os.path.join("data", field_prefix, config_name)
     else:
-        output_folder = os.path.join("data", config_name)
+        data_path = os.path.join("data", config_name)
+
+    if output_root:
+        output_folder = os.path.join(output_root, data_path)
+    else:
+        output_folder = data_path
     run_storage = os.path.join(output_folder, "_rawdata")
     os.makedirs(output_folder, exist_ok=True)
     os.makedirs(run_storage, exist_ok=True)
@@ -259,7 +275,7 @@ def load_config(conf_file):
     unknown   = run_keys - base_keys
     _known_extras = {
         "total_steps", "norm_time_override", "base_config",
-        "output_folder", "run_storage",
+        "output_folder", "run_storage", "output_root",
     }
     real_unknown = {k for k in unknown if k.split(".")[0] not in _known_extras}
     if real_unknown:
@@ -338,7 +354,10 @@ def compute_derived_dipoleb(cfg, npfloat=np.float64):
 
     mass_si = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
-    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="dipoleb")
+    output_folder, run_storage = _resolve_output_paths(
+        config_name, field_prefix="dipoleb",
+        output_root=cfg.get("output_root"),
+    )
 
     # --- Physics seeds ---
     pitch_deg   = npfloat(cfg["pitch_deg"])
@@ -511,7 +530,10 @@ def compute_derived_constb(cfg, npfloat=np.float64):
 
     mass = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
-    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="constb")
+    output_folder, run_storage = _resolve_output_paths(
+        config_name, field_prefix="constb",
+        output_root=cfg.get("output_root"),
+    )
 
     # --- Physics seeds ---
     pitch_deg   = npfloat(cfg["pitch_deg"])
@@ -631,7 +653,10 @@ def compute_derived_hyperb(cfg, npfloat=np.float64):
 
     mass_si = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
-    output_folder, run_storage = _resolve_output_paths(config_name, field_prefix="hyperb")
+    output_folder, run_storage = _resolve_output_paths(
+        config_name, field_prefix="hyperb",
+        output_root=cfg.get("output_root"),
+    )
 
     # --- Physics seeds ---
     pitch_deg    = npfloat(cfg["pitch_deg"])

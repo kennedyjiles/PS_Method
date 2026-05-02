@@ -2,7 +2,7 @@
 # Demo run — paper1 physics at reduced gyroperiods for quick test
 # ===================================================================
 
-use_float128: true         # true = use np.float128 for extended precision
+use_float128: false         # true = use np.float128 for extended precision
 
 
 particle: electron

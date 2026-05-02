@@ -1,37 +1,33 @@
 """
-universal.py — Shared utilities used by all three field drivers
-               (constb, hyperb, dipoleb).
+Shared utilities for all field drivers (constb, hyperb, dipoleb).
 
-Contents:
-  • maybe_njit          – Decorator that compiles with numba when using float64
-                          and passes through unmodified for float128.
-  • kinetic_energy /
-    compute_energy_drift /
-    extract_v           – Kinetic-energy helpers for post-processing.
-  • cauchy_sum          – Cauchy product for power-series
-                          multiplication; used by hyperb and dipoleb recurrences.
-  • rk4_fixed_step      – Classical 4th-order Runge–Kutta integrator.
-  • plt_config /
-    sparse_labels /
-    data_to_fig         – Matplotlib formatting helpers shared across plot modules.
-  • slice_solution      – Extract a time window (first or last N gyroperiods)
-                          from a solution array.
-  • setup_logger /
-    redirect_logger     – Configurable file logger for debug runs; redirect
-                          moves the log file into the run output folder once
-                          that path is known.
+Numba:
+    maybe_njit                  — compile with njit for float64, pass through for float128
+
+Solver:
+    rk4_fixed_step              — classical 4th-order Runge-Kutta integrator
+
+Plotting:
+    plt_config                  — global matplotlib rcParams (fonts, DPI)
+    sparse_labels               — log-axis tick formatter (label every other decade)
+    data_to_fig                 — data coordinates to figure-fraction coordinates
+    place_endpoint_labels       — collision-free endpoint labels at axes edge
+    setup_log_axes              — standard log-log axis formatting
+
+Slicing:
+    slice_solution_constb_hyperb — time-window extraction (returns all variables)
+    slice_solution_dipoleb       — time-window extraction (returns x, y, z or indices)
 
 IMPORTANT: modules that use @maybe_njit must be imported AFTER
-builtins.npfloat has been set, otherwise the decorator always sees the
-float64 fallback and compiles with njit even when float128 is intended.
+builtins.npfloat has been set.
 """
 
 import builtins
-import logging
 import os
 import numpy as np
 from numba import njit
 import matplotlib.pyplot as plt
+from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 
 try:
     npfloat = builtins.npfloat
@@ -61,38 +57,6 @@ two = npfloat(2.0)
 six = npfloat(6.0)
 half = npfloat(0.5)
 
-# =========================================
-# ============ Relative KE Error ==========
-# =========================================
-
-@maybe_njit
-def kinetic_energy(vx, vy, vz, m=npfloat(1.0)):
-    return half * m * (vx**two + vy**two + vz**two)
-
-@maybe_njit
-def compute_energy_drift(vx, vy, vz):
-    KE = kinetic_energy(vx, vy, vz)
-    return (KE - KE[0]) / KE[0]
-
-@maybe_njit
-def extract_v(sol):  # assumes PS output has x, y, z, vx, vy, vz as initial entries
-    return sol[3], sol[4], sol[5]
-
-# =========================================
-# ============= Cauchy Related ============
-# =========================================
-@maybe_njit
-def cauchy_sum(a, b, n):
-    """Return the n-th coefficient of the product of two power series.
-
-    Given series a and b, computes  Σ_{j=0}^{n} a[j] * b[n-j],  which is the
-    n-th term in the Cauchy (discrete convolution) product a·b.
-    """
-    result = 0.0
-    for j in range(n + 1):
-        result += a[j] * b[n - j]
-    return result
-    
 # ================================================================
 # =============== Runge Kutta 4th Order Fixed Step ===============
 # ================================================================
@@ -156,8 +120,62 @@ def data_to_fig(x, y, ax, fig):
     fx, fy = fig.transFigure.inverted().transform([[px, py]])[0]
     return fx, fy
 
-def slice_solution(t_eval, sol, window_duration, norm_time, mode="last"):
-    """Extract a time window from a solution array.
+def place_endpoint_labels(fig, ax, endpoints, fontsize=11, min_gap=0.025):
+    """Place non-overlapping endpoint labels to the right of the axes.
+
+    Parameters
+    ----------
+    fig : Figure
+    ax  : Axes
+    endpoints : list of (x_data, y_data, label_str, color)
+    fontsize  : int
+    min_gap   : float  — minimum vertical spacing in figure coords
+    """
+    ax_pos = ax.get_position()
+    x_fig_label = ax_pos.x1
+
+    labels = []
+    for x, y, label, color in endpoints:
+        _, fy = data_to_fig(x, y, ax, fig)
+        fy = min(max(fy, ax_pos.y0), ax_pos.y1)
+        labels.append([fy, label, color])
+
+    labels.sort(key=lambda v: v[0])
+
+    # Push overlapping labels apart (bottom-up)
+    for i in range(1, len(labels)):
+        if labels[i][0] - labels[i - 1][0] < min_gap:
+            labels[i][0] = labels[i - 1][0] + min_gap
+
+    # Clamp back down from the top
+    for i in range(len(labels) - 2, -1, -1):
+        if labels[i + 1][0] - labels[i][0] < min_gap:
+            labels[i][0] = labels[i + 1][0] - min_gap
+
+    for fy, label, color in labels:
+        fig.text(x_fig_label, fy, label, color=color,
+                 va="center", ha="left", fontsize=fontsize)
+
+def setup_log_axes(ax):
+    """Configure log-log axes with the standard formatting used across all plots."""
+    ax.margins(x=0.01)
+    ax.set_yscale("log")
+    ax.set_xscale("log")
+    ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
+    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
+    ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
+    ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.grid(True, which="major", linestyle="--", linewidth=0.7)
+    ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+def slice_solution_constb_hyperb(t_eval, sol, window_duration, norm_time, mode="last"):
+    """Extract a time window from a solution array (constb/hyperb drivers).
 
     Parameters
     ----------
@@ -192,59 +210,44 @@ def slice_solution(t_eval, sol, window_duration, norm_time, mode="last"):
     else:
         raise ValueError("mode must be 'first' or 'last'")
 
-# ==================================================
-# ============= Logging for Debug ==================
-# ==================================================
 
-def setup_logger(name="dipole_logger", filename="dipole_run.log", level=logging.INFO):
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
+def slice_solution_dipoleb(t, sol, window_duration, norm_time, mode="last"):
+    """Extract a time window from a dipole solution array.
 
-    for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
+    Parameters
+    ----------
+    t               : 1-D time array.
+    sol             : 2-D solution array, either (nvars, npts) or (npts, nvars).
+                      Pass None to return indices only.
+    window_duration : length of the window in normalised time units.
+    norm_time       : total simulation time (used to locate the tail end).
+    mode            : "last" returns the final `window_duration` of the run;
+                      "first" returns from t=0 up to `window_duration`.
 
-    formatter = logging.Formatter('%(levelname)s — %(message)s')
-
-    file_handler = logging.FileHandler(filename, mode="w")
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    return logger
-
-
-def redirect_logger(logger, new_path):
-    """Move a logger's file output to a new path.
-
-    Copies any content already written to the original log file, then
-    replaces the file handler so subsequent messages go to new_path.
+    Returns (x, y, z) arrays, or index array if sol is None.
     """
-    import shutil
+    if mode == "last":
+        t_end = norm_time
+        t_start = max(t[0], t_end - window_duration)
+    elif mode == "first":
+        t_start = t[0]
+        t_end = min(t[-1], t_start + window_duration)
+    else:
+        raise ValueError(f"Unknown slice mode: {mode}")
 
-    old_path = None
-    formatter = None
-    for h in logger.handlers:
-        if isinstance(h, logging.FileHandler):
-            old_path = h.baseFilename
-            formatter = h.formatter
-            break
+    idx = np.where((t >= t_start) & (t <= t_end))[0]
 
-    if old_path is None:
-        return
+    if sol is None:
+        return idx
 
-    # Flush and close the old handler
-    for h in logger.handlers[:]:
-        if isinstance(h, logging.FileHandler):
-            h.flush()
-            h.close()
-            logger.removeHandler(h)
+    if sol.shape[0] <= sol.shape[1]:
+        arr = sol
+    else:
+        arr = sol.T
 
-    # Copy early log content to the new location
-    if os.path.exists(old_path) and old_path != os.path.abspath(new_path):
-        shutil.copy2(old_path, new_path)
-        os.remove(old_path)
+    x = arr[0, idx]
+    y = arr[1, idx]
+    z = arr[2, idx]
 
-    # Attach new handler (append so copied content is preserved)
-    new_handler = logging.FileHandler(new_path, mode="a")
-    if formatter:
-        new_handler.setFormatter(formatter)
-    logger.addHandler(new_handler)
+    return x, y, z
+

@@ -48,9 +48,10 @@ def main(cfg_path, replot=False):
 
     # --- Import physics modules AFTER builtins.npfloat is set so @maybe_njit
     #     sees the correct float type (float128 skips njit, float64 compiles). ---
-    from ps_method import constb_physics as cb
-    from ps_method import universal as ul
-    from ps_method import field_plots as fplt
+    from ps_method import constb_physics as cp
+    from ps_method import utils as ul
+    from ps_method import constb_hyperb_energy_analysis as ea
+    from ps_method import constb_hyperb_plots as fplt
     from ps_method import writers as wr
 
     p = compute_derived_constb(cfg, npfloat=npfloat)
@@ -165,7 +166,7 @@ def main(cfg_path, replot=False):
 
     if USE_ANALYTICAL:
         start_time_analytical = time.time()
-        solution_analytical = cb.analytical_constb(
+        solution_analytical = cp.analytical(
             t_eval_ps,
             initial_pos_vel, qoverm)
         end_time_analytical = time.time()
@@ -205,7 +206,7 @@ def main(cfg_path, replot=False):
         if USE_RK45:
             start_time_rk45 = time.time()
             solution_rk45 = solve_ivp(
-                cb.lorentz_force_constb, (0, norm_time),
+                cp.lorentz_force, (0, norm_time),
                 initial_pos_vel, method='RK45',
                 t_eval=t_eval_rk45, args=(Bfield, qoverm),
                 rtol=rtol_rk45,
@@ -217,13 +218,13 @@ def main(cfg_path, replot=False):
             start_time_rk4 = time.time()
             rk4_dt = npfloat(t_eval_rk4[1] - t_eval_rk4[0])
             solution_rk4 = ul.rk4_fixed_step(
-                cb.lorentz_force_constb, initial_pos_vel,
+                cp.lorentz_force, initial_pos_vel,
                 rk4_dt, steps_rk4, args=(Bfield, qoverm))
             end_time_rk4 = time.time()
 
         # ===== Run PS Method ====
         start_time_ps = time.time()
-        solution_ps, orders_used = cb.ps_constb(
+        solution_ps, orders_used = cp.ps_integrate(
             PS_order, steps_ps, initial_pos_vel,
             ps_step, Bfield, qoverm, tol)
         end_time_ps = time.time()
@@ -345,15 +346,15 @@ def main(cfg_path, replot=False):
     window_duration = gyro_plot_slice * 2 * np.pi
 
     if USE_RK4:
-        rk4_x, rk4_y, rk4_z, *_ = ul.slice_solution(t_eval_rk4, solution_rk4, window_duration, norm_time)
+        rk4_x, rk4_y, rk4_z, *_ = ul.slice_solution_constb_hyperb(t_eval_rk4, solution_rk4, window_duration, norm_time)
 
     if USE_RK45:
-        rk45_x, rk45_y, rk45_z, *_ = ul.slice_solution(t_eval_rk45, solution_rk45.y, window_duration, norm_time)
+        rk45_x, rk45_y, rk45_z, *_ = ul.slice_solution_constb_hyperb(t_eval_rk45, solution_rk45.y, window_duration, norm_time)
 
     if USE_ANALYTICAL:
-        ana_x, ana_y, ana_z, *_ = ul.slice_solution(t_eval_ps, solution_analytical, window_duration, norm_time)
+        ana_x, ana_y, ana_z, *_ = ul.slice_solution_constb_hyperb(t_eval_ps, solution_analytical, window_duration, norm_time)
 
-    ps_x, ps_y, ps_z, *_ = ul.slice_solution(t_eval_ps, solution_ps, window_duration, norm_time)
+    ps_x, ps_y, ps_z, *_ = ul.slice_solution_constb_hyperb(t_eval_ps, solution_ps, window_duration, norm_time)
 
     _slice_kw = dict(
         ps_x=ps_x, ps_y=ps_y, orders_used=orders_used,
@@ -407,9 +408,9 @@ def main(cfg_path, replot=False):
         _ps_styles = [":", "-.", ":", "--", "-."]
         ps_drifts = []
         for order, color, ls in zip(_ps_orders, _ps_colors, _ps_styles):
-            sol, _ = cb.ps_constb(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
-            vx, vy, vz = ul.extract_v(sol)
-            drift = ul.compute_energy_drift(vx, vy, vz)
+            sol, _ = cp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
+            vx, vy, vz = ea.extract_v(sol)
+            drift = ea.compute_energy_drift(vx, vy, vz)
             ps_drifts.append((order, drift, color, ls))
 
         # Add the main PS (max order)
@@ -417,12 +418,12 @@ def main(cfg_path, replot=False):
             vx_rk4 = np.array(solution_rk4[3], dtype=npfloat)
             vy_rk4 = np.array(solution_rk4[4], dtype=npfloat)
             vz_rk4 = np.array(solution_rk4[5], dtype=npfloat)
-            rel_drift_rk4 = ul.compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
+            rel_drift_rk4 = ea.compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
         if USE_RK45:
             vx_rk45 = np.array(solution_rk45.y[3], dtype=npfloat)
             vy_rk45 = np.array(solution_rk45.y[4], dtype=npfloat)
             vz_rk45 = np.array(solution_rk45.y[5], dtype=npfloat)
-            rel_drift_rk45 = ul.compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
+            rel_drift_rk45 = ea.compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
 
         ps_drifts.append((orders_used.max(), rel_drift_ps, "#009E73", ":"))
 

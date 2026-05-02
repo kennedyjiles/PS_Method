@@ -14,7 +14,6 @@ Dragt (1965) diagnostic analysis for dipole trajectories.
 
 import numpy as np
 import warnings
-import os
 import h5py
 
 from ps_method.constants import RE, spdlight, B_0
@@ -589,7 +588,7 @@ def run_section(
     # Output
     fig_folder, stem,
     # Plot functions (passed in to avoid circular imports)
-    dragt_poincare_func,
+    poincare_func,
     gyrophase_mu_func,
     polar_phase_space_func,
     meridian_plane_func,
@@ -674,7 +673,7 @@ def run_section(
         cache_path, L_shell_dragt, ps_step, time_factor)
 
     # --- Plots ---
-    dragt_poincare_func(
+    poincare_func(
         run_folder=fig_folder, L_shell_dragt=L_shell_dragt, gamma=gamma,
         rho_bnd=rho_bnd, rho_dot_bnd=rho_dot_bnd,
         rho_0_sim=rho_0_sim, rho_dot_0_sim=_rho_dot_0_sim,

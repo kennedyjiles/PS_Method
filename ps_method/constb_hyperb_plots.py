@@ -7,8 +7,6 @@ Drivers call these with pre-computed data — no globals are referenced.
 Functions
 ---------
 Helpers:
-    setup_log_axes      — configure log-log axes with shared formatting
-    place_endpoint_labels — collision-free endpoint labels to the right of axes
     f64                 — float128 → float64 for matplotlib
 
 High-level plots:
@@ -26,7 +24,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import (
     LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter,
 )
-from ps_method.universal import sparse_labels, data_to_fig
+from ps_method.utils import sparse_labels, data_to_fig, setup_log_axes, place_endpoint_labels
 
 
 # =====================================================================
@@ -64,61 +62,7 @@ def f64(arr):
     return np.asarray(arr, dtype=np.float64)
 
 
-def setup_log_axes(ax):
-    """Configure log-log axes with the standard formatting used across all plots."""
-    ax.margins(x=0.01)
-    ax.set_yscale("log")
-    ax.set_xscale("log")
-    ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
-    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-    ax.yaxis.set_minor_formatter(NullFormatter())
-    ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-    ax.xaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
-    ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
-    ax.xaxis.set_minor_formatter(NullFormatter())
-    ax.grid(True, which="major", linestyle="--", linewidth=0.7)
-    ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
 
-
-def place_endpoint_labels(fig, ax, endpoints, fontsize=11, min_gap=0.025):
-    """
-    Place non-overlapping endpoint labels to the right of the axes.
-
-    Parameters
-    ----------
-    fig : Figure
-    ax  : Axes
-    endpoints : list of (x_data, y_data, label_str, color)
-    fontsize  : int
-    min_gap   : float  — minimum vertical spacing in figure coords
-    """
-    ax_pos = ax.get_position()
-    x_fig_label = ax_pos.x1
-
-    labels = []
-    for x, y, label, color in endpoints:
-        _, fy = data_to_fig(x, y, ax, fig)
-        fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-        labels.append([fy, label, color])
-
-    labels.sort(key=lambda v: v[0])
-
-    # Push overlapping labels apart (bottom-up)
-    for i in range(1, len(labels)):
-        if labels[i][0] - labels[i - 1][0] < min_gap:
-            labels[i][0] = labels[i - 1][0] + min_gap
-
-    # Clamp back down from the top
-    for i in range(len(labels) - 2, -1, -1):
-        if labels[i + 1][0] - labels[i][0] < min_gap:
-            labels[i][0] = labels[i + 1][0] - min_gap
-
-    for fy, label, color in labels:
-        fig.text(x_fig_label, fy, label, color=color,
-                 va="center", ha="left", fontsize=fontsize)
 
 
 # =====================================================================

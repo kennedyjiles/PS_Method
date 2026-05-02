@@ -16,7 +16,7 @@ Tests:
 import numpy as np
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from ps_method.dragt_physics import compute_w0_squared, compute_params
+from ps_method.dipoleb_dragt_analysis import compute_w0_squared, compute_params
 
 RE = 6378137.0; B0 = 3.12e-5; M = B0*RE**3
 q = 1.602176634e-19; m_p = 1.67262192595e-27; m_e = 9.1093837139e-31

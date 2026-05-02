@@ -1,10 +1,10 @@
 """
-hyper_physics.py — Physics kernels for charged particle motion in a
+hyperb_physics.py — Physics kernels for charged particle motion in a
                    hyperbolic-tangent magnetic field.
 
 Two solvers are provided:
-  • ps_hyperb            – Power-series integrator with adaptive truncationorder.
-  • lorentz_force_hyperb – RHS function for scipy / RK4 integrators.
+  • ps_integrate  – Power-series integrator with adaptive truncationorder.
+  • lorentz_force – RHS function for scipy / RK4 integrators.
 
 Because Bz = tanh(γy) is nonlinear, the PS method must track auxiliary
 series for sinh(γy) and cosh(γy) alongside the physical state.  The Taylor
@@ -17,38 +17,20 @@ All functions are compiled with @maybe_njit (skipped when float128 is active).
 """
 
 import numpy as np
-import builtins
-import os
-import json
-from numba import njit
-from .universal import cauchy_sum, maybe_njit, npfloat
+from .utils import maybe_njit, npfloat
 
 
 @maybe_njit
-def lorentz_force_hyperb(t, y, gamma, qoverm):
-    """Right-hand side for the Lorentz equation in a tanh magnetic field.
-
-    B = ẑ tanh(γy), so the force is (q/m)(v × B):
-        dvx/dt =  (q/m) vy Bz
-        dvy/dt = -(q/m) vx Bz
-        dvz/dt =  0
-
-    Returns d/dt [x, y, z, vx, vy, vz].
-    Used as the RHS callback for scipy.integrate.solve_ivp (RK45) and rk4_fixed_step.
-    """
-    y = y.astype(npfloat)
-    gamma = npfloat(gamma)
-
-    Bz = np.tanh(gamma * y[1])
-    ax = qoverm * y[4] * Bz
-    ay = -qoverm * y[3] * Bz
-    az = npfloat(0.0)
-
-    return np.array([y[3], y[4], y[5], ax, ay, az], dtype=npfloat)
+def cauchy_sum(a, b, n):
+    """Cauchy product: n-th coefficient of the product of two power series."""
+    result = 0.0
+    for j in range(n + 1):
+        result += a[j] * b[n - j]
+    return result
 
 
 @maybe_njit
-def ps_hyperb(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol):
+def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol):
     """Advance a charged particle through B = ẑ tanh(γy) using power-series method.
 
     The state vector has 9 components: the 6 physical variables [x, y, z, vx,
@@ -145,4 +127,29 @@ def ps_hyperb(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol
         final_coeff_matrix[Bz_aux, j] = Bz_now
 
     return final_coeff_matrix, orders_used
+
+@maybe_njit
+def lorentz_force(t, y, gamma, qoverm):
+    """Right-hand side for the Lorentz equation in a tanh magnetic field.
+
+    B = ẑ tanh(γy), so the force is (q/m)(v × B):
+        dvx/dt =  (q/m) vy Bz
+        dvy/dt = -(q/m) vx Bz
+        dvz/dt =  0
+
+    Returns d/dt [x, y, z, vx, vy, vz].
+    Used as the RHS callback for scipy.integrate.solve_ivp (RK45) and rk4_fixed_step.
+    """
+    y = y.astype(npfloat)
+    gamma = npfloat(gamma)
+
+    Bz = np.tanh(gamma * y[1])
+    ax = qoverm * y[4] * Bz
+    ay = -qoverm * y[3] * Bz
+    az = npfloat(0.0)
+
+    return np.array([y[3], y[4], y[5], ax, ay, az], dtype=npfloat)
+
+
+
 

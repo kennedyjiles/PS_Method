@@ -244,7 +244,7 @@ def save_results_h5_dipoleb(h5_path, results, summary):
                 if isinstance(val, np.ndarray):
                     grp.create_dataset(
                         name, data=val,
-                        compression="gzip", compression_opts=2)
+                        compression="gzip", compression_opts=1, shuffle=True)
                 else:
                     grp.attrs[name] = val
 
@@ -320,7 +320,7 @@ def append_results_h5_dipoleb(h5_path, results, summary):
                 if isinstance(val, np.ndarray):
                     grp.create_dataset(
                         name, data=val,
-                        compression="gzip", compression_opts=2)
+                        compression="gzip", compression_opts=1, shuffle=True)
                 else:
                     grp.attrs[name] = val
 
@@ -335,7 +335,7 @@ def save_results_h5_constb(h5_path, params, results):
                 for name, arr in results[k].items():
                     if arr is None:
                         continue
-                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=2)
+                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=1, shuffle=True)
 
         meta = results.get("meta", {})
         gmeta = f.create_group("meta")
@@ -384,7 +384,7 @@ def save_results_h5_hyperb(h5_path, params, results):
                 for name, arr in results[k].items():
                     if arr is None:
                         continue
-                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=2)
+                    grp.create_dataset(name, data=arr, compression="gzip", compression_opts=1, shuffle=True)
 
         meta = results.get("meta", {})
         gmeta = f.create_group("meta")

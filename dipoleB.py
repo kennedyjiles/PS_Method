@@ -62,12 +62,16 @@ def main(cfg_path, replot=False):
     plt.rcParams['agg.path.chunksize'] = 100000 if USE_FLOAT128 else 1000
 
     # --- Import physics modules AFTER builtins.npfloat is set ---
-    from ps_method import dipole_physics as dp
-    from ps_method import dragt_physics as df
-    from ps_method import dipole_plots as dplt
+    from ps_method import dipoleb_physics as dp
+    from ps_method import dipoleb_moment_analysis as mp
+    from ps_method import dipoleb_bouncedrift_analysis as bd
+    from ps_method import dipoleb_dragt_analysis as df
+    from ps_method import dipoleb_energy_analysis as ea
+    from ps_method import dipoleb_debug as dbg
+    from ps_method import dipoleb_plots as dplt
     from ps_method import writers as wr
-    from ps_method.universal import rk4_fixed_step, plt_config, setup_logger, redirect_logger
-    from ps_method.dipole_adaptive import run_ps_streaming_adaptive
+    from ps_method import utils as ul
+    from ps_method.dipoleb_adaptive import run_ps_streaming_adaptive
 
     # B_0 reassigned in cache-reload branches — provide unconditional initial
     # assignment so reads before the conditional branches don't hit UnboundLocalError.
@@ -75,7 +79,7 @@ def main(cfg_path, replot=False):
 
     DEBUG = False # WARNING: Adds computation time. TURN OFF FOR LONG RUNS
     if DEBUG:
-        logger = setup_logger("dipole_logger", "dipoleb.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
+        logger = dbg.setup_logger("dipole_logger", "dipoleb.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
         tracemalloc.start()
 
     params     = compute_derived(cfg, npfloat=npfloat)
@@ -160,7 +164,7 @@ def main(cfg_path, replot=False):
     # === Misc Odds and Ends ===
     PS_CHUNKING = True     # PS data always streamed to disk in chunks (no in-memory option)
     WRITE_DATA  = True     # always write h5 (required by chunked streaming)
-    plt_config(scale=1)                        # config file for setting plot sizes and fonts (from Dr. W)
+    ul.plt_config(scale=1)                        # config file for setting plot sizes and fonts (from Dr. W)
     os.makedirs(run_storage, exist_ok=True)    # ensures file for the storagae for raw data exists
     os.makedirs(output_folder, exist_ok=True)  # ensures file for the storagae for images and text file exists
     plt.ioff()                                 # turn off interactive mode for plots
@@ -343,7 +347,7 @@ def main(cfg_path, replot=False):
     y0_ps[14, 0] = -3 * x0 * z0 * r5inv
     y0_ps[15, 0] = -3 * y0 * z0 * r5inv
     y0_ps[16, 0] = -(3*z0*z0 - r2) * r5inv
-    mu0_ps = dp.compute_mu_ps(y0_ps, mass)[0]
+    mu0_ps = mp.compute_mu_ps(y0_ps, mass)[0]
 
 
     # === Build parameter tracer & check cache ===
@@ -520,7 +524,7 @@ def main(cfg_path, replot=False):
             if USE_RK4:
                 steps_rk4 = int(norm_time / rk4_step)
                 start_time_rk4 = time.time()
-                solution_rk4 = rk4_fixed_step(
+                solution_rk4 = ul.rk4_fixed_step(
                     dp.lorentz_force,
                     initial_pos_vel,
                     rk4_step,
@@ -712,7 +716,7 @@ def main(cfg_path, replot=False):
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for load/write h5: {peak / 1024**2:.2f} MB\n")
-        logger.debug(dp.check_time_grids(
+        logger.debug(dbg.check_time_grids(
         norm_time=norm_time,
         ps_step=ps_step if USE_PS else None,
         steps_ps=steps_ps if USE_PS else None,
@@ -825,7 +829,7 @@ def main(cfg_path, replot=False):
     # --- Redirect debug log to run folder ---
     if DEBUG:
         _log_path = os.path.join(run_folder, f"{stem}.log")
-        redirect_logger(logger, _log_path)
+        dbg.redirect_logger(logger, _log_path)
         print(f"Debug log redirected to {_log_path}\n")
 
     # --- Copy config YAML to run folder (with git hash) ---
@@ -922,7 +926,7 @@ def main(cfg_path, replot=False):
     # =====================================================
     if DEBUG: tracemalloc.start()
 
-    _ke = dp.compute_ke_errors(
+    _ke = ea.compute_ke_errors(
         T_gyro, n_ps=n_ps, MAX_PLOT_POINTS=MAX_PLOT_POINTS_local,
         USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
         PS_decimate=PS_decimate, E0_ps=E0_ps,
@@ -980,7 +984,7 @@ def main(cfg_path, replot=False):
         ps_step=ps_step, time_factor=time_factor,
         CACHE_VELOCITY_RTOL=CACHE_VELOCITY_RTOL,
         fig_folder=fig_folder, stem=stem,
-        dragt_poincare_func=dplt.dragt_poincare,
+        poincare_func=dplt.poincare,
         gyrophase_mu_func=dplt.gyrophase_mu,
         polar_phase_space_func=dplt.polar_phase_space,
         meridian_plane_func=dplt.meridian_plane,
@@ -991,7 +995,7 @@ def main(cfg_path, replot=False):
     # PLOT RELATIVE ERROR OF CANONICAL ANGULAR MOMENTUM
     # =========================================================
 
-    pphi = dp.compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
+    pphi = ea.compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
     dplt.pphi_error(fig_folder, pphi["t_gyro"], pphi["rel_error_log"],
                     pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"], stem=stem)
 
@@ -1004,25 +1008,25 @@ def main(cfg_path, replot=False):
     mu_rk4_result = mu_rkg_result = mu_rk45_result = mu_ps_result = None
 
     if USE_RK4:
-        mu_rk4_result = dp.compute_mu_deviation_rk(
+        mu_rk4_result = mp.compute_mu_deviation_rk(
             solution_rk4, steps_rk4, rk4_step,
             N_GYRO, N_STEPS_PER_GYRO_rk4, mass, gyro_window, time_factor,
             solver_type="rk4")
 
     if USE_RKG:
-        mu_rkg_result = dp.compute_mu_deviation_rk(
+        mu_rkg_result = mp.compute_mu_deviation_rk(
             solution_rkg, steps_rkg, rkg_step,
             N_GYRO, N_STEPS_PER_GYRO_rkg, mass, gyro_window, time_factor,
             solver_type="rkg")
 
     if USE_RK45:
-        mu_rk45_result = dp.compute_mu_deviation_rk(
+        mu_rk45_result = mp.compute_mu_deviation_rk(
             y_rk45_common, steps_ps, ps_step,
             N_GYRO, N_STEPS_PER_GYRO_ps, mass, gyro_window, time_factor,
             solver_type="rk45")
 
     if USE_PS:
-        mu_ps_result = dp.compute_mu_deviation_ps(
+        mu_ps_result = mp.compute_mu_deviation_ps(
             cache_path, steps_ps, ps_step, PS_decimate,
             N_GYRO, N_STEPS_PER_GYRO_ps, mass, mu0_ps,
             gyro_window, time_factor, max_plot_points=MAX_PLOT_POINTS_local)
@@ -1072,8 +1076,8 @@ def main(cfg_path, replot=False):
         v_eps = npfloat(velocity_epsilon_scale) * v_tau
         user_min_gap = max(min_gap_steps, int(gap_gyro_fraction * T_gyro / ps_step))
 
-        bounce_state = dp.init_bounce_stream_state()
-        drift_state  = dp.init_drift_stream_state()
+        bounce_state = bd.init_bounce_stream_state()
+        drift_state  = bd.init_drift_stream_state()
 
         ps_store_stride = PS_decimate if PS_decimate > 1 else 1
         dt_store = ps_step * ps_store_stride
@@ -1088,7 +1092,7 @@ def main(cfg_path, replot=False):
                 y_chunk = wr.expand_h5_to_full(ps_y[:, j0_chunk:j1])
                 t_chunk = dt_store * np.arange(j0_chunk, j1, dtype=npfloat)
 
-                dp.process_bounce_and_drift_chunk(
+                bd.process_bounce_and_drift_chunk(
                     y_chunk=y_chunk,
                     t_chunk=t_chunk,
                     bounce_state=bounce_state,
@@ -1098,7 +1102,7 @@ def main(cfg_path, replot=False):
                 )
 
         # --- Bounce ---
-        bounce_stats = dp.bounce_summary(
+        bounce_stats = bd.bounce_summary(
             bounce_state["crossing_times"],
             time_scale_sec=tau_time
         )
@@ -1122,7 +1126,7 @@ def main(cfg_path, replot=False):
         }
 
         # --- Drift ---
-        drift_stats = dp.finalize_drift_stream(
+        drift_stats = bd.finalize_drift_stream(
             drift_state,
             time_scale_sec=tau_time,
             min_phase_rad=user_min_phase,
@@ -1179,8 +1183,8 @@ def main(cfg_path, replot=False):
         y_rk45_common=y_rk45_common if USE_RK45 else None,
         ps_store_stride=ps_store_stride if USE_PS else 1,
         npfloat=npfloat,
-        compute_mu_ps=dp.compute_mu_ps,
-        compute_mu_rk=dp.compute_mu_rk,
+        compute_mu_ps=mp.compute_mu_ps,
+        compute_mu_rk=mp.compute_mu_rk,
         vector_potential=dp.vector_potential,
     )
 

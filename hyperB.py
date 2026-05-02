@@ -46,9 +46,10 @@ def main(cfg_path, replot=False):
 
     # --- Import physics modules AFTER builtins.npfloat is set so @maybe_njit
     #     sees the correct float type (float128 skips njit, float64 compiles). ---
-    from ps_method import hyper_physics as hp
-    from ps_method import universal as ul
-    from ps_method import field_plots as fplt
+    from ps_method import hyperb_physics as hp
+    from ps_method import utils as ul
+    from ps_method import constb_hyperb_energy_analysis as ea
+    from ps_method import constb_hyperb_plots as fplt
     from ps_method import writers as wr
 
     p = compute_derived_hyperb(cfg, npfloat=npfloat)
@@ -194,7 +195,7 @@ def main(cfg_path, replot=False):
         if USE_RK45:
             start_time_rk45 = time.time()
             solution_rk45 = solve_ivp(
-                hp.lorentz_force_hyperb, (0, norm_time),
+                hp.lorentz_force, (0, norm_time),
                 initial_pos_vel,method='RK45',
                 t_eval=t_eval_rk45, args=(gamma,qoverm),
                 rtol= rtol_rk45,
@@ -206,13 +207,13 @@ def main(cfg_path, replot=False):
             start_time_rk4 = time.time()
             rk4_dt = npfloat(t_eval_rk4[1] - t_eval_rk4[0])
             solution_rk4 = ul.rk4_fixed_step(
-                hp.lorentz_force_hyperb, initial_pos_vel,
+                hp.lorentz_force, initial_pos_vel,
                 rk4_dt, steps_rk4, args=(gamma,qoverm))
             end_time_rk4 = time.time()
 
         # ===== Run PS Method ====
         start_time_ps = time.time()
-        solution_ps, orders_used = hp.ps_hyperb(
+        solution_ps, orders_used = hp.ps_integrate(
             PS_order, steps_ps,
             initial_pos_vel, ps_step, gamma,
             qoverm, tol)
@@ -331,12 +332,12 @@ def main(cfg_path, replot=False):
     # ==========================================
     # ================ Slicing  ================
     # ==========================================
-    ps_x, ps_y, ps_z = ul.slice_solution(t_eval_ps, solution_ps, window_duration, norm_time, mode=slice_mode)[:3]
+    ps_x, ps_y, ps_z = ul.slice_solution_constb_hyperb(t_eval_ps, solution_ps, window_duration, norm_time, mode=slice_mode)[:3]
 
     if USE_RK45:
-        rk45_x, rk45_y, rk45_z = ul.slice_solution(t_eval_rk45, solution_rk45.y, window_duration, norm_time, mode=slice_mode)[:3]
+        rk45_x, rk45_y, rk45_z = ul.slice_solution_constb_hyperb(t_eval_rk45, solution_rk45.y, window_duration, norm_time, mode=slice_mode)[:3]
     if USE_RK4:
-        rk4_x, rk4_y, rk4_z = ul.slice_solution(t_eval_rk4, solution_rk4, window_duration, norm_time, mode=slice_mode)[:3]
+        rk4_x, rk4_y, rk4_z = ul.slice_solution_constb_hyperb(t_eval_rk4, solution_rk4, window_duration, norm_time, mode=slice_mode)[:3]
 
     # =====================================================
     # ================ 2D & 3D Trajectory Slices ==========
@@ -392,9 +393,9 @@ def main(cfg_path, replot=False):
         _ps_styles = ["--", ":", "-.", "--", "-"]
         ps_drifts = []
         for order, color, ls in zip(_ps_orders, _ps_colors, _ps_styles):
-            sol, _ = hp.ps_hyperb(order, steps_ps, initial_pos_vel, ps_step, gamma, qoverm, tol)
-            vx, vy, vz = ul.extract_v(sol)
-            drift = ul.compute_energy_drift(vx, vy, vz)
+            sol, _ = hp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, gamma, qoverm, tol)
+            vx, vy, vz = ea.extract_v(sol)
+            drift = ea.compute_energy_drift(vx, vy, vz)
             ps_drifts.append((order, drift, color, ls))
 
         # Recompute RK drifts for the multi-PS plot
@@ -402,12 +403,12 @@ def main(cfg_path, replot=False):
             vx_rk4 = np.array(solution_rk4[3], dtype=npfloat)
             vy_rk4 = np.array(solution_rk4[4], dtype=npfloat)
             vz_rk4 = np.array(solution_rk4[5], dtype=npfloat)
-            rel_drift_rk4 = ul.compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
+            rel_drift_rk4 = ea.compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
         if USE_RK45:
             vx_rk45 = np.array(solution_rk45.y[3], dtype=npfloat)
             vy_rk45 = np.array(solution_rk45.y[4], dtype=npfloat)
             vz_rk45 = np.array(solution_rk45.y[5], dtype=npfloat)
-            rel_drift_rk45 = ul.compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
+            rel_drift_rk45 = ea.compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
 
         # Add main PS (max order)
         ps_drifts.append((orders_used.max(), rel_drift_ps, "#009E73", ":"))

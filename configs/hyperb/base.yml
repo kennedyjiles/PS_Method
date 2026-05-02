@@ -52,6 +52,11 @@ plotting:
   energy_xlim_left: null     # left x-limit for multi-PS energy plot, or null for auto
 
 # --- Output ---
+# By default, output goes to data/hyperb/<config-name>/.
+# Set output_root to prepend a path:
+#   output_root: "thesis/chapter3"  → thesis/chapter3/data/hyperb/<config-name>/
+# Leave null for the default layout.
+output_root: null
 read_data: true             # scan for cached runs and load from disk
 write_data: true            # write trajectory data to h5 file
 
