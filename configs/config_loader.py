@@ -63,6 +63,22 @@ def _resolve_mass(particle_name):
         raise ValueError(f"Unknown particle type: {particle_name!r}. Use 'proton' or 'electron'.")
 
 
+def _resolve_ext_path(root, path):
+    """Resolve an external h5 file path, joining with root if relative.
+
+    If *path* is None/empty, returns None.
+    If *path* is already absolute, returns it unchanged.
+    Otherwise, joins *root* (which may be None/empty) with *path*.
+    """
+    if not path:
+        return None
+    if os.path.isabs(path):
+        return path
+    if root:
+        return os.path.join(root, path)
+    return path
+
+
 def _compute_step_sizes(T_gyro, steps_per_gyro, round_decimals=1):
     """Compute step sizes from T_gyro and a {solver: N} dict.
 
@@ -408,11 +424,11 @@ def compute_derived_dipoleb(cfg, npfloat=np.float64):
     # --- External h5 ---
     use_ext = cfg.get("use_external_h5", {})
     ext     = cfg.get("external_h5", {})
-    _default_ext = "outputs/outputs_rawdata/"
-    ext_ps   = ext.get("ps")   or _default_ext
-    ext_rk4  = ext.get("rk4")  or _default_ext
-    ext_rk45 = ext.get("rk45") or _default_ext
-    ext_rkg  = ext.get("rkg")  or _default_ext
+    ext_root = ext.get("root", "") if isinstance(ext, dict) else ""
+    ext_ps   = _resolve_ext_path(ext_root, ext.get("ps"))
+    ext_rk4  = _resolve_ext_path(ext_root, ext.get("rk4"))
+    ext_rk45 = _resolve_ext_path(ext_root, ext.get("rk45"))
+    ext_rkg  = _resolve_ext_path(ext_root, ext.get("rkg"))
 
     # --- Solvers ---
     solvers = cfg.get("solvers", {})
@@ -572,6 +588,12 @@ def compute_derived_constb(cfg, npfloat=np.float64):
     # --- Solvers ---
     solvers = cfg.get("solvers", {})
 
+    # --- External h5 ---
+    ext = cfg.get("external_h5", {}) or {}
+    ext_root = ext.get("root", "")
+    ext_a = ext.get("a", {}) or {}
+    ext_b = ext.get("b", {}) or {}
+
     params = {
         # Toggles
         "READ_DATA":       cfg.get("read_data", False),
@@ -587,12 +609,12 @@ def compute_derived_constb(cfg, npfloat=np.float64):
         "gyro_plot_slice": plot_cfg.get("gyro_plot_slice", 1.5),
 
         # External h5
-        "USE_EXTERNAL_H5":  cfg.get("use_external_h5", False),
-        "USE_EXTERNAL_H5b": cfg.get("use_external_h5b", False),
-        "external_h5":      cfg.get("external_h5"),
-        "external_h5b":     cfg.get("external_h5b"),
-        "PS_order_ext":     cfg.get("external_h5_ps_order"),
-        "PS_order_extb":    cfg.get("external_h5b_ps_order"),
+        "USE_EXTERNAL_H5":  ext_a.get("enabled", False),
+        "USE_EXTERNAL_H5b": ext_b.get("enabled", False),
+        "external_h5":      _resolve_ext_path(ext_root, ext_a.get("file")),
+        "external_h5b":     _resolve_ext_path(ext_root, ext_b.get("file")),
+        "PS_order_ext":     ext_a.get("ps_order"),
+        "PS_order_extb":    ext_b.get("ps_order"),
 
         # Output
         "output_folder": output_folder,
@@ -698,6 +720,12 @@ def compute_derived_hyperb(cfg, npfloat=np.float64):
     # --- Solvers ---
     solvers = cfg.get("solvers", {})
 
+    # --- External h5 ---
+    ext = cfg.get("external_h5", {}) or {}
+    ext_root = ext.get("root", "")
+    ext_a = ext.get("a", {}) or {}
+    ext_b = ext.get("b", {}) or {}
+
     params = {
         # Toggles
         "READ_DATA":       cfg.get("read_data", True),
@@ -718,12 +746,12 @@ def compute_derived_hyperb(cfg, npfloat=np.float64):
         "energy_xlim_left":   plot_cfg.get("energy_xlim_left"),
 
         # External h5
-        "USE_EXTERNAL_H5":  cfg.get("use_external_h5", False),
-        "USE_EXTERNAL_H5b": cfg.get("use_external_h5b", False),
-        "external_h5":      cfg.get("external_h5"),
-        "external_h5b":     cfg.get("external_h5b"),
-        "PS_order_ext":     cfg.get("external_h5_ps_order"),
-        "PS_order_extb":    cfg.get("external_h5b_ps_order"),
+        "USE_EXTERNAL_H5":  ext_a.get("enabled", False),
+        "USE_EXTERNAL_H5b": ext_b.get("enabled", False),
+        "external_h5":      _resolve_ext_path(ext_root, ext_a.get("file")),
+        "external_h5b":     _resolve_ext_path(ext_root, ext_b.get("file")),
+        "PS_order_ext":     ext_a.get("ps_order"),
+        "PS_order_extb":    ext_b.get("ps_order"),
 
         # Output
         "output_folder": output_folder,

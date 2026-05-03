@@ -312,12 +312,9 @@ def main(cfg_path, replot=False):
     # ================================================================
     # ==================KE Error Plot Over time Only =================
     # ================================================================
-    time_factor = 1.0 / T_gyro  # convert normalized time to gyroperiods
-
     v_ps = solution_ps[3:6]
     E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
     rel_drift_ps = (E_ps - E_ps[0]) / E_ps[0]
-    final_ps = rel_drift_ps[-1]
 
     rel_drift_rk4 = None
     rel_drift_rk45 = None

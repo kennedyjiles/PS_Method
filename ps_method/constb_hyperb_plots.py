@@ -10,21 +10,18 @@ Helpers:
     f64                 — float128 → float64 for matplotlib
 
 High-level plots:
-    full_2d        — full-run 2D trajectory
-    full_3d        — full-run 3D trajectory
-    ke_error       — single KE error over time (RK4, RK45, PS max order)
-    slice_2d       — sliced 2D trajectory (last/first N gyroperiods)
-    slice_3d       — sliced 3D trajectory
-    ke_error_multi — multi-PS-order KE error comparison
+    full_2d          — full-run 2D trajectory
+    full_3d          — full-run 3D trajectory
+    ke_error         — single KE error over time (RK4, RK45, PS max order)
+    slice_2d         — sliced 2D trajectory (last/first N gyroperiods)
+    slice_3d         — sliced 3D trajectory
+    ke_error_multi   — multi-PS-order KE error comparison
     trajectory_error — position error vs analytical (constb only)
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.ticker import (
-    LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter,
-)
-from ps_method.utils import sparse_labels, data_to_fig, setup_log_axes, place_endpoint_labels
+from ps_method import utils as ul
 
 
 # =====================================================================
@@ -62,9 +59,6 @@ def f64(arr):
     return np.asarray(arr, dtype=np.float64)
 
 
-
-
-
 # =====================================================================
 # Full 2D trajectory
 # =====================================================================
@@ -81,15 +75,15 @@ def full_2d(
 
     if use_analytical and solution_analytical is not None:
         ax.plot(solution_analytical[0], solution_analytical[1],
-                color=COLORS["analytical"], linestyle="-", linewidth=0.3, label="Exact")
+                color=COLORS["analytical"], linestyle=LINESTYLES["analytical"], linewidth=0.3, label="Exact")
     if use_rk45 and solution_rk45 is not None:
         ax.plot(solution_rk45.y[0], solution_rk45.y[1],
-                color=COLORS["rk45"], linestyle="--", label="RK45")
+                color=COLORS["rk45"], linestyle=LINESTYLES["rk45"], label="RK45")
     if use_rk4 and solution_rk4 is not None:
         ax.plot(solution_rk4[0], solution_rk4[1],
-                color=COLORS["rk4"], linestyle="-.", linewidth=0.75, label="RK4")
+                color=COLORS["rk4"], linestyle=LINESTYLES["rk4"], linewidth=0.75, label="RK4")
     ax.plot(solution_ps[0], solution_ps[1],
-            color=COLORS["ps"], linestyle=":", label=f"PS{orders_used.max()}")
+            color=COLORS["ps"], linestyle=LINESTYLES["ps"], label=f"PS{orders_used.max()}")
 
     ax.set_xlabel(r"$x$")
     ax.set_ylabel(r"$y$")
@@ -122,15 +116,15 @@ def full_3d(
 
     if use_analytical and solution_analytical is not None:
         ax.plot(solution_analytical[0], solution_analytical[1], solution_analytical[2],
-                color=COLORS["analytical"], linestyle="-", linewidth=0.3, label="Exact")
+                color=COLORS["analytical"], linestyle=LINESTYLES["analytical"], linewidth=0.3, label="Exact")
     if use_rk45 and solution_rk45 is not None:
         ax.plot(solution_rk45.y[0], solution_rk45.y[1], solution_rk45.y[2],
-                label="RK45", color=COLORS["rk45"], linestyle="-.")
+                label="RK45", color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if use_rk4 and solution_rk4 is not None:
         ax.plot(solution_rk4[0], solution_rk4[1], solution_rk4[2],
-                label="RK4", color=COLORS["rk4"], linestyle="-.")
+                label="RK4", color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     ax.plot(solution_ps[0], solution_ps[1], solution_ps[2],
-            label=f"PS{orders_used.max()}", color=COLORS["ps"], linestyle=":")
+            label=f"PS{orders_used.max()}", color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlabel(r"$x$")
     ax.set_ylabel(r"$y$")
@@ -161,7 +155,7 @@ def ke_error(
 ):
     """Relative kinetic energy error over time (log-log)."""
     if time_factor is None:
-        time_factor = 1.0 / (2.0 * np.pi)   # default T_gyro for constb/hyperb
+        time_factor = 1.0 / (2.0 * np.pi)   
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -169,16 +163,16 @@ def ke_error(
     if use_rk45 and rel_drift_rk45 is not None:
         lines["rk45"], = ax.semilogy(
             f64(t_eval_rk45) * time_factor, np.abs(f64(rel_drift_rk45)),
-            color=COLORS["rk45"], linestyle="--")
+            color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if use_rk4 and rel_drift_rk4 is not None:
         lines["rk4"], = ax.semilogy(
             f64(t_eval_rk4) * time_factor, np.abs(f64(rel_drift_rk4)),
-            color=COLORS["rk4"], linestyle="-.")
+            color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     lines["ps"], = ax.semilogy(
         f64(t_eval_ps) * time_factor, np.abs(f64(rel_drift_ps)),
-        color=COLORS["ps"], linestyle=":")
+        color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
-    setup_log_axes(ax)
+    ul.setup_log_axes(ax)
     ax.set_xlabel(r"$\tau/T$")
     ax.set_ylabel(r"$|\Delta E|/E_0$")
     if use_plot_titles:
@@ -195,7 +189,7 @@ def ke_error(
     endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]),
                        f"PS{orders_used.max()}", lines["ps"].get_color()))
 
-    place_endpoint_labels(fig, ax, endpoints)
+    ul.place_endpoint_labels(fig, ax, endpoints)
 
     fig.canvas.draw()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
@@ -222,12 +216,12 @@ def slice_2d(
 
     if use_analytical and ana_x is not None:
         ax.plot(ana_x, ana_y, label="Exact", color=COLORS["analytical"],
-                linestyle="-", linewidth=0.4)
+                linestyle=LINESTYLES["analytical"], linewidth=0.4)
     if use_rk45 and rk45_x is not None:
-        ax.plot(rk45_x, rk45_y, label="RK45", color=COLORS["rk45"], linestyle="--")
+        ax.plot(rk45_x, rk45_y, label="RK45", color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if use_rk4 and rk4_x is not None and not skip_rk4_slice:
-        ax.plot(rk4_x, rk4_y, label="RK4", color=COLORS["rk4"], linestyle="-.")
-    ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", color=COLORS["ps"], linestyle=":")
+        ax.plot(rk4_x, rk4_y, label="RK4", color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+    ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlabel(r"$x$")
     ax.set_ylabel(r"$y$")
@@ -269,15 +263,15 @@ def slice_3d(
 
     if use_analytical and ana_x is not None:
         ax.plot(ana_x, ana_y, ana_z, label="Exact",
-                color=COLORS["analytical"], linestyle="-", linewidth=0.4)
+                color=COLORS["analytical"], linestyle=LINESTYLES["analytical"], linewidth=0.4)
     if use_rk45 and rk45_x is not None:
         ax.plot(rk45_x, rk45_y, rk45_z, label="RK45",
-                color=COLORS["rk45"], linestyle="--")
+                color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if use_rk4 and rk4_x is not None:
         ax.plot(rk4_x, rk4_y, rk4_z, label="RK4",
-                color=COLORS["rk4"], linestyle="-.")
+                color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     ax.plot(ps_x, ps_y, ps_z, label=f"PS{orders_used.max()}",
-            color=COLORS["ps"], linestyle=":")
+            color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlabel(r"$x$")
     ax.set_ylabel(r"$y$")
@@ -329,12 +323,12 @@ def ke_error_multi(
         lines["rk45"], = ax.semilogy(
             f64(t_eval_rk45[1:]) * time_factor,
             np.abs(f64(rel_drift_rk45[1:])),
-            linestyle="--", color=COLORS["rk45"])
+            linestyle=LINESTYLES["rk45"], color=COLORS["rk45"])
     if use_rk4 and rel_drift_rk4 is not None:
         lines["rk4"], = ax.semilogy(
             f64(t_eval_rk4[1:]) * time_factor,
             np.abs(f64(rel_drift_rk4[1:])),
-            linestyle="-.", color=COLORS["rk4"])
+            linestyle=LINESTYLES["rk4"], color=COLORS["rk4"])
 
     # PS orders
     ps_lines = {}
@@ -362,7 +356,7 @@ def ke_error_multi(
             np.abs(f64(drift_extb[1:])),
             linestyle="-", linewidth=1.2, color=COLORS["extb"])
 
-    setup_log_axes(ax)
+    ul.setup_log_axes(ax)
     if energy_xlim_left is not None:
         ax.set_xlim(left=energy_xlim_left)
     ax.set_xlabel(r"$\tau/T$")
@@ -394,7 +388,7 @@ def ke_error_multi(
         endpoints.append((t_extb[-1], np.abs(drift_extb[-1]),
                           f"PS{ps_order_extb}*", lines["extb"].get_color()))
 
-    place_endpoint_labels(fig, ax, endpoints)
+    ul.place_endpoint_labels(fig, ax, endpoints)
 
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
@@ -429,20 +423,20 @@ def trajectory_error(
     if use_rk45 and rel_err_rk45 is not None:
         lines["rk45"], = ax.semilogy(
             f64(t_eval_rk45) * time_factor, np.abs(f64(rel_err_rk45)),
-            label="RK45", linestyle="--", color=COLORS["rk45"])
+            label="RK45", linestyle=LINESTYLES["rk45"], color=COLORS["rk45"])
     if use_rk4 and rel_err_rk4 is not None:
         lines["rk4"], = ax.semilogy(
             f64(t_eval_rk4) * time_factor, np.abs(f64(rel_err_rk4)),
-            label="RK4", linestyle="-.", color=COLORS["rk4"])
+            label="RK4", linestyle=LINESTYLES["rk4"], color=COLORS["rk4"])
     lines["ps"], = ax.semilogy(
         f64(t_eval_ps) * time_factor, np.abs(f64(rel_err_ps)),
-        label=f"PS{orders_used.max()}", linestyle=":", color=COLORS["ps"])
+        label=f"PS{orders_used.max()}", linestyle=LINESTYLES["ps"], color=COLORS["ps"])
     if use_external_h5 and rel_err_ext is not None:
         lines["ext"], = ax.semilogy(
             f64(t_ext) * time_factor, np.abs(f64(rel_err_ext)),
             label=f"PS{ps_order_ext}*", linestyle="-.", color=COLORS["ext"])
 
-    setup_log_axes(ax)
+    ul.setup_log_axes(ax)
     if not use_full_plot:
         ax.tick_params(axis="x", which="both", labelbottom=False)
     else:
@@ -469,7 +463,7 @@ def trajectory_error(
     endpoints.append((t_eval_ps[-1], np.abs(rel_err_ps[-1]),
                       f"PS{orders_used.max()}", lines["ps"].get_color()))
 
-    place_endpoint_labels(fig, ax, endpoints)
+    ul.place_endpoint_labels(fig, ax, endpoints)
 
     fig.canvas.draw()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")

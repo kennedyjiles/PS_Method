@@ -285,6 +285,13 @@ def main(cfg_path, replot=False):
                         steps_ps = steps_ps_actual
                         norm_time = steps_ps * ps_step
                         gyroperiods = norm_time / (2.0 * np.pi)
+                        # Append trim label to stem so figures don't overwrite originals
+                        trim_end = cached["ps"].attrs.get("trim_end", "trimmed")
+                        trim_window = cached["ps"].attrs.get("trim_window_s", "")
+                        if trim_window:
+                            stem = f"{stem}_{trim_end}_{trim_window}s"
+                        else:
+                            stem = f"{stem}_{trim_end}"
 
                 # === RK4 ===
                 if USE_RK4 and "rk4" in cached:
@@ -458,6 +465,12 @@ def main(cfg_path, replot=False):
                         steps_ps = steps_ps_actual
                         norm_time = steps_ps * ps_step
                         gyroperiods = norm_time / (2.0 * np.pi)
+                        trim_end = cached["ps"].attrs.get("trim_end", "trimmed")
+                        trim_window = cached["ps"].attrs.get("trim_window_s", "")
+                        if trim_window:
+                            stem = f"{stem}_{trim_end}_{trim_window}s"
+                        else:
+                            stem = f"{stem}_{trim_end}"
 
                 # === RK4 ===
                 if USE_RK4 and "rk4" in cached:

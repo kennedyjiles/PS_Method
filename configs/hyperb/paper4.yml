@@ -36,7 +36,11 @@ plotting:
 read_data: true
 write_data: true
 
-use_external_h5: false
-use_external_h5b: false
-external_h5: null
-external_h5b: null
+external_h5:
+  root: null
+  a:
+    enabled: false
+    file: null
+  b:
+    enabled: false
+    file: null

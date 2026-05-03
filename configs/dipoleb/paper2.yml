@@ -23,4 +23,5 @@ plotting:
 window_time: 11.6
 
 external_h5:
-  ps: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_5f2698f4194712e0.h5"
+  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
+  ps: "run_5f2698f4194712e0.h5"

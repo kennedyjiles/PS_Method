@@ -30,9 +30,13 @@ plotting:
 read_data: true
 write_data: true
 
-use_external_h5: false
-use_external_h5b: false
-external_h5: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_8d05c562f1137db2.h5"
-external_h5b: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_2e64db24ec88cb7e.h5"
-external_h5_ps_order: 25
-external_h5b_ps_order: 10
+external_h5:
+  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
+  a:
+    enabled: false
+    file: "run_8d05c562f1137db2.h5"
+    ps_order: 25
+  b:
+    enabled: false
+    file: "run_2e64db24ec88cb7e.h5"
+    ps_order: 10

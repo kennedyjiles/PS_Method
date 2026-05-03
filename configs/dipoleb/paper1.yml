@@ -29,5 +29,6 @@ plotting:
 window_time: 6209.0
 
 external_h5:
-  ps:  "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_1f911496e90d7c4b.h5"
-  rkg: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata/run_ae2d63d764f68d00.h5"
+  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
+  ps:  "run_1f911496e90d7c4b.h5"
+  rkg: "run_ae2d63d764f68d00.h5"

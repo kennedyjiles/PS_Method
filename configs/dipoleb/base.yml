@@ -122,6 +122,7 @@ bounce_drift:
   gap_gyro_fraction: 0.5           # fraction of T_gyro/ps_step for min gap fallback
 
 # --- External H5 files (for energy comparison across runs) ---
+# Set root once; file paths are joined with root unless already absolute.
 # Set use_external_h5 to true AND provide the path to enable comparison.
 # Having a path alone does NOT enable it — the toggle must be explicit.
 use_external_h5:
@@ -131,7 +132,8 @@ use_external_h5:
   rkg:  false
 
 external_h5:
-  ps:   "outputs/outputs_rawdata/"
-  rk4:  "outputs/outputs_rawdata/"
-  rk45: "outputs/outputs_rawdata/"
-  rkg:  "outputs/outputs_rawdata/"
+  root: null
+  ps:   null
+  rk4:  null
+  rk45: null
+  rkg:  null

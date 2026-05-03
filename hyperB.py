@@ -144,9 +144,7 @@ def main(cfg_path, replot=False):
     if abs(vy_initial) < tol: vy_initial = npfloat(0.0)
     if abs(vz_initial) < tol: vz_initial = npfloat(0.0)
 
-
     initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)
-
 
     # === Ensures that Total Time Elapsed is the Same ===
     steps_ps = int(round(norm_time / ps_step))
@@ -154,12 +152,12 @@ def main(cfg_path, replot=False):
     t_eval_ps = np.linspace(0, norm_time, steps_ps + 1, dtype=npfloat)
 
     if USE_RK4:
-        steps_rk4 = int(norm_time / rk4_step)
+        steps_rk4 = int(round(norm_time / rk4_step))
         t_eval_rk4 = np.linspace(0, norm_time, steps_rk4 + 1, dtype=npfloat)
 
     if USE_RK45:
-        steps_rk45 = steps_rk4          # for plotting points
-        t_eval_rk45 = np.float64(t_eval_rk4)      # for plots, it's doing it's own thing mostly
+        steps_rk45 = steps_ps           # for plotting consistency
+        t_eval_rk45 = np.float64(t_eval_ps)
 
     # === Build parameter signature & check cache ===
     params = wr.get_run_params_hyperb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
@@ -196,10 +194,10 @@ def main(cfg_path, replot=False):
             start_time_rk45 = time.time()
             solution_rk45 = solve_ivp(
                 hp.lorentz_force, (0, norm_time),
-                initial_pos_vel,method='RK45',
-                t_eval=t_eval_rk45, args=(gamma,qoverm),
-                rtol= rtol_rk45,
-                atol= atol_rk45)
+                initial_pos_vel, method='RK45',
+                t_eval=t_eval_rk45, args=(gamma, qoverm),
+                rtol=rtol_rk45,
+                atol=atol_rk45)
             end_time_rk45 = time.time()
 
         # ====== Run RK4 ======
@@ -301,12 +299,9 @@ def main(cfg_path, replot=False):
     # =====================================================
     # ============== KE Relative Error Plot ===============
     # =====================================================
-    time_factor = 1.0 / T_gyro  # convert normalized time to gyroperiods
-
     v_ps = solution_ps[3:6]
     E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
-    rel_drift_ps = np.abs(E_ps - E_ps[0]) / E_ps[0]
-    final_ps = rel_drift_ps[-1]
+    rel_drift_ps = (E_ps - E_ps[0]) / E_ps[0]
 
     rel_drift_rk4 = None
     rel_drift_rk45 = None
@@ -314,12 +309,12 @@ def main(cfg_path, replot=False):
     if USE_RK4:
         v_rk4 = solution_rk4[3:6]
         E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
-        rel_drift_rk4 = np.abs(E_rk4 - E_rk4[0]) / E_rk4[0]
+        rel_drift_rk4 = (E_rk4 - E_rk4[0]) / E_rk4[0]
 
     if USE_RK45:
         v_rk45 = solution_rk45.y[3:6]
         E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-        rel_drift_rk45 = np.abs(E_rk45 - E_rk45[0]) / E_rk45[0]
+        rel_drift_rk45 = (E_rk45 - E_rk45[0]) / E_rk45[0]
 
     fplt.ke_error(
         f"{_base}_KEerror.png",

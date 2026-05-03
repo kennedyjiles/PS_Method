@@ -689,11 +689,21 @@ def run_section(
     _dragt = analysis_chunked(
         cache_path, L_shell_dragt, ps_step, time_factor)
 
+    # --- For trimmed files the h5 first column may have z != 0, so the
+    #     "launch" marker would be off the z=0 surface of section.
+    #     Use the first equatorial crossing instead. ---
+    _launch_rho = rho_0_sim
+    _launch_rho_dot = _rho_dot_0_sim
+    with h5py.File(cache_path, "r") as _h5_trim_check:
+        if "trim_end" in _h5_trim_check["ps"].attrs and _dragt["crossings"] is not None:
+            _launch_rho = float(_dragt["crossings"][0][0]) * L_shell_dragt  # back to sim units
+            _launch_rho_dot = float(_dragt["crossings"][1][0]) / L_shell_dragt**2  # back to sim units
+
     # --- Plots ---
     poincare_func(
         run_folder=fig_folder, L_shell_dragt=L_shell_dragt, gamma=gamma,
         rho_bnd=rho_bnd, rho_dot_bnd=rho_dot_bnd,
-        rho_0_sim=rho_0_sim, rho_dot_0_sim=_rho_dot_0_sim,
+        rho_0_sim=_launch_rho, rho_dot_0_sim=_launch_rho_dot,
         crossings=_dragt["crossings"], stem=stem,
     )
 

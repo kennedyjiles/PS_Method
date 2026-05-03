@@ -89,9 +89,14 @@ step_overrides:
 round_decimals: 3           # decimal places for step size rounding
 
 # --- External H5 files (for energy comparison across runs) ---
-use_external_h5: false
-use_external_h5b: false
-external_h5: null
-external_h5b: null
-external_h5_ps_order: null      # PS order label for external h5 plot legend
-external_h5b_ps_order: null     # PS order label for external h5b plot legend
+# Set root once; file paths are joined with root unless already absolute.
+external_h5:
+  root: null
+  a:
+    enabled: false
+    file: null
+    ps_order: null
+  b:
+    enabled: false
+    file: null
+    ps_order: null

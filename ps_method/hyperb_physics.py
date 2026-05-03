@@ -1,41 +1,35 @@
 """
-hyperb_physics.py — Physics kernels for charged particle motion in a
+hyperb_physics.py — Physics functions for charged particle motion in a
                    hyperbolic-tangent magnetic field.
 
-Two solvers are provided:
-  • ps_integrate  – Power-series integrator with adaptive truncationorder.
+Three functions are provided:
+  • cauchy_sum    – Cauchy product helper for power-series coefficient multiplication.
+  • ps_integrate  – Power-series integrator with adaptive truncation order.
   • lorentz_force – RHS function for scipy / RK4 integrators.
-
-Because Bz = tanh(γy) is nonlinear, the PS method must track auxiliary
-series for sinh(γy) and cosh(γy) alongside the physical state.  The Taylor
-coefficients of Bz are recovered at each order via a division recurrence
-(Cauchy product inversion of cosh into sinh).  After each full step the
-auxiliary variables are "tethered" — recomputed from the exact functions —
-to prevent drift.
 
 All functions are compiled with @maybe_njit (skipped when float128 is active).
 """
 
 import numpy as np
-from .utils import maybe_njit, npfloat
+from . import utils as ul
 
 
-@maybe_njit
+@ul.maybe_njit
 def cauchy_sum(a, b, n):
     """Cauchy product: n-th coefficient of the product of two power series."""
-    result = 0.0
+    result = ul.npfloat(0.0)
     for j in range(n + 1):
         result += a[j] * b[n - j]
     return result
 
 
-@maybe_njit
+@ul.maybe_njit
 def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol):
     """Advance a charged particle through B = ẑ tanh(γy) using power-series method.
 
     The state vector has 9 components: the 6 physical variables [x, y, z, vx,
     vy, vz] plus 3 auxiliary series [sinh(γy), cosh(γy), Bz = tanh(γy)] needed
-    to express the nonlinear field as a Taylor series.
+    to express the nonlinear field as a power series.
 
     After each step, sinh, cosh, and Bz are tethered (recomputed from exact
     functions of the updated y position, see paper) to prevent auxiliary drift.
@@ -46,7 +40,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
     orders_used        : (steps_ps+1,) int array — PS order used per step.
     """
     n_total = 9
-    final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=npfloat)
+    final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
 
     # Named indices for readability
     x, y, z = 0, 1, 2
@@ -62,18 +56,19 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
     final_coeff_matrix[cosh_aux, 0] = np.cosh(gamma * y0)
     final_coeff_matrix[Bz_aux, 0]   = np.tanh(gamma * y0)
 
-    Bz_series   = np.zeros(PS_order, dtype=npfloat)
+    Bz_series   = np.zeros(PS_order, dtype=ul.npfloat)
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
-    oip1        = 1.0 / (1.0 + np.arange(PS_order))    # 1/(i+1) lookup table
+    _one        = ul.npfloat(1.0)
+    oip1        = _one / (_one + np.arange(PS_order))   # 1/(i+1) lookup table
 
     for j in range(1, steps_ps + 1):
-        c = np.zeros((n_total, PS_order + 1), dtype=npfloat)
+        c = np.zeros((n_total, PS_order + 1), dtype=ul.npfloat)
         c[:, 0] = final_coeff_matrix[:, j - 1]         # seed with end of previous step
 
-        sum_terms = np.zeros(n_total, dtype=npfloat)
+        sum_terms = np.zeros(n_total, dtype=ul.npfloat)
         power     = timedelta
         i         = 0
-        max_contrib = tol + npfloat(1.0)
+        max_contrib = tol + ul.npfloat(1.0)
 
         while max_contrib > tol and i < PS_order:
 
@@ -108,8 +103,8 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
             if not np.isfinite(c[:, i+1]).all():
                 break
 
-            sum_terms += c[:, i+1] * power             
-            max_contrib = np.abs(c[:, i+1]).max()      
+            sum_terms += c[:, i+1] * power
+            max_contrib = np.abs(c[:, i+1]).max()
             power *= timedelta
             i += 1
 
@@ -128,8 +123,8 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
 
     return final_coeff_matrix, orders_used
 
-@maybe_njit
-def lorentz_force(t, y, gamma, qoverm):
+@ul.maybe_njit
+def lorentz_force(t, d, gamma, qoverm):
     """Right-hand side for the Lorentz equation in a tanh magnetic field.
 
     B = ẑ tanh(γy), so the force is (q/m)(v × B):
@@ -140,16 +135,15 @@ def lorentz_force(t, y, gamma, qoverm):
     Returns d/dt [x, y, z, vx, vy, vz].
     Used as the RHS callback for scipy.integrate.solve_ivp (RK45) and rk4_fixed_step.
     """
-    y = y.astype(npfloat)
-    gamma = npfloat(gamma)
+    d = d.astype(ul.npfloat)
+    gamma = ul.npfloat(gamma)
 
-    Bz = np.tanh(gamma * y[1])
-    ax = qoverm * y[4] * Bz
-    ay = -qoverm * y[3] * Bz
-    az = npfloat(0.0)
+    x, y, z, vx, vy, vz = d
 
-    return np.array([y[3], y[4], y[5], ax, ay, az], dtype=npfloat)
+    Bz = np.tanh(gamma * y)
+    ax =  qoverm * vy * Bz
+    ay = -qoverm * vx * Bz
+    az = ul.npfloat(0.0)
 
-
-
+    return np.array([vx, vy, vz, ax, ay, az], dtype=ul.npfloat)
 
