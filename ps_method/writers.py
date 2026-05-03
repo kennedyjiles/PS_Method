@@ -1,23 +1,38 @@
 """
-Consolidated I/O for all field types (dipoleb, constb, hyperb).
+writers.py — Consolidated I/O for all field types (dipoleb, constb, hyperb).
 
 Shared utilities:
-    _to_serializable, run_hash, h5_path_for,
-    build_filename, summarize, summarize_to_file, write_dict
+    _to_serializable   — JSON encoder for numpy scalars (including float128)
+    run_hash           — deterministic SHA-256 hash of a run-parameter dict
+    h5_path_for        — build cache file path from params + output folder
+    build_filename     — assemble a figure/output path from stem + tag
+    summarize          — min/max/mean/final statistics for an error array
+    summarize_to_file  — write summarize() output to an open file handle
+    write_dict         — pretty-print a nested dict to a file handle
 
 Field-specific run-param builders:
-    get_run_params_dipoleb, get_run_params_constb, get_run_params_hyperb
+    get_run_params_dipoleb — parameter signature dict for dipole runs
+    get_run_params_constb  — parameter signature dict for constant-B runs
+    get_run_params_hyperb  — parameter signature dict for hyperbolic-B runs
 
 Field-specific save/load:
-    save_results_h5_dipoleb / load_results_h5_dipoleb / append_results_h5_dipoleb
-    save_results_h5_constb  / load_results_h5_constb
-    save_results_h5_hyperb  / load_results_h5_hyperb
+    save_results_h5_dipoleb   — write dipole results to h5
+    load_results_h5_dipoleb   — read dipole results from h5
+    append_results_h5_dipoleb — append solver group to existing dipole h5
+    save_results_h5_constb    — write constant-B results to h5
+    load_results_h5_constb    — read constant-B results from h5
+    save_results_h5_hyperb    — write hyperbolic-B results to h5
+    load_results_h5_hyperb    — read hyperbolic-B results from h5
 
 Field-specific summaries:
-    summary_txt_dipoleb, summary_txt_constb, summary_txt_hyperb
+    summary_txt_dipoleb — human-readable run summary for dipole
+    summary_txt_constb  — human-readable run summary for constant-B
+    summary_txt_hyperb  — human-readable run summary for hyperbolic-B
 
 Dipoleb-only extras:
-    expand_h5_to_full, _make_tail_mask, master_csv
+    expand_h5_to_full — expand compact 9-row h5 array to full 17-row state
+    _make_tail_mask   — boolean mask for tail-end sampling of a time series
+    master_csv        — aggregate multi-run results into a CSV table
 """
 
 import os

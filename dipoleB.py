@@ -895,7 +895,7 @@ def main(cfg_path, replot=False):
     # ========================================================================
     if DEBUG: tracemalloc.start()
 
-    _sw = dplt.prepare_slice_window(
+    _sw = ul.prepare_slice_dipoleb(
         slice_mode, window_duration, norm_time,
         USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
         steps_ps=steps_ps, PS_decimate=PS_decimate,

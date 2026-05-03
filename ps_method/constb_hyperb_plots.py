@@ -6,9 +6,6 @@ Drivers call these with pre-computed data — no globals are referenced.
 
 Functions
 ---------
-Helpers:
-    f64                 — float128 → float64 for matplotlib
-
 High-level plots:
     full_2d          — full-run 2D trajectory
     full_3d          — full-run 3D trajectory
@@ -49,20 +46,9 @@ LINESTYLES = {
     "analytical": "-",
 }
 
-
 # =====================================================================
-# Shared helpers
+# ================ Full 2D Trajectory Plot ============================
 # =====================================================================
-
-def f64(arr):
-    """Convert array to float64 (needed when plotting float128 data)."""
-    return np.asarray(arr, dtype=np.float64)
-
-
-# =====================================================================
-# Full 2D trajectory
-# =====================================================================
-
 def full_2d(
     save_path, *,
     solution_ps, orders_used,
@@ -100,9 +86,8 @@ def full_2d(
 
 
 # =====================================================================
-# Full 3D trajectory
+# ================ Full 3D Trajectory Plot ============================
 # =====================================================================
-
 def full_3d(
     save_path, *,
     solution_ps, orders_used,
@@ -140,9 +125,8 @@ def full_3d(
 
 
 # =====================================================================
-# KE error — single run (RK4, RK45, PS max order)
+# ================ KE Relative Error Plot =============================
 # =====================================================================
-
 def ke_error(
     save_path, *,
     t_eval_ps, rel_drift_ps, orders_used,
@@ -162,14 +146,14 @@ def ke_error(
     lines = {}
     if use_rk45 and rel_drift_rk45 is not None:
         lines["rk45"], = ax.semilogy(
-            f64(t_eval_rk45) * time_factor, np.abs(f64(rel_drift_rk45)),
+            ul.f64(t_eval_rk45) * time_factor, np.abs(ul.f64(rel_drift_rk45)),
             color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if use_rk4 and rel_drift_rk4 is not None:
         lines["rk4"], = ax.semilogy(
-            f64(t_eval_rk4) * time_factor, np.abs(f64(rel_drift_rk4)),
+            ul.f64(t_eval_rk4) * time_factor, np.abs(ul.f64(rel_drift_rk4)),
             color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     lines["ps"], = ax.semilogy(
-        f64(t_eval_ps) * time_factor, np.abs(f64(rel_drift_ps)),
+        ul.f64(t_eval_ps) * time_factor, np.abs(ul.f64(rel_drift_ps)),
         color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ul.setup_log_axes(ax)
@@ -197,9 +181,8 @@ def ke_error(
 
 
 # =====================================================================
-# 2D trajectory slice
+# ================ 2D Trajectory Slice ================================
 # =====================================================================
-
 def slice_2d(
     save_path, *,
     ps_x, ps_y, orders_used,
@@ -243,11 +226,9 @@ def slice_2d(
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
-
 # =====================================================================
-# 3D trajectory slice
+# ================ 3D Trajectory Slice ================================
 # =====================================================================
-
 def slice_3d(
     save_path, *,
     ps_x, ps_y, ps_z, orders_used,
@@ -284,11 +265,9 @@ def slice_3d(
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
-
 # =====================================================================
-# Multi-PS-order KE error comparison
+# ================ Multi-Order KE Error Comparison ====================
 # =====================================================================
-
 def ke_error_multi(
     save_path, *,
     t_eval_ps, orders_used,
@@ -321,13 +300,13 @@ def ke_error_multi(
     # RK methods
     if use_rk45 and rel_drift_rk45 is not None:
         lines["rk45"], = ax.semilogy(
-            f64(t_eval_rk45[1:]) * time_factor,
-            np.abs(f64(rel_drift_rk45[1:])),
+            ul.f64(t_eval_rk45[1:]) * time_factor,
+            np.abs(ul.f64(rel_drift_rk45[1:])),
             linestyle=LINESTYLES["rk45"], color=COLORS["rk45"])
     if use_rk4 and rel_drift_rk4 is not None:
         lines["rk4"], = ax.semilogy(
-            f64(t_eval_rk4[1:]) * time_factor,
-            np.abs(f64(rel_drift_rk4[1:])),
+            ul.f64(t_eval_rk4[1:]) * time_factor,
+            np.abs(ul.f64(rel_drift_rk4[1:])),
             linestyle=LINESTYLES["rk4"], color=COLORS["rk4"])
 
     # PS orders
@@ -335,8 +314,8 @@ def ke_error_multi(
     for order, drift, color, ls in ps_drifts:
         key = f"ps{order}"
         ps_lines[key], = ax.semilogy(
-            f64(t_eval_ps[1:]) * time_factor,
-            np.abs(f64(drift[1:])),
+            ul.f64(t_eval_ps[1:]) * time_factor,
+            np.abs(ul.f64(drift[1:])),
             linestyle=ls, color=color)
 
     # Main PS (max order) — last entry in ps_drifts is assumed to be the main one
@@ -346,14 +325,14 @@ def ke_error_multi(
     if ext_data is not None:
         t_ext, drift_ext, ps_order_ext = ext_data
         lines["ext"], = ax.semilogy(
-            f64(t_ext[1:]) * time_factor,
-            np.abs(f64(drift_ext[1:])),
+            ul.f64(t_ext[1:]) * time_factor,
+            np.abs(ul.f64(drift_ext[1:])),
             linestyle="-.", linewidth=1.2, color=COLORS["ext"])
     if extb_data is not None:
         t_extb, drift_extb, ps_order_extb = extb_data
         lines["extb"], = ax.semilogy(
-            f64(t_extb[1:]) * time_factor,
-            np.abs(f64(drift_extb[1:])),
+            ul.f64(t_extb[1:]) * time_factor,
+            np.abs(ul.f64(drift_extb[1:])),
             linestyle="-", linewidth=1.2, color=COLORS["extb"])
 
     ul.setup_log_axes(ax)
@@ -395,9 +374,8 @@ def ke_error_multi(
 
 
 # =====================================================================
-# Trajectory error vs analytical solution (constb only)
+# ================ Trajectory Error vs Analytical (constb only) =======
 # =====================================================================
-
 def trajectory_error(
     save_path, *,
     t_eval_ps, rel_err_ps, orders_used,
@@ -415,25 +393,25 @@ def trajectory_error(
     Only applicable for constb where an exact solution exists.
     """
     if time_factor is None:
-        time_factor = 1.0 / (2.0 * np.pi)   # default T_gyro for constb/hyperb
+        time_factor = 1.0 / (2.0 * np.pi)  
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
     lines = {}
     if use_rk45 and rel_err_rk45 is not None:
         lines["rk45"], = ax.semilogy(
-            f64(t_eval_rk45) * time_factor, np.abs(f64(rel_err_rk45)),
+            ul.f64(t_eval_rk45) * time_factor, np.abs(ul.f64(rel_err_rk45)),
             label="RK45", linestyle=LINESTYLES["rk45"], color=COLORS["rk45"])
     if use_rk4 and rel_err_rk4 is not None:
         lines["rk4"], = ax.semilogy(
-            f64(t_eval_rk4) * time_factor, np.abs(f64(rel_err_rk4)),
+            ul.f64(t_eval_rk4) * time_factor, np.abs(ul.f64(rel_err_rk4)),
             label="RK4", linestyle=LINESTYLES["rk4"], color=COLORS["rk4"])
     lines["ps"], = ax.semilogy(
-        f64(t_eval_ps) * time_factor, np.abs(f64(rel_err_ps)),
+        ul.f64(t_eval_ps) * time_factor, np.abs(ul.f64(rel_err_ps)),
         label=f"PS{orders_used.max()}", linestyle=LINESTYLES["ps"], color=COLORS["ps"])
     if use_external_h5 and rel_err_ext is not None:
         lines["ext"], = ax.semilogy(
-            f64(t_ext) * time_factor, np.abs(f64(rel_err_ext)),
+            ul.f64(t_ext) * time_factor, np.abs(ul.f64(rel_err_ext)),
             label=f"PS{ps_order_ext}*", linestyle="-.", color=COLORS["ext"])
 
     ul.setup_log_axes(ax)

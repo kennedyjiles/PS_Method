@@ -8,15 +8,20 @@ Solver:
     rk4_fixed_step              — classical 4th-order Runge-Kutta integrator
 
 Plotting:
+    f64                         — float128 → float64 conversion for matplotlib
     plt_config                  — global matplotlib rcParams (fonts, DPI)
     sparse_labels               — log-axis tick formatter (label every other decade)
     data_to_fig                 — data coordinates to figure-fraction coordinates
     place_endpoint_labels       — collision-free endpoint labels at axes edge
     setup_log_axes              — standard log-log axis formatting
 
-Slicing:
-    slice_solution_constb_hyperb — time-window extraction (returns all variables)
-    slice_solution_dipoleb       — time-window extraction (returns x, y, z or indices)
+Slicing (single-solution):
+    slice_solution_constb_hyperb — extract a time window from one solution array (constb/hyperb)
+    slice_solution_dipoleb       — extract a time window from one solution array (dipoleb)
+
+Slicing (multi-solver orchestration, dipoleb only):
+    prepare_slice_dipoleb        — calls slice_solution_dipoleb for each enabled solver,
+                                   reads PS data from h5 cache, returns one dict ready to plot
 
 IMPORTANT: modules that use @maybe_njit must be imported AFTER
 builtins.npfloat has been set.
@@ -84,6 +89,10 @@ def rk4_fixed_step(func, d0, dt, steps, args=()):
 # =======================================================
 # ============== Misc Assists for Plotting ==============
 # =======================================================
+def f64(arr):
+    """Convert array to float64 (needed when plotting float128 data)."""
+    return np.asarray(arr, dtype=np.float64)
+
 def plt_config(scale=1):
     plt.rcParams['font.family'] = 'Times New Roman'
     plt.rcParams['mathtext.fontset'] = 'cm' # Computer Modern
@@ -251,3 +260,102 @@ def slice_solution_dipoleb(t, sol, window_duration, norm_time, mode="last"):
 
     return x, y, z
 
+
+def prepare_slice_dipoleb(
+    slice_mode, window_duration, norm_time,
+    # PS-specific
+    USE_PS=False, cache_path=None, ps_step=None, steps_ps=None,
+    PS_decimate=1, MAX_PLOT_POINTS=1_000_000,
+    # RK4
+    USE_RK4=False, solution_rk4=None, rk4_step=None,
+    # RKG
+    USE_RKG=False, solution_rkg=None, rkg_step=None,
+    # RK45
+    USE_RK45=False, y_rk45_common=None,
+):
+    """Compute time-windowed trajectory slices for each enabled solver (dipoleb).
+
+    Reads PS data directly from the h5 cache (to avoid loading the full array)
+    and delegates RK slicing to slice_solution_dipoleb.
+
+    Returns a dict with keys like ``ps_x_slice``, ``rk4_y_slice``, etc.
+    Missing solvers get ``None`` values.
+    """
+    import h5py
+
+    if slice_mode == "first":
+        t_start = 0.0
+        t_end   = min(norm_time, window_duration)
+    elif slice_mode == "last":
+        t_end   = norm_time
+        t_start = max(0.0, norm_time - window_duration)
+    else:
+        raise ValueError("slice_mode must be 'first' or 'last'")
+
+    result = dict(
+        ps_x_slice=None, ps_y_slice=None, ps_z_slice=None,
+        rk4_x_slice=None, rk4_y_slice=None, rk4_z_slice=None,
+        rkg_x_slice=None, rkg_y_slice=None, rkg_z_slice=None,
+        rk45_x_slice=None, rk45_y_slice=None, rk45_z_slice=None,
+        ps_order_label=None,
+    )
+
+    # ---------- PS ----------
+    if USE_PS:
+        i0_phys = int(np.floor(t_start / ps_step))
+        i1_phys = int(np.floor(t_end   / ps_step))
+        i0_phys = max(0, i0_phys)
+        i1_phys = min(i1_phys, steps_ps)
+        if i1_phys < i0_phys:
+            raise RuntimeError("Empty PS slice window")
+
+        ps_store_stride = PS_decimate if PS_decimate > 1 else 1
+        j0 = int(np.ceil(i0_phys / ps_store_stride))
+        j1 = int(np.floor(i1_phys / ps_store_stride))
+        if j1 < j0:
+            raise RuntimeError("Empty PS stored slice window")
+
+        with h5py.File(cache_path, "r") as ps_h5:
+            ps_grp = ps_h5["ps"]
+            ps_y   = ps_grp["y"]
+            n_store = ps_y.shape[1]
+            j0 = max(0, min(j0, n_store - 1))
+            j1 = max(0, min(j1, n_store - 1))
+            if j1 < j0:
+                raise RuntimeError("Empty PS stored slice")
+            y_win = ps_y[:, j0:j1+1]
+            result["ps_order_label"] = int(ps_grp.attrs["max_ps"])
+
+        plot_stride = max(1, y_win.shape[1] // MAX_PLOT_POINTS)
+        result["ps_x_slice"] = y_win[0, ::plot_stride]
+        result["ps_y_slice"] = y_win[1, ::plot_stride]
+        result["ps_z_slice"] = y_win[2, ::plot_stride]
+
+    # ---------- RK4 ----------
+    if USE_RK4:
+        t_rk4 = rk4_step * np.arange(solution_rk4.shape[1], dtype=npfloat)
+        rk4_x, rk4_y, rk4_z = slice_solution_dipoleb(
+            t_rk4, solution_rk4, window_duration, norm_time, mode=slice_mode)[:3]
+        result["rk4_x_slice"] = rk4_x
+        result["rk4_y_slice"] = rk4_y
+        result["rk4_z_slice"] = rk4_z
+
+    # ---------- RKG ----------
+    if USE_RKG:
+        t_rkg = rkg_step * np.arange(solution_rkg.shape[0], dtype=npfloat)
+        rkg_x, rkg_y, rkg_z = slice_solution_dipoleb(
+            t_rkg, solution_rkg.T, window_duration, norm_time, mode=slice_mode)[:3]
+        result["rkg_x_slice"] = rkg_x
+        result["rkg_y_slice"] = rkg_y
+        result["rkg_z_slice"] = rkg_z
+
+    # ---------- RK45 ----------
+    if USE_RK45:
+        t_rk45 = ps_step * np.arange(y_rk45_common.shape[1], dtype=npfloat)
+        rk45_x, rk45_y, rk45_z = slice_solution_dipoleb(
+            t_rk45, y_rk45_common, window_duration, norm_time, mode=slice_mode)[:3]
+        result["rk45_x_slice"] = rk45_x
+        result["rk45_y_slice"] = rk45_y
+        result["rk45_z_slice"] = rk45_z
+
+    return result

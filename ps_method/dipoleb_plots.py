@@ -13,7 +13,7 @@ Trajectory:
 Energy:
     ke_error             — kinetic energy relative error vs time
 
-Dragt:
+Dragt (plotted in his non-dimensionless units):
     poincare             — Poincaré surface of section (rho vs rho_dot)
     gyrophase_mu         — gyrophase vs magnetic moment at crossings
     polar_phase_space    — polar phase space (mu, gyrophase)
@@ -23,19 +23,32 @@ Dragt:
 Conservation:
     pphi_error           — P_phi relative error vs time
     mu_deviation         — magnetic moment deviation vs time
-
-Helpers:
-    prepare_slice_window — extract a time window for slice plots
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
-from ps_method.writers import build_filename
-from ps_method.utils import sparse_labels, data_to_fig, setup_log_axes, place_endpoint_labels, npfloat
-from ps_method.utils import slice_solution_dipoleb as slice_solution
-import h5py
+from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter
+from ps_method import writers as wr
+from ps_method import utils as ul
 import os
+
+# =====================================================
+# Centralized solver styling — change once, applies everywhere
+# =====================================================
+COLORS = {
+    "rk45": "#E69F00",   # orange
+    "rk4":  "#CC79A7",   # reddish purple
+    "rkg":  "#CC0000",   # red
+    "ps":   "#009E73",   # bluish green
+}
+
+LINESTYLES = {
+    "rk45": "--",
+    "rk4":  "-.",
+    "rkg":  "-.",
+    "ps":   ":",
+}
+
 
 # =====================================================
 # ============== Full 2D Trajectory Plot ==============
@@ -50,13 +63,13 @@ def full_2d(
     fig, ax = plt.subplots(figsize=(10, 8))
 
     if USE_RK45:
-        ax.plot(solution_rk45.y[0], solution_rk45.y[1], label='RK45', color='#E69F00', linestyle='--')
+        ax.plot(solution_rk45.y[0], solution_rk45.y[1], label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if USE_RK4:
-        ax.plot(solution_rk4[0], solution_rk4[1], label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
+        ax.plot(solution_rk4[0], solution_rk4[1], label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     if USE_RKG:
-        ax.plot(solution_rkg[:, 0], solution_rkg[:, 1], label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
+        ax.plot(solution_rkg[:, 0], solution_rkg[:, 1], label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
     if USE_PS:
-        ax.plot(x_ps_plot, y_ps_plot, label=f"PS{ps_order_label}", alpha=0.7, color="#009E73", linestyle=":")
+        ax.plot(x_ps_plot, y_ps_plot, label=f"PS{ps_order_label}", alpha=0.7, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
@@ -71,7 +84,7 @@ def full_2d(
     ax.grid(True)
 
     fig.canvas.draw()
-    fig_path = build_filename(summary, run_folder, stem, figure_tag="2D", ext="png")
+    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="2D", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -90,13 +103,13 @@ def full_3d(
     ax = fig.add_subplot(111, projection='3d')
 
     if USE_RK45:
-        ax.plot(solution_rk45.y[0], solution_rk45.y[1], solution_rk45.y[2], label="RK45", color='#E69F00', linestyle='--')
+        ax.plot(solution_rk45.y[0], solution_rk45.y[1], solution_rk45.y[2], label="RK45", color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if USE_RK4:
-        ax.plot(solution_rk4[0], solution_rk4[1], solution_rk4[2], label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
+        ax.plot(solution_rk4[0], solution_rk4[1], solution_rk4[2], label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     if USE_RKG:
-        ax.plot(solution_rkg[:, 0], solution_rkg[:, 1], solution_rkg[:, 2], label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
+        ax.plot(solution_rkg[:, 0], solution_rkg[:, 1], solution_rkg[:, 2], label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
     if USE_PS:
-        ax.plot(x_ps_plot, y_ps_plot, z_ps_plot, label=f"PS{ps_order_label}", alpha=0.7, color="#009E73", linestyle=":")
+        ax.plot(x_ps_plot, y_ps_plot, z_ps_plot, label=f"PS{ps_order_label}", alpha=0.7, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlim(-plotbounds, plotbounds)
     ax.set_ylim(-plotbounds, plotbounds)
@@ -110,7 +123,7 @@ def full_3d(
     ax.legend(loc="upper right")
 
     fig.canvas.draw()
-    fig_path = build_filename(summary, run_folder, stem, figure_tag="3D", ext="png")
+    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="3D", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -130,13 +143,13 @@ def slice_2d(
     fig, ax = plt.subplots(figsize=(10, 7))
 
     if USE_RK45:
-        ax.plot(rk45_x_slice, rk45_y_slice, label='RK45', color='#E69F00', linestyle='--')
+        ax.plot(rk45_x_slice, rk45_y_slice, label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if USE_RK4:
-        ax.plot(rk4_x_slice, rk4_y_slice, label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
+        ax.plot(rk4_x_slice, rk4_y_slice, label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     if USE_RKG:
-        ax.plot(rkg_x_slice, rkg_y_slice, label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
+        ax.plot(rkg_x_slice, rkg_y_slice, label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
     if USE_PS:
-        ax.plot(ps_x_slice, ps_y_slice, label=f"PS{ps_order_label}", alpha=0.8, color='#009E73', linestyle=':')
+        ax.plot(ps_x_slice, ps_y_slice, label=f"PS{ps_order_label}", alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
@@ -147,7 +160,7 @@ def slice_2d(
     ax.grid(True)
 
     fig.canvas.draw()
-    fig_path = build_filename(summary, run_folder, stem, figure_tag="2Dslice", ext="png")
+    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="2Dslice", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -168,13 +181,13 @@ def slice_3d(
     ax = fig.add_subplot(111, projection='3d')
 
     if USE_RK45:
-        ax.plot(rk45_x_slice, rk45_y_slice, rk45_z_slice, label='RK45', color='#E69F00', linestyle='--')
+        ax.plot(rk45_x_slice, rk45_y_slice, rk45_z_slice, label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if USE_RK4:
-        ax.plot(rk4_x_slice, rk4_y_slice, rk4_z_slice, label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
+        ax.plot(rk4_x_slice, rk4_y_slice, rk4_z_slice, label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     if USE_RKG:
-        ax.plot(rkg_x_slice, rkg_y_slice, rkg_z_slice, label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
+        ax.plot(rkg_x_slice, rkg_y_slice, rkg_z_slice, label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
     if USE_PS:
-        ax.plot(ps_x_slice, ps_y_slice, ps_z_slice, label=f"PS{ps_order_label}", alpha=0.8, color='#009E73', linestyle=':')
+        ax.plot(ps_x_slice, ps_y_slice, ps_z_slice, label=f"PS{ps_order_label}", alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlim(-plotbounds, plotbounds)
     ax.set_ylim(-plotbounds, plotbounds)
@@ -190,7 +203,7 @@ def slice_3d(
     ax.legend(loc="upper right")
 
     fig.canvas.draw()
-    fig_path = build_filename(summary, run_folder, stem, figure_tag="3Dslice", ext="png")
+    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="3Dslice", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -218,41 +231,41 @@ def ke_error(
     if ext_ps_data is not None:
         t_ext, drift_ext, _ = ext_ps_data
         ln_ext, = ax.semilogy(t_ext[1:] * time_factor, np.abs(drift_ext[1:]),
-                              alpha=0.8, color='#009E73', linestyle=':')
+                              alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
     if ext_rk4_data is not None:
         t_ext, drift_ext = ext_rk4_data
         ln_extrk4, = ax.semilogy(t_ext[1:] * time_factor, np.abs(drift_ext[1:]),
-                                 alpha=0.8, color='#CC79A7', linestyle='-.')
+                                 alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     if ext_rk45_data is not None:
         t_ext, drift_ext = ext_rk45_data
         ln_extb, = ax.semilogy(t_ext[1:] * time_factor, np.abs(drift_ext[1:]),
-                               alpha=0.8, color='#E69F00', linestyle='--')
+                               alpha=0.8, color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if ext_rkg_data is not None:
         t_ext, drift_ext = ext_rkg_data
         ln_extc, = ax.semilogy(t_ext[1:] * time_factor, np.abs(drift_ext[1:]),
-                               alpha=0.8, color='#CC0000', linestyle='-.')
+                               alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
 
     # ---- main solver lines ----
     lnps = lnrk4 = lnrkg = lnrk45 = None
     if ps_data is not None:
         t_ps, drift_ps = ps_data
         lnps, = ax.semilogy(t_ps[1:] * time_factor, np.abs(drift_ps[1:]),
-                            label=f"PS{ps_order_label}", alpha=0.8, color="#009E73", linestyle=":")
+                            label=f"PS{ps_order_label}", alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
     if rk4_data is not None:
         t_rk4, drift_rk4 = rk4_data
         lnrk4, = ax.semilogy(t_rk4[1:] * time_factor, np.abs(drift_rk4[1:]),
-                             label='RK4', alpha=0.8, color='#CC79A7', linestyle='-.')
+                             label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     if rkg_data is not None:
         t_rkg, drift_rkg = rkg_data
         lnrkg, = ax.semilogy(t_rkg[1:] * time_factor, np.abs(drift_rkg[1:]),
-                             label='RKG', alpha=0.8, color='#CC0000', linestyle='-.')
+                             label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
     if rk45_data is not None:
         t_rk45, drift_rk45 = rk45_data
         lnrk45, = ax.semilogy(t_rk45[1:] * time_factor, np.abs(drift_rk45[1:]),
-                              label='RK45', color='#E69F00', linestyle='--')
+                              label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
 
     # ---- axis formatting ----
-    setup_log_axes(ax)
+    ul.setup_log_axes(ax)
 
     ax.set_xlabel(r"$\tau/T$")
     ax.set_ylabel(r"$|\Delta E|/E_0$")
@@ -298,11 +311,11 @@ def ke_error(
     xmin, xmax = ax.get_xlim()
     ax.set_xlim(xmin, xmax * 1.05)
 
-    place_endpoint_labels(fig, ax, endpoints)
+    ul.place_endpoint_labels(fig, ax, endpoints)
 
     # === Save and Close ===
     fig.canvas.draw()
-    fig_path = build_filename(summary, run_folder, stem, figure_tag="KEerror", ext="png")
+    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="KEerror", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -340,7 +353,7 @@ def poincare(
     else:
         rho_dragt, rho_dot_dragt = crossings[0], crossings[1]
         ax.plot(rho_dragt, rho_dot_dragt, 'D', markerfacecolor='none',
-                markeredgecolor='#009E73', markersize=4, label="Crossings")
+                markeredgecolor=COLORS["ps"], markersize=4, label="Crossings")
 
     ax.set_xlabel(r"$\rho$ (Dimensionless)")
     ax.set_ylabel(r"$\dot{\rho}$ (Dimensionless)")
@@ -408,7 +421,7 @@ def adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max, ste
     """Adiabaticity parameter epsilon vs time (semilogy)."""
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.semilogy(t_arr, eps_arr, color='#009E73', linewidth=0.6, alpha=0.8, label=r"$\epsilon(t)$")
+    ax.semilogy(t_arr, eps_arr, color=COLORS["ps"], linewidth=0.6, alpha=0.8, label=r"$\epsilon(t)$")
     ax.axhline(0.1, color='k', linestyle='--', linewidth=1.0, label=r"$\epsilon = 0.1$ (GC limit)")
     ax.set_xlabel(r"$\tau / T$ (Equatorial Gyroperiods)")
     ax.set_ylabel(r"$\epsilon = r_g \cdot |\nabla_\perp B| / B$")
@@ -466,16 +479,16 @@ def mu_deviation(
     lnps = lnrk4 = lnrkg = lnrk45 = None
     if rk45_data is not None:
         t_rk45, mudrift_rk45 = rk45_data
-        lnrk45, = ax.semilogy(t_rk45, mudrift_rk45, label="RK45", color="#E69F00", linestyle="--")
+        lnrk45, = ax.semilogy(t_rk45, mudrift_rk45, label="RK45", color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if rk4_data is not None:
         t_rk4, mudrift_rk4 = rk4_data
-        lnrk4, = ax.semilogy(t_rk4, mudrift_rk4, label="RK4", alpha=0.3, color="#CC79A7", linestyle="-.")
+        lnrk4, = ax.semilogy(t_rk4, mudrift_rk4, label="RK4", alpha=0.3, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     if rkg_data is not None:
         t_rkg, mudrift_rkg = rkg_data
-        lnrkg, = ax.semilogy(t_rkg, mudrift_rkg, label="RKG", alpha=0.3, color="#CC0000", linestyle="-.")
+        lnrkg, = ax.semilogy(t_rkg, mudrift_rkg, label="RKG", alpha=0.3, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
     if ps_data is not None:
         t_ps, mudrift_ps = ps_data
-        lnps, = ax.semilogy(t_ps, mudrift_ps, label=f"PS{ps_order_label}", linewidth=0.3, color="#009E73", linestyle="-")
+        lnps, = ax.semilogy(t_ps, mudrift_ps, label=f"PS{ps_order_label}", linewidth=0.3, color=COLORS["ps"], linestyle="-")
 
     # ---- axis formatting ----
     ax.margins(x=0.01)
@@ -514,107 +527,11 @@ def mu_deviation(
     if ps_data is not None:
         endpoints.append((t_ps[-1], float(np.abs(mudrift_ps[-1])), f"PS{ps_order_label}", lnps.get_color()))
 
-    place_endpoint_labels(fig, ax, endpoints)
+    ul.place_endpoint_labels(fig, ax, endpoints)
 
     # === Save and Close ===
-    fig_path_mu = build_filename(summary, run_folder, stem, figure_tag="mu", ext="png")
+    fig_path_mu = wr.build_filename(summary, run_folder, stem, figure_tag="mu", ext="png")
     plt.savefig(fig_path_mu, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
 
-# ------------------------------------------------------------------
-#  prepare_slice_window  — extract time-windowed trajectory slices
-# ------------------------------------------------------------------
-def prepare_slice_window(
-    slice_mode, window_duration, norm_time,
-    # PS-specific
-    USE_PS=False, cache_path=None, ps_step=None, steps_ps=None,
-    PS_decimate=1, MAX_PLOT_POINTS=1_000_000,
-    # RK4
-    USE_RK4=False, solution_rk4=None, rk4_step=None,
-    # RKG
-    USE_RKG=False, solution_rkg=None, rkg_step=None,
-    # RK45
-    USE_RK45=False, y_rk45_common=None,
-):
-    """Compute time-windowed trajectory slices for each enabled solver.
-
-    Returns a dict with keys like ``ps_x_slice``, ``rk4_y_slice``, etc.
-    Missing solvers get ``None`` values.
-    """
-    if slice_mode == "first":
-        t_start = 0.0
-        t_end   = min(norm_time, window_duration)
-    elif slice_mode == "last":
-        t_end   = norm_time
-        t_start = max(0.0, norm_time - window_duration)
-    else:
-        raise ValueError("slice_mode must be 'first' or 'last'")
-
-    result = dict(
-        ps_x_slice=None, ps_y_slice=None, ps_z_slice=None,
-        rk4_x_slice=None, rk4_y_slice=None, rk4_z_slice=None,
-        rkg_x_slice=None, rkg_y_slice=None, rkg_z_slice=None,
-        rk45_x_slice=None, rk45_y_slice=None, rk45_z_slice=None,
-        ps_order_label=None,
-    )
-
-    # ---------- PS ----------
-    if USE_PS:
-        i0_phys = int(np.floor(t_start / ps_step))
-        i1_phys = int(np.floor(t_end   / ps_step))
-        i0_phys = max(0, i0_phys)
-        i1_phys = min(i1_phys, steps_ps)
-        if i1_phys < i0_phys:
-            raise RuntimeError("Empty PS slice window")
-
-        ps_store_stride = PS_decimate if PS_decimate > 1 else 1
-        j0 = int(np.ceil(i0_phys / ps_store_stride))
-        j1 = int(np.floor(i1_phys / ps_store_stride))
-        if j1 < j0:
-            raise RuntimeError("Empty PS stored slice window")
-
-        with h5py.File(cache_path, "r") as ps_h5:
-            ps_grp = ps_h5["ps"]
-            ps_y   = ps_grp["y"]
-            n_store = ps_y.shape[1]
-            j0 = max(0, min(j0, n_store - 1))
-            j1 = max(0, min(j1, n_store - 1))
-            if j1 < j0:
-                raise RuntimeError("Empty PS stored slice")
-            y_win = ps_y[:, j0:j1+1]
-            result["ps_order_label"] = int(ps_grp.attrs["max_ps"])
-
-        plot_stride = max(1, y_win.shape[1] // MAX_PLOT_POINTS)
-        result["ps_x_slice"] = y_win[0, ::plot_stride]
-        result["ps_y_slice"] = y_win[1, ::plot_stride]
-        result["ps_z_slice"] = y_win[2, ::plot_stride]
-
-    # ---------- RK4 ----------
-    if USE_RK4:
-        t_rk4 = rk4_step * np.arange(solution_rk4.shape[1], dtype=npfloat)
-        rk4_x, rk4_y, rk4_z = slice_solution(
-            t_rk4, solution_rk4, window_duration, norm_time, mode=slice_mode)[:3]
-        result["rk4_x_slice"] = rk4_x
-        result["rk4_y_slice"] = rk4_y
-        result["rk4_z_slice"] = rk4_z
-
-    # ---------- RKG ----------
-    if USE_RKG:
-        t_rkg = rkg_step * np.arange(solution_rkg.shape[0], dtype=npfloat)
-        rkg_x, rkg_y, rkg_z = slice_solution(
-            t_rkg, solution_rkg.T, window_duration, norm_time, mode=slice_mode)[:3]
-        result["rkg_x_slice"] = rkg_x
-        result["rkg_y_slice"] = rkg_y
-        result["rkg_z_slice"] = rkg_z
-
-    # ---------- RK45 ----------
-    if USE_RK45:
-        t_rk45 = ps_step * np.arange(y_rk45_common.shape[1], dtype=npfloat)
-        rk45_x, rk45_y, rk45_z = slice_solution(
-            t_rk45, y_rk45_common, window_duration, norm_time, mode=slice_mode)[:3]
-        result["rk45_x_slice"] = rk45_x
-        result["rk45_y_slice"] = rk45_y
-        result["rk45_z_slice"] = rk45_z
-
-    return result
