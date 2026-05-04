@@ -1,5 +1,5 @@
 """
-Kinetic energy conservation diagnostics shared by constb and hyperb drivers.
+Kinetic energy conservation functions shared by constb and hyperb drivers.
 
     kinetic_energy         — KE from velocity components
     compute_energy_drift   — relative KE drift over time
@@ -7,21 +7,20 @@ Kinetic energy conservation diagnostics shared by constb and hyperb drivers.
 """
 
 import numpy as np
-from ps_method.utils import npfloat, maybe_njit
+from . import utils as ul
 
-half = npfloat(0.5)
-two  = npfloat(2.0)
+half = ul.npfloat(0.5)
+two  = ul.npfloat(2.0)
 
-
-@maybe_njit
-def kinetic_energy(vx, vy, vz, m=npfloat(1.0)):
+@ul.maybe_njit
+def kinetic_energy(vx, vy, vz, m=ul.npfloat(1.0)):
     return half * m * (vx**two + vy**two + vz**two)
 
-@maybe_njit
+@ul.maybe_njit
 def compute_energy_drift(vx, vy, vz):
     KE = kinetic_energy(vx, vy, vz)
     return np.abs(KE - KE[0]) / KE[0]
 
-@maybe_njit
+@ul.maybe_njit
 def extract_v(sol):  # assumes PS output has x, y, z, vx, vy, vz as initial entries
     return sol[3], sol[4], sol[5]

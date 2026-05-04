@@ -11,14 +11,11 @@ All functions are compiled with @maybe_njit (skipped when float128 is active).
 """
 
 import numpy as np
-from numba import njit
-import os
-from ps_method.utils import maybe_njit, npfloat
+from . import utils as ul
 
-one = npfloat(1.0)
+one = ul.npfloat(1.0)
 
-
-@maybe_njit
+@ul.maybe_njit
 def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol):
     """Advance a charged particle through a uniform B field using a power-series method.
 
@@ -35,7 +32,7 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, t
     orders_used        : (steps+1,) int array — PS order actually used per step.
     """
     n_total = 6
-    final_coeff_matrix = np.zeros((n_total, steps + 1), dtype=npfloat)
+    final_coeff_matrix = np.zeros((n_total, steps + 1), dtype=ul.npfloat)
     final_coeff_matrix[:, 0] = initial_pos_vel
     oip1 = one / (one + np.arange(order_max))       # 1/(i+1) lookup table
     orders_used = np.zeros(steps + 1, dtype=np.int32)
@@ -45,11 +42,11 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, t
     vx, vy, vz = 3, 4, 5
 
     for j in range(1, steps + 1):
-        c = np.zeros((n_total, order_max + 1), dtype=npfloat)
+        c = np.zeros((n_total, order_max + 1), dtype=ul.npfloat)
         c[:, 0] = final_coeff_matrix[:, j - 1]     # seed with end of previous step
         power = timedelta
-        sum_terms = np.zeros(n_total, dtype=npfloat)
-        max_contrib = tol + one
+        sum_terms = np.zeros(n_total, dtype=ul.npfloat)
+        max_contrib = tol + ul.npfloat(1.0)
         i = 0
 
         while max_contrib > tol and i < order_max:
@@ -74,7 +71,7 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, t
     return final_coeff_matrix, orders_used
 
 
-@maybe_njit
+@ul.maybe_njit
 def analytical(tau, d, qoverm):
     """Exact closed-form trajectory in a uniform magnetic field.
     In normalized coordinates (ω_c = |qB/m| = 1) 
@@ -107,7 +104,7 @@ def analytical(tau, d, qoverm):
     return np.vstack((x_t, y_t, z_t, vx_t, vy_t, vz_t))
 
 
-@maybe_njit
+@ul.maybe_njit
 def lorentz_force(t, d, Bfield, qoverm):
     """Right-hand side for the Lorentz equation of motion in a uniform B field.
 

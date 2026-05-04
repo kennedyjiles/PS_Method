@@ -8,7 +8,7 @@ Kinetic energy and P_phi conservation diagnostics for dipole trajectories.
 
 import numpy as np
 import h5py
-from ps_method.utils import npfloat
+from . import utils as ul
 
 
 def compute_energy_ps_chunked(
@@ -25,14 +25,14 @@ def compute_energy_ps_chunked(
     Optionally returns decimated (stride-sampled) plot arrays only.
     """
     if dtype is None:
-        dtype = npfloat
+        dtype = ul.npfloat
     n_store = ps_y_h5.shape[1]
 
     if return_plot_data:
         # Estimate length of final array with stride
         n_points = (n_store + stride - 1) // stride
-        t_plot = np.empty(n_points, dtype=npfloat)
-        drift_plot = np.empty(n_points, dtype=npfloat)
+        t_plot = np.empty(n_points, dtype=ul.npfloat)
+        drift_plot = np.empty(n_points, dtype=ul.npfloat)
         k = 0
 
     j_global = 0
@@ -133,7 +133,7 @@ def compute_pphi_error_chunked(
 
     rel_error = np.concatenate(err_dec)
     rel_error_log = np.where(rel_error == 0, 1e-16, rel_error)
-    t_gyro = ps_step * np.arange(len(rel_error_log), dtype=npfloat) * dec * time_factor
+    t_gyro = ps_step * np.arange(len(rel_error_log), dtype=ul.npfloat) * dec * time_factor
 
     ylabel = (r"Absolute Error $|\Delta P_\phi|$" if P_phi_initial == 0
               else r"Relative Error $|(P_\phi - P_{\phi,0}) / P_{\phi,0}|$")
@@ -214,7 +214,7 @@ def compute_ke_errors(
         if "t" in ext_rk4 and ext_rk4["t"] is not None:
             t_eval_rk4_ext = ext_rk4["t"]
         elif "dt" in ext_rk4 and "steps" in ext_rk4:
-            t_eval_rk4_ext = ext_rk4["dt"] * np.arange(ext_rk4["steps"] + 1, dtype=npfloat)
+            t_eval_rk4_ext = ext_rk4["dt"] * np.arange(ext_rk4["steps"] + 1, dtype=ul.npfloat)
         else:
             raise ValueError(
                 "External RK4 H5 file has no time information "
@@ -239,7 +239,7 @@ def compute_ke_errors(
             ps_step_ext = ext_rk45.get("dt", ps_step)
             ps_decimate_ext = ext_rk45.get("decimate", 1)
             dt_store_ext = ps_step_ext * ps_decimate_ext
-            t_ext = dt_store_ext * np.arange(n_store, dtype=npfloat)
+            t_ext = dt_store_ext * np.arange(n_store, dtype=ul.npfloat)
         energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS)
         idx = np.arange(0, n_store, energy_stride_ext)
         t_eval_rk45_ext = t_ext[idx]
@@ -266,7 +266,7 @@ def compute_ke_errors(
                 if dt_rkg is not None:
                     if hasattr(dt_rkg, 'value'): dt_rkg = dt_rkg[()]
                     idx = np.arange(0, n_steps, rkg_stride)
-                    t_ext_rkg = dt_rkg * idx.astype(npfloat)
+                    t_ext_rkg = dt_rkg * idx.astype(ul.npfloat)
                 else:
                     raise ValueError("External RKG H5 file has no time info.")
             if is_transposed:
@@ -280,7 +280,7 @@ def compute_ke_errors(
         for i in range(len(r_rkg_ext)):
             A_rkg_ext[i] = vector_potential_func(r_rkg_ext[i])
         v_rkg_ext = p_rkg_ext - A_rkg_ext
-        E_rkg_ext = npfloat(0.5) * np.sum(v_rkg_ext**2, axis=1, dtype=npfloat)
+        E_rkg_ext = ul.npfloat(0.5) * np.sum(v_rkg_ext**2, axis=1, dtype=ul.npfloat)
         rel_drift_ext_rkg = np.abs(E_rkg_ext - E_rkg_ext[0]) / E_rkg_ext[0]
         ke_ext_rkg = (t_ext_rkg, rel_drift_ext_rkg)
 
@@ -307,7 +307,7 @@ def compute_ke_errors(
         for i in range(len(r_rkg)):
             A_rkg[i] = vector_potential_func(r_rkg[i])
         v_rkg = p_rkg - A_rkg
-        E_rkg = npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=npfloat)
+        E_rkg = ul.npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=ul.npfloat)
         E_rkg_0 = E_rkg[0]
         rel_drift_rkg = np.abs(E_rkg - E_rkg_0) / E_rkg_0
 
@@ -323,14 +323,14 @@ def compute_ke_errors(
     rel_drift_rk4 = None
     if USE_RK4:
         v_rk4 = solution_rk4[3:6]
-        E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
+        E_rk4 = ul.npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=ul.npfloat)
         E_rk4_0 = E_rk4[0]
         rel_drift_rk4 = np.abs(E_rk4 - E_rk4_0) / E_rk4_0
 
     # --- Build time arrays ---
-    t_rk4 = rk4_step * np.arange(len(rel_drift_rk4), dtype=npfloat) if USE_RK4 else None
-    t_rkg = rkg_step * np.arange(len(rel_drift_rkg), dtype=npfloat) if USE_RKG else None
-    t_rk45 = ps_step * np.arange(len(rel_drift_rk45), dtype=npfloat) if USE_RK45 else None
+    t_rk4 = rk4_step * np.arange(len(rel_drift_rk4), dtype=ul.npfloat) if USE_RK4 else None
+    t_rkg = rkg_step * np.arange(len(rel_drift_rkg), dtype=ul.npfloat) if USE_RKG else None
+    t_rk45 = ps_step * np.arange(len(rel_drift_rk45), dtype=ul.npfloat) if USE_RK45 else None
 
     # --- Assemble plot-ready tuples ---
     ke_ps   = (t_ps_plot, rel_drift_ps)    if USE_PS   else None

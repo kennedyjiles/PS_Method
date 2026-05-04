@@ -18,19 +18,18 @@ Streaming / decimation:
 """
 
 import numpy as np
-import os
-import json, hashlib, h5py, time, re
-from numba import njit
-from ps_method.utils import npfloat, maybe_njit
-from ps_method.writers import SAVE_ROWS, n_save, expand_h5_to_full, build_filename
+import h5py
+import time
+from . import utils as ul
+from . import writers as wr
 
-one = npfloat(1.0)
-two = npfloat(2.0)
-three = npfloat(3.0)
-five = npfloat(5.0)
-twopointfive = npfloat(2.5)
+one = ul.npfloat(1.0)
+two = ul.npfloat(2.0)
+three = ul.npfloat(3.0)
+five = ul.npfloat(5.0)
+twopointfive = ul.npfloat(2.5)
 
-@maybe_njit
+@ul.maybe_njit
 def lorentz_force(t, y, qoverm):
     # Unpack position and velocity
     x, y_, z, vx, vy, vz = y
@@ -47,12 +46,12 @@ def lorentz_force(t, y, qoverm):
     ay = qoverm * (vz * Bx - vx * Bz)
     az = qoverm * (vx * By - vy * Bx)
 
-    return np.array([vx, vy, vz, ax, ay, az], dtype=npfloat)
+    return np.array([vx, vy, vz, ax, ay, az], dtype=ul.npfloat)
 
-@maybe_njit
+@ul.maybe_njit
 def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     n_total = 17
-    final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=npfloat)
+    final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
 
     # For sanity tracking of all variables
     x, y, z, vx, vy, vz = 0, 1, 2, 3, 4, 5
@@ -84,10 +83,10 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     final_coeff_matrix[g_aux, 0] = g0
 
     final_coeff_matrix[Bz_aux, 0] = -a0 * b0
-    final_coeff_matrix[By_aux, 0] = -npfloat(3.0) * a0 * c0
-    final_coeff_matrix[Bx_aux, 0] = -npfloat(3.0) * a0 * d0
+    final_coeff_matrix[By_aux, 0] = -ul.npfloat(3.0) * a0 * c0
+    final_coeff_matrix[Bx_aux, 0] = -ul.npfloat(3.0) * a0 * d0
 
-    oip1 = one / (one + np.arange(PS_order, dtype=npfloat))
+    oip1 = one / (one + np.arange(PS_order, dtype=ul.npfloat))
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
 
     # these worked better inline
@@ -106,9 +105,9 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
             out[i] = acc / b[0]
 
 
-    c = np.zeros((n_total, PS_order + 1), dtype=npfloat) 
-    sum_terms = np.zeros(n_total, dtype=npfloat)
-    zeta = np.zeros(PS_order + 1, dtype=npfloat)
+    c = np.zeros((n_total, PS_order + 1), dtype=ul.npfloat) 
+    sum_terms = np.zeros(n_total, dtype=ul.npfloat)
+    zeta = np.zeros(PS_order + 1, dtype=ul.npfloat)
 
     # initialize base terms outside the loop 
     c[r2_aux, 0] = final_coeff_matrix[x, 0]**two + final_coeff_matrix[y, 0]**two + final_coeff_matrix[z, 0]**two
@@ -146,8 +145,8 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
             c[f_aux, i+1] = -(three * cauchy_sum_inline(c[d_aux], c[vz], i+1) - cauchy_sum_inline(c[b_aux], c[vx], i+1))
             c[g_aux, i+1] = -(three * (cauchy_sum_inline(c[c_aux], c[vx], i+1) - cauchy_sum_inline(c[d_aux], c[vy], i+1)))
 
-            c[Bx_aux, i+1] = -npfloat(3.0) * cauchy_sum_inline(c[a_aux], c[d_aux], i+1)
-            c[By_aux, i+1] = -npfloat(3.0) * cauchy_sum_inline(c[a_aux], c[c_aux], i+1)
+            c[Bx_aux, i+1] = -ul.npfloat(3.0) * cauchy_sum_inline(c[a_aux], c[d_aux], i+1)
+            c[By_aux, i+1] = -ul.npfloat(3.0) * cauchy_sum_inline(c[a_aux], c[c_aux], i+1)
             c[Bz_aux, i+1] =        -cauchy_sum_inline(c[a_aux], c[b_aux], i+1)
 
             sum_terms += c[:, i+1] * power
@@ -179,8 +178,8 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
         final_coeff_matrix[e_aux, j] = -e_now
         final_coeff_matrix[f_aux, j] = -f_now
         final_coeff_matrix[g_aux, j] = -g_now
-        final_coeff_matrix[Bx_aux, j] = -npfloat(3.0) * a_now * d_now
-        final_coeff_matrix[By_aux, j] = -npfloat(3.0) * a_now * c_now
+        final_coeff_matrix[Bx_aux, j] = -ul.npfloat(3.0) * a_now * d_now
+        final_coeff_matrix[By_aux, j] = -ul.npfloat(3.0) * a_now * c_now
         final_coeff_matrix[Bz_aux, j] = -a_now * b_now
 
         orders_used[j] = i
@@ -191,7 +190,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
 # ==== RKG Functions ====
 # ========================
 
-@maybe_njit
+@ul.maybe_njit
 def vector_potential(r):
     x, y, z = r
     r2 = x**2 + y**2 + z**2
@@ -204,9 +203,9 @@ def vector_potential(r):
     Ay = - x / r3
     Az = 0.0
 
-    return np.array([Ax, Ay, Az], dtype=npfloat)
+    return np.array([Ax, Ay, Az], dtype=ul.npfloat)
 
-@maybe_njit
+@ul.maybe_njit
 def hamiltonian_rhs(t, y, qoverm):
     x, y_, z = y[0], y[1], y[2]
     px, py, pz = y[3], y[4], y[5]
@@ -217,7 +216,7 @@ def hamiltonian_rhs(t, y, qoverm):
     r5 = r2 * r3
 
     if r5 == 0:
-        return np.zeros(6, dtype=npfloat)
+        return np.zeros(6, dtype=ul.npfloat)
 
     # Vector potential
     Ax = y_ / r3
@@ -247,9 +246,9 @@ def hamiltonian_rhs(t, y, qoverm):
 
     dpzdt = qoverm * 3 * z / r5 * (-y_ * Pix + x * Piy)
 
-    return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=npfloat)
+    return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=ul.npfloat)
 
-@maybe_njit
+@ul.maybe_njit
 def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):
     sqrt3 = np.sqrt(3.0)
     a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
@@ -257,14 +256,14 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
     b1 = b2 = 0.5
 
     dim = len(y0)
-    K = np.zeros((2, dim), dtype=npfloat)
+    K = np.zeros((2, dim), dtype=ul.npfloat)
 
     # Pre-allocate scratch arrays (avoids per-iteration allocation)
-    F = np.zeros(2 * dim, dtype=npfloat)
-    J = np.zeros((2 * dim, 2 * dim), dtype=npfloat)
-    K_save = np.zeros((2, dim), dtype=npfloat)
-    Y1 = np.zeros(dim, dtype=npfloat)
-    Y2 = np.zeros(dim, dtype=npfloat)
+    F = np.zeros(2 * dim, dtype=ul.npfloat)
+    J = np.zeros((2 * dim, 2 * dim), dtype=ul.npfloat)
+    K_save = np.zeros((2, dim), dtype=ul.npfloat)
+    Y1 = np.zeros(dim, dtype=ul.npfloat)
+    Y2 = np.zeros(dim, dtype=ul.npfloat)
 
     # Initial guess from explicit Euler
     K[0] = func(0.0, y0, *args)
@@ -313,14 +312,14 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
             K[0, d] += dK_flat[d]
             K[1, d] += dK_flat[dim + d]
 
-    result = np.zeros(dim, dtype=npfloat)
+    result = np.zeros(dim, dtype=ul.npfloat)
     for d in range(dim):
         result[d] = y0[d] + dt * (b1 * K[0, d] + b2 * K[1, d])
     return result
 
-@maybe_njit
+@ul.maybe_njit
 def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
-    d_out = np.zeros((steps + 1, len(y0)), dtype=npfloat)
+    d_out = np.zeros((steps + 1, len(y0)), dtype=ul.npfloat)
     d_out[0] = y0
 
     for i in range(1, steps + 1):
@@ -353,7 +352,7 @@ def run_ps_streaming_with_decimation(
     start_time_ps = time.time()
 
     n_state = 17
-    # SAVE_ROWS and n_save defined at module level
+    # wr.SAVE_ROWS and wr.n_save come from writers
 
     cur_state = initial_pos_vel_ps.copy()
     remaining = steps_ps
@@ -369,26 +368,26 @@ def run_ps_streaming_with_decimation(
         ps_grp = f.create_group("ps")
         ps_grp.attrs["ordercap"] = PS_order
         ps_grp.attrs["numberstepspergyro"] = int(N_STEPS_PER_GYRO_ps)
-        ps_grp.attrs["dt"]        = npfloat(ps_step)
+        ps_grp.attrs["dt"]        = ul.npfloat(ps_step)
         ps_grp.attrs["steps"]    = int(steps_ps)
         ps_grp.attrs["streaming"] = True
         ps_grp.attrs["chunksize"]= int(chunk_steps)
         ps_grp.attrs["decimate"] = int(decimate)
-        ps_grp.attrs["tol"] = npfloat(tol)
-        ps_grp.attrs["minphase"] = npfloat(user_min_phase)
+        ps_grp.attrs["tol"] = ul.npfloat(tol)
+        ps_grp.attrs["minphase"] = ul.npfloat(user_min_phase)
         ps_grp.attrs["E0"]       = float(E0_ps)
         ps_grp.attrs["mu0"]      = float(mu0_ps)
         ps_grp.attrs["t0"]       = 0.0
         # Row layout: [x,y,z, vx,vy,vz, Bx,By,Bz]
         ps_grp.attrs["save_rows"] = "pos_vel_B"
-        ps_grp.attrs["n_save"]    = n_save
+        ps_grp.attrs["n_save"]    = wr.n_save
 
         dset_y = ps_grp.create_dataset(
             "y",
-            shape=(n_save, 0),
-            maxshape=(n_save, None),
-            dtype=npfloat,
-            chunks=(n_save, min(chunk_steps, steps_ps + 1)),
+            shape=(wr.n_save, 0),
+            maxshape=(wr.n_save, None),
+            dtype=ul.npfloat,
+            chunks=(wr.n_save, min(chunk_steps, steps_ps + 1)),
             compression="gzip",
             compression_opts=1,
             shuffle=True,
@@ -441,10 +440,10 @@ def run_ps_streaming_with_decimation(
                     old_len = dset_y.shape[1]
                     new_len = old_len + sol_keep.shape[1]
 
-                    dset_y.resize((n_save, new_len))
+                    dset_y.resize((wr.n_save, new_len))
                     dset_orders.resize((new_len,))
 
-                    dset_y[:, old_len:new_len] = sol_keep[SAVE_ROWS, :]
+                    dset_y[:, old_len:new_len] = sol_keep[wr.SAVE_ROWS, :]
                     dset_orders[old_len:new_len] = orders_keep
 
             # ---- atmospheric impact check (diagnostic only, does not halt) ----

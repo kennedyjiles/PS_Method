@@ -1,48 +1,61 @@
 """
-Adaptive Power Series stepping for dipole B field.
-Hybrid approach: uses the original fast ps_integrate for easy chunks,
-falls back to per-step adaptive mode only when the series needs it.
+dipoleb_adaptive.py — Adaptive Power-Series stepping for dipole B field.
 
-All other functions are imported unchanged from dipoleb_physics.
+The integrator is hybrid: where the fixed ps_step is small relative to
+the local gyroperiod (i.e. the field is weak enough), it calls
+dp.ps_integrate in batch — the same fast Numba path used by the
+non-adaptive driver.  When the particle enters a strong-field region
+(close to the dipole) where ps_step is too coarse, it switches to an
+adaptive mode that subdivides each output interval into smaller substeps
+sized by the local |B|.  Substep size grows or shrinks based on the
+PS truncation order actually needed: low order → grow, high order → shrink.
+Output is always written on the original fixed ps_step grid so downstream
+code sees the same format regardless of which path was taken.
+
+State management:
+    _tether_aux           — recompute auxiliary variables [6:17] from pos/vel in place
+
+Adaptive stepping:
+    _local_dt_from_B      — compute dt from local |B| for a target steps-per-gyroperiod
+    _ps_adaptive_chunk    — process N output grid points with adaptive substeps
+
+Entry point:
+    run_ps_streaming_adaptive — called by dipoleb.py; streams chunks to h5, returns
+                                max PS order used and wall-clock time
 """
 
 import numpy as np
 import h5py
 import time
 import warnings
-from ps_method.dipoleb_physics import *          
-from ps_method.utils import npfloat
+from . import dipoleb_physics as dp
+from . import writers as wr
+from . import utils as ul
 
-_one   = npfloat(1.0)
-_two   = npfloat(2.0)
-_three = npfloat(3.0)
-_five  = npfloat(5.0)
-_two5  = npfloat(2.5)
-
-
-# ===========================================================
-#   Module-level Cauchy helpers (defined once at import time)
-# ===========================================================
-def _cauchy_sum(a, b, n):
-    s = 0.0
-    for j in range(n + 1):
-        s += a[j] * b[n - j]
-    return s
-
-def _cauchy_divide(a, b, out, n):
-    out[0] = a[0] / b[0]
-    for i in range(1, n + 1):
-        acc = a[i]
-        for j in range(1, i + 1):
-            acc -= b[j] * out[i - j]
-        out[i] = acc / b[0]
+_one    = ul.npfloat(1.0)
+_two    = ul.npfloat(2.0)
+_three  = ul.npfloat(3.0)
+_two5   = ul.npfloat(2.5)
+_twopi = ul.npfloat(2.0 * np.pi)
 
 
 # ===========================================================
-#                  Helper: tether aux vars
+# ============== State Management ============================
 # ===========================================================
 def _tether_aux(state):
-    """Recompute auxiliary variables [6:17] from position/velocity [0:6] in place."""
+    """Recompute auxiliary variables [6:17] from position/velocity [0:6] in place.
+
+    The 17-element state vector is laid out as:
+        [0:3]   x, y, z          — position
+        [3:6]   vx, vy, vz       — velocity
+        [6]     r²               — squared radial distance
+        [7]     r^(-5)           — used in dipole field expressions
+        [8]     2z² - x² - y²   — quadrupole geometry factor
+        [9]     yz               — cross term
+        [10]    xz               — cross term
+        [11:14] velocity cross terms used by the PS recurrence
+        [14:17] Bx, By, Bz      — dipole magnetic field at current position
+    """
     xv, yv, zv   = state[0], state[1], state[2]
     vxv, vyv, vzv = state[3], state[4], state[5]
 
@@ -63,17 +76,14 @@ def _tether_aux(state):
     state[11] = -e
     state[12] = -f
     state[13] = -g
-    state[14] = -npfloat(3.0) * a * d
-    state[15] = -npfloat(3.0) * a * cv
+    state[14] = -ul.npfloat(3.0) * a * d
+    state[15] = -ul.npfloat(3.0) * a * cv
     state[16] = -a * b
 
 
 # ===========================================================
-#   Per-step adaptive chunk (SLOW PATH — only for hard regions)
-#   Uses LOCAL GYROPERIOD to set dt proactively from |B|.
+# ============== Adaptive Stepping ===========================
 # ===========================================================
-_TWO_PI = npfloat(2.0 * np.pi)
-
 def _local_dt_from_B(state, steps_per_local_gyro, dt_min, dt_max):
     """Compute dt from local |B| so we take a fixed number of steps
     per local gyroperiod.  tau_local = 2*pi / |B|  (normalised units
@@ -82,7 +92,7 @@ def _local_dt_from_B(state, steps_per_local_gyro, dt_min, dt_max):
     if Bmag2 <= 0.0 or not np.isfinite(Bmag2):
         return dt_max
     Bmag  = np.sqrt(Bmag2)
-    tau_local = _TWO_PI / Bmag
+    tau_local = _twopi / Bmag
     dt = tau_local / steps_per_local_gyro
     return max(dt_min, min(dt, dt_max))
 
@@ -111,7 +121,7 @@ def _ps_adaptive_chunk(
     n_state = 17
     MAX_SUB = 2000          # cap: never ask ps_integrate for more than this
 
-    sol_chunk    = np.zeros((n_state, n_output + 1), dtype=npfloat)
+    sol_chunk    = np.zeros((n_state, n_output + 1), dtype=ul.npfloat)
     orders_chunk = np.zeros(n_output + 1, dtype=np.int32)
     sol_chunk[:, 0] = cur_state
     max_ps     = 0
@@ -140,12 +150,12 @@ def _ps_adaptive_chunk(
             n_sub = max(1, int(np.ceil(t_remaining / dt_use)))
             if n_sub > MAX_SUB:
                 n_sub = MAX_SUB
-                dt_actual = npfloat(dt_use)   # keep the desired dt; don't cover all t_remaining
+                dt_actual = ul.npfloat(dt_use)   # keep the desired dt; don't cover all t_remaining
             else:
-                dt_actual = npfloat(t_remaining / n_sub)   # exact coverage
+                dt_actual = ul.npfloat(t_remaining / n_sub)   # exact coverage
 
             # ---- ONE Numba call ----
-            sol_batch, orders_batch = ps_integrate(
+            sol_batch, orders_batch = dp.ps_integrate(
                 PS_order, n_sub, cur_state[:6].copy(),
                 tol, qoverm, dt_actual,
             )
@@ -270,7 +280,7 @@ def _ps_adaptive_chunk(
 
 
 # ===========================================================
-#    Hybrid adaptive streaming integrator
+# ============== Entry Point =================================
 # ===========================================================
 def run_ps_streaming_adaptive(
     initial_pos_vel_ps,
@@ -305,10 +315,10 @@ def run_ps_streaming_adaptive(
     """
     start_time_ps = time.time()
     n_state = 17
-    # SAVE_ROWS and n_save imported from dipoleb_physics
+    # wr.SAVE_ROWS and wr.n_save come from writers
 
     # --- build initial 17-element state ---
-    cur_state = np.zeros(n_state, dtype=npfloat)
+    cur_state = np.zeros(n_state, dtype=ul.npfloat)
     cur_state[0:6] = initial_pos_vel_ps
     _tether_aux(cur_state)
 
@@ -317,9 +327,9 @@ def run_ps_streaming_adaptive(
     max_ps_global = 0
 
     # --- adaptive bookkeeping ---
-    dt_internal     = npfloat(ps_step)
-    dt_min          = npfloat(ps_step * 1e-8)
-    dt_max          = npfloat(ps_step * 5.0)
+    dt_internal     = ul.npfloat(ps_step)
+    dt_min          = ul.npfloat(ps_step * 1e-8)
+    dt_max          = ul.npfloat(ps_step * 5.0)
     total_substeps  = 0
     total_rejections = 0
     fast_chunks     = 0
@@ -330,13 +340,13 @@ def run_ps_streaming_adaptive(
     R_ATMOSPHERE    = 1.0   # in R_E; change to 1.0157 for ~100 km altitude
 
     # --- pre-allocate scratch for adaptive path ---
-    c_scratch    = np.zeros((n_state, PS_order + 1), dtype=npfloat)
-    zeta_scratch = np.zeros(PS_order + 1, dtype=npfloat)
-    oip1         = _one / (_one + np.arange(PS_order, dtype=npfloat))
-    sum_scratch  = np.zeros(n_state, dtype=npfloat)
+    c_scratch    = np.zeros((n_state, PS_order + 1), dtype=ul.npfloat)
+    zeta_scratch = np.zeros(PS_order + 1, dtype=ul.npfloat)
+    oip1         = _one / (_one + np.arange(PS_order, dtype=ul.npfloat))
+    sum_scratch  = np.zeros(n_state, dtype=ul.npfloat)
 
     # --- internal time ---
-    t_internal = npfloat(0.0)
+    t_internal = ul.npfloat(0.0)
 
     # --- h5 setup (identical to original) ---
     if write_data:
@@ -344,13 +354,13 @@ def run_ps_streaming_adaptive(
         ps_grp = f.create_group("ps")
         ps_grp.attrs["ordercap"]          = PS_order
         ps_grp.attrs["numberstepspergyro"]= int(N_STEPS_PER_GYRO_ps)
-        ps_grp.attrs["dt"]               = npfloat(ps_step)
+        ps_grp.attrs["dt"]               = ul.npfloat(ps_step)
         ps_grp.attrs["steps"]            = int(steps_ps)
         ps_grp.attrs["streaming"]        = True
         ps_grp.attrs["chunksize"]        = int(chunk_steps)
         ps_grp.attrs["decimate"]         = int(decimate)
-        ps_grp.attrs["tol"]              = npfloat(tol)
-        ps_grp.attrs["minphase"]         = npfloat(user_min_phase)
+        ps_grp.attrs["tol"]              = ul.npfloat(tol)
+        ps_grp.attrs["minphase"]         = ul.npfloat(user_min_phase)
         ps_grp.attrs["E0"]              = float(E0_ps)
         ps_grp.attrs["mu0"]             = float(mu0_ps)
         ps_grp.attrs["t0"]              = 0.0
@@ -359,14 +369,14 @@ def run_ps_streaming_adaptive(
         ps_grp.attrs["order_high"]       = order_high
         # Row layout: [x,y,z, vx,vy,vz, Bx,By,Bz]
         ps_grp.attrs["save_rows"] = "pos_vel_B"
-        ps_grp.attrs["n_save"]    = n_save
+        ps_grp.attrs["n_save"]    = wr.n_save
 
         dset_y = ps_grp.create_dataset(
             "y",
-            shape=(n_save, 0),
-            maxshape=(n_save, None),
-            dtype=npfloat,
-            chunks=(n_save, min(chunk_steps, steps_ps + 1)),
+            shape=(wr.n_save, 0),
+            maxshape=(wr.n_save, None),
+            dtype=ul.npfloat,
+            chunks=(wr.n_save, min(chunk_steps, steps_ps + 1)),
             compression="gzip",
             compression_opts=1,
             shuffle=True,
@@ -392,7 +402,7 @@ def run_ps_streaming_adaptive(
         if Bmag2 <= 0.0 or not np.isfinite(Bmag2):
             return True  # weak/zero field — fast path fine
         Bmag = np.sqrt(Bmag2)
-        tau_local = _TWO_PI / Bmag
+        tau_local = _twopi / Bmag
         effective_N = tau_local / ps_step
         return effective_N >= min_N
 
@@ -407,7 +417,7 @@ def run_ps_streaming_adaptive(
                 #  FAST PATH: use original ps_integrate batch
                 #  (ps_step is small enough for the local field)
                 # =============================================
-                sol_chunk, orders_chunk = ps_integrate(
+                sol_chunk, orders_chunk = dp.ps_integrate(
                     PS_order, this_chunk, cur_state[:6].copy(),
                     tol, qoverm, ps_step,
                 )
@@ -508,9 +518,9 @@ def run_ps_streaming_adaptive(
                 if write_data:
                     old_len = dset_y.shape[1]
                     new_len = old_len + sol_keep.shape[1]
-                    dset_y.resize((n_save, new_len))
+                    dset_y.resize((wr.n_save, new_len))
                     dset_orders.resize((new_len,))
-                    dset_y[:, old_len:new_len]   = sol_keep[SAVE_ROWS, :]
+                    dset_y[:, old_len:new_len]   = sol_keep[wr.SAVE_ROWS, :]
                     dset_orders[old_len:new_len] = orders_keep
 
             global_index += this_chunk

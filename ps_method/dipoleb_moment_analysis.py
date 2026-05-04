@@ -12,12 +12,12 @@ Internal helpers:
 
 import numpy as np
 import h5py
-from ps_method.utils import npfloat, maybe_njit
-from ps_method.writers import expand_h5_to_full
-from ps_method.dipoleb_physics import vector_potential
+from . import utils as ul
+from . import writers as wr
+from . import dipoleb_physics as dp
 
 
-@maybe_njit
+@ul.maybe_njit
 def compute_mu_ps(solution_ps, mass):
     x, y, z = solution_ps[0], solution_ps[1], solution_ps[2]
     vx, vy, vz = solution_ps[3], solution_ps[4], solution_ps[5]
@@ -36,7 +36,7 @@ def compute_mu_ps(solution_ps, mass):
         mu[i] = mass * np.dot(v_perp, v_perp) / (2 * np.sqrt(B2))
     return mu
 
-@maybe_njit
+@ul.maybe_njit
 def compute_mu_rk(solution_rk, mass):
     mu = np.zeros(len(solution_rk))
     for i in range(len(solution_rk)):
@@ -131,7 +131,7 @@ def compute_mu_deviation_rk(
         # RKG stores (N, 6) with canonical momentum — need to convert to velocity
         r0 = solution[0, 0:3]
         p0 = solution[0, 3:6]
-        A0 = vector_potential(r0)
+        A0 = dp.vector_potential(r0)
         v0 = p0 - A0
         state0 = np.hstack((r0, v0))[None, :]
         mu0 = compute_mu_rk(state0, mass)[0]
@@ -140,7 +140,7 @@ def compute_mu_deviation_rk(
         p_win = solution[i0:i1, 3:6]
         A_win = np.empty_like(r_win)
         for i in range(len(r_win)):
-            A_win[i] = vector_potential(r_win[i])
+            A_win[i] = dp.vector_potential(r_win[i])
         v_win = p_win - A_win
         state_win = np.hstack((r_win, v_win))
         mu_win = compute_mu_rk(state_win, mass)
@@ -150,7 +150,7 @@ def compute_mu_deviation_rk(
         mu_win = compute_mu_rk(solution[:, i0:i1].T, mass)
 
     mudrift = np.abs(mu_win - mu0) / mu0
-    t = (i0 + np.arange(mudrift.size, dtype=npfloat)) * dt * time_factor
+    t = (i0 + np.arange(mudrift.size, dtype=ul.npfloat)) * dt * time_factor
 
     return {"t": t, "mudrift": mudrift, "mu0": mu0}
 
@@ -219,13 +219,13 @@ def compute_mu_deviation_ps(
         if j1 <= j0:
             raise RuntimeError("Empty PS mu window (chunked)")
 
-        y_ps_win = expand_h5_to_full(ps_y[:, j0:j1])
+        y_ps_win = wr.expand_h5_to_full(ps_y[:, j0:j1])
 
     mu_ps = compute_mu_ps(y_ps_win, mass)
     mudrift = np.abs(mu_ps - mu0_ps) / mu0_ps
 
     dt_ps_store = ps_step * ps_store_stride
-    t_store = np.arange(j0, j1, dtype=npfloat) * dt_ps_store
+    t_store = np.arange(j0, j1, dtype=ul.npfloat) * dt_ps_store
     moment_stride = max(1, round(len(mu_ps) // max_plot_points))
     t_plot = t_store[::moment_stride] * time_factor
     mudrift_plot = mudrift[::moment_stride]
