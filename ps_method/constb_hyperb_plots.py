@@ -80,7 +80,6 @@ def full_2d(
     ax.grid(True)
     plt.tight_layout()
 
-    fig.canvas.draw()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -119,7 +118,6 @@ def full_3d(
     ax.legend(loc="upper right")
     plt.tight_layout()
 
-    fig.canvas.draw()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -135,7 +133,6 @@ def ke_error(
     use_rk4=False, use_rk45=False,
     particle_type="", field_label="", use_plot_titles=True,
     time_factor=None,
-    **_ignored,
 ):
     """Relative kinetic energy error over time (log-log)."""
     if time_factor is None:
@@ -175,7 +172,6 @@ def ke_error(
 
     ul.place_endpoint_labels(fig, ax, endpoints)
 
-    fig.canvas.draw()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -222,7 +218,6 @@ def slice_2d(
     ax.legend(loc="upper right")
     ax.grid(True)
 
-    fig.canvas.draw()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -261,7 +256,6 @@ def slice_3d(
         ax.set_title(f"3D Trajectory of Final {particle_type} Orbits in {field_label}")
     ax.legend(loc="upper right")
 
-    fig.canvas.draw()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -443,6 +437,5 @@ def trajectory_error(
 
     ul.place_endpoint_labels(fig, ax, endpoints)
 
-    fig.canvas.draw()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
     plt.close(fig)

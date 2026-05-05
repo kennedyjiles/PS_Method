@@ -83,7 +83,6 @@ def full_2d(
     ax.set_aspect('equal', adjustable='box')
     ax.grid(True)
 
-    fig.canvas.draw()
     fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="2D", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
@@ -122,7 +121,6 @@ def full_3d(
         ax.set_title(f"3D {particle_type} Trajectory in Dipole B Field")
     ax.legend(loc="upper right")
 
-    fig.canvas.draw()
     fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="3D", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
@@ -159,7 +157,6 @@ def slice_2d(
     ax.legend(loc="upper right")
     ax.grid(True)
 
-    fig.canvas.draw()
     fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="2Dslice", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
@@ -202,7 +199,6 @@ def slice_3d(
         ax.set_title(f'3D Trajectory Slice of {particle_type} Orbits in Dipole B Field')
     ax.legend(loc="upper right")
 
-    fig.canvas.draw()
     fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="3Dslice", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
@@ -314,7 +310,6 @@ def ke_error(
     ul.place_endpoint_labels(fig, ax, endpoints)
 
     # === Save and Close ===
-    fig.canvas.draw()
     fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="KEerror", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
@@ -360,7 +355,6 @@ def poincare(
     ax.set_title("Dragt Poincaré Surface of Section at z=0")
     ax.grid(True)
     ax.legend(loc="upper right", fontsize=9)
-    fig.canvas.draw()
     fig.savefig(os.path.join(run_folder, f"{stem}_dragt_surface_section.png"), dpi=300)
     plt.close(fig)
 
@@ -429,7 +423,6 @@ def adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max, ste
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
     print(f"(Adiabaticity parameter, <.1 stable) epsilon:\n   initial={eps_initial:.4f}, mean={eps_mean:.4f}, max={eps_max:.4f}\n")
-    fig.canvas.draw()
     fig.savefig(os.path.join(run_folder, f"{stem}_dragt_adiabaticity.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
 
