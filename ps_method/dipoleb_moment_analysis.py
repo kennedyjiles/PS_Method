@@ -19,48 +19,49 @@ from . import dipoleb_physics as dp
 
 @ul.maybe_njit
 def compute_mu_ps(solution_ps, mass):
-    x, y, z = solution_ps[0], solution_ps[1], solution_ps[2]
+    # Uses the identity |v_perp|² = |v|² − (v·B)²/B² to avoid per-step
+    # 3-vector allocations. Numerically equivalent to the v_par/v_perp
+    # decomposition; saves N small allocations on long runs.
+    x = solution_ps[0]
     vx, vy, vz = solution_ps[3], solution_ps[4], solution_ps[5]
     Bx, By, Bz = solution_ps[14], solution_ps[15], solution_ps[16]
 
     mu = np.zeros_like(x)
     for i in range(len(x)):
-        B = np.array([Bx[i], By[i], Bz[i]])
-        B2 = np.dot(B, B)
+        B2 = Bx[i]*Bx[i] + By[i]*By[i] + Bz[i]*Bz[i]
         if B2 == 0:
             mu[i] = 0.0
             continue
-        v = np.array([vx[i], vy[i], vz[i]])
-        v_par = (np.dot(v, B) / B2) * B
-        v_perp = v - v_par
-        mu[i] = mass * np.dot(v_perp, v_perp) / (2 * np.sqrt(B2))
+        v_dot_B = vx[i]*Bx[i] + vy[i]*By[i] + vz[i]*Bz[i]
+        v2      = vx[i]*vx[i] + vy[i]*vy[i] + vz[i]*vz[i]
+        v_perp2 = v2 - v_dot_B*v_dot_B / B2
+        mu[i] = mass * v_perp2 / (2.0 * np.sqrt(B2))
     return mu
 
 @ul.maybe_njit
 def compute_mu_rk(solution_rk, mass):
+    # Same scalar identity as compute_mu_ps; B is recomputed from position
+    # (RK state doesn't carry it). Sign convention matches the simulator
+    # (downward dipole moment, upward B at equator).
     mu = np.zeros(len(solution_rk))
     for i in range(len(solution_rk)):
         x, y, z = solution_rk[i, 0:3]
         vx, vy, vz = solution_rk[i, 3:6]
 
-        # Compute B at position
-        r2 = x**2 + y**2 + z**2
+        r2 = x*x + y*y + z*z
         if r2 == 0:
             mu[i] = 0.0
             continue
         r5inv = r2**(-2.5)
-        # Sign convention matches simulator (downward dipole moment, upward B at equator)
-        B = np.array([
-            -3 * x * z * r5inv,
-            -3 * y * z * r5inv,
-            -(3 * z**2 - r2) * r5inv
-        ])
+        Bx = -3.0 * x * z * r5inv
+        By = -3.0 * y * z * r5inv
+        Bz = -(3.0 * z*z - r2) * r5inv
 
-        B2 = np.dot(B, B)
-        v = np.array([vx, vy, vz])
-        v_par = (np.dot(v, B) / B2) * B
-        v_perp = v - v_par
-        mu[i] = mass * np.dot(v_perp, v_perp) / (2 * np.sqrt(B2))
+        B2      = Bx*Bx + By*By + Bz*Bz
+        v_dot_B = vx*Bx + vy*By + vz*Bz
+        v2      = vx*vx + vy*vy + vz*vz
+        v_perp2 = v2 - v_dot_B*v_dot_B / B2
+        mu[i] = mass * v_perp2 / (2.0 * np.sqrt(B2))
 
     return mu
 
@@ -172,7 +173,7 @@ def compute_mu_deviation_ps(
     cache_path : str
         Path to the PS h5 file.
     steps_ps : int
-        Total physical integration steps.
+        Total PS step count (may be the trimmed value when reading a trimmed cache).
     ps_step : float
         PS step size (normalized time).
     PS_decimate : int
@@ -226,7 +227,7 @@ def compute_mu_deviation_ps(
 
     dt_ps_store = ps_step * ps_store_stride
     t_store = np.arange(j0, j1, dtype=ul.npfloat) * dt_ps_store
-    moment_stride = max(1, round(len(mu_ps) // max_plot_points))
+    moment_stride = max(1, len(mu_ps) // max_plot_points)
     t_plot = t_store[::moment_stride] * time_factor
     mudrift_plot = mudrift[::moment_stride]
 
