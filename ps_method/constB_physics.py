@@ -28,24 +28,27 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, t
 
     Returns
     -------
-    final_coeff_matrix : (6, steps+1) array — full trajectory [x,y,z,vx,vy,vz].
-    orders_used        : (steps+1,) int array — PS order actually used per step.
+    state_history : (6, steps+1) array — full trajectory [x,y,z,vx,vy,vz] at each step.
+    orders_used   : (steps+1,) int array — PS order actually used per step.
     """
     n_total = 6
-    final_coeff_matrix = np.zeros((n_total, steps + 1), dtype=ul.npfloat)
-    final_coeff_matrix[:, 0] = initial_pos_vel
+    state_history = np.zeros((n_total, steps + 1), dtype=ul.npfloat)
+    state_history[:, 0] = initial_pos_vel
     oip1 = one / (one + np.arange(order_max))       # 1/(i+1) lookup table
     orders_used = np.zeros(steps + 1, dtype=np.int32)
+
+    # Pre-allocated buffers reused across steps (avoid per-step alloc churn)
+    c = np.zeros((n_total, order_max + 1), dtype=ul.npfloat)
+    sum_terms = np.zeros(n_total, dtype=ul.npfloat)
 
     # Named indices for readability
     x, y, z = 0, 1, 2
     vx, vy, vz = 3, 4, 5
 
     for j in range(1, steps + 1):
-        c = np.zeros((n_total, order_max + 1), dtype=ul.npfloat)
-        c[:, 0] = final_coeff_matrix[:, j - 1]     # seed with end of previous step
+        c[:, 0] = state_history[:, j - 1]     # seed with end of previous step
+        sum_terms[:] = 0                      # reset accumulator
         power = timedelta
-        sum_terms = np.zeros(n_total, dtype=ul.npfloat)
         max_contrib = tol + ul.npfloat(1.0)
         i = 0
 
@@ -60,15 +63,29 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, t
             c[vy, i+1] = oip1[i] * qoverm * (Bfield[0]*c[vz, i] - Bfield[2]*c[vx, i])
             c[vz, i+1] = oip1[i] * qoverm * (Bfield[1]*c[vx, i] - Bfield[0]*c[vy, i])
 
-            sum_terms += c[:, i+1] * power        
-            max_contrib = np.abs(c[:, i+1]).max()  
+            new_term = c[:, i+1] * power
+            sum_terms += new_term
+            
+            # Convergence test: per-component relative test — stop when
+            # |new_term[k]| < |sum_terms[k]| * tol for every component.
+            # Components with |sum_terms[k]| ≤ tol are treated as already
+            # converged (avoids divide-by-zero on inactive axes, e.g. z when vz=0).
+            max_contrib = ul.npfloat(0.0)
+            for k in range(n_total):
+                ref = abs(sum_terms[k])
+                if ref > tol:
+                    ratio = abs(new_term[k]) / ref
+                    if ratio > max_contrib:
+                        max_contrib = ratio
+            # --Old (paper version)---:
+            # max_contrib = np.abs(c[:, i+1]).max()
             power *= timedelta
             i += 1
 
-        final_coeff_matrix[:, j] = final_coeff_matrix[:, j - 1] + sum_terms
+        state_history[:, j] = state_history[:, j - 1] + sum_terms
         orders_used[j] = i
 
-    return final_coeff_matrix, orders_used
+    return state_history, orders_used
 
 
 @ul.maybe_njit
@@ -97,8 +114,8 @@ def analytical(tau, d, qoverm):
     y_t = y0 + s * (-vx0 * (1 - cos_t) + vy0 * sin_t)
     z_t = z0 + vz0 * tau
 
-    vx_t = vx0 * cos_t - vy0 * sin_t
-    vy_t = vy0 * cos_t + vx0 * sin_t
+    vx_t = vx0 * cos_t + vy0 * sin_t
+    vy_t = vy0 * cos_t - vx0 * sin_t
     vz_t = vz0 * np.ones_like(tau)
 
     return np.vstack((x_t, y_t, z_t, vx_t, vy_t, vz_t))

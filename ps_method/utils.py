@@ -58,6 +58,8 @@ def maybe_njit(func):
         return njit(func)
 
 
+# Pre-cast scalar literals so numba-compiled hot loops below avoid
+# constructing np.float64(2.0) etc. on every call.
 two = npfloat(2.0)
 six = npfloat(6.0)
 half = npfloat(0.5)
@@ -68,6 +70,21 @@ half = npfloat(0.5)
 
 @maybe_njit
 def rk4_fixed_step(func, d0, dt, steps, args=()):
+    """Classical 4th-order Runge-Kutta with fixed step size.
+
+    Parameters
+    ----------
+    func  : callable(t, y, *args) → dy/dt
+    d0    : 1-D initial state vector, length = nvars
+    dt    : step size (npfloat)
+    steps : number of integration steps
+    args  : extra positional args forwarded to func
+
+    Returns
+    -------
+    ndarray of shape (nvars, steps + 1) — solution transposed so each
+    row is a state variable's time series.
+    """
     d_out = np.zeros((steps + 1, len(d0)), dtype=npfloat)
     d_out[0] = d0
 
@@ -94,6 +111,13 @@ def f64(arr):
     return np.asarray(arr, dtype=np.float64)
 
 def plt_config(scale=1):
+    """Set global matplotlib rcParams (fonts, sizes, DPI). Side-effect only.
+
+    Parameters
+    ----------
+    scale : multiplier applied to font sizes (axes titles, labels, ticks,
+            legend). Defaults to 1 for the standard configuration.
+    """
     plt.rcParams['font.family'] = 'Times New Roman'
     plt.rcParams['mathtext.fontset'] = 'cm' # Computer Modern
     plt.rcParams['axes.titlesize'] = int(18*scale)
@@ -113,7 +137,8 @@ def sparse_labels(val, pos):
     # only label if it's (numerically) exactly a power of 10
     if not np.isclose(val, 10.0**exp, rtol=0, atol=1e-12):
         return ""
-    # keep only every Nth decade; change 3 -> 1 for all decades, 2 for every other, etc.
+    # Label every other decade. Change `exp % 2` → `exp % N` to label
+    # every Nth decade (1 = all decades, 3 = every third, etc.).
     return rf"$10^{{{exp}}}$" if (exp % 2 == 0) else ""
 
 
