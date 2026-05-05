@@ -97,14 +97,27 @@ def _local_dt_from_B(state, steps_per_local_gyro, dt_min, dt_max):
     return max(dt_min, min(dt, dt_max))
 
 
+def _use_fast_path(state, ps_step, min_N):
+    """Return True if ps_step is small enough for the local B field.
+    Check: how many ps_steps fit in one local gyroperiod?
+    If enough (>= min_N), the fast Numba path can handle it."""
+    Bmag2 = state[14]**2 + state[15]**2 + state[16]**2
+    if Bmag2 <= 0.0 or not np.isfinite(Bmag2):
+        return True  # weak/zero field — fast path fine
+    Bmag = np.sqrt(Bmag2)
+    tau_local = _twopi / Bmag
+    effective_N = tau_local / ps_step
+    return effective_N >= min_N
+
+
 def _ps_adaptive_chunk(
     PS_order, n_output, cur_state, tol, qoverm, ps_step,
     dt_internal, dt_min, dt_max,
     order_low, order_high, grow_factor, shrink_factor, max_retries,
-    c, zeta, oip1, sum_terms,
     t_internal,
     halt_on_failure=True,
     steps_per_local_gyro=200,
+    max_substeps=2000,
 ):
     """
     Process n_output grid points with adaptive substeps.
@@ -113,13 +126,13 @@ def _ps_adaptive_chunk(
     recompute dt_B at the new position, and retry the remainder.
 
     Key design rules to prevent hangs:
-      - n_sub is capped at MAX_SUB to prevent memory/time explosions
+      - n_sub is capped at max_substeps to prevent memory/time explosions
       - After accepting a good prefix (first_bad > 0), retries resets to 0
         so dt_B is recomputed fresh at the new position
       - Only first_bad == 0 (zero progress) counts as a retry toward max_retries
     """
     n_state = 17
-    MAX_SUB = 2000          # cap: never ask ps_integrate for more than this
+    MAX_SUB = max_substeps   # cap: never ask ps_integrate for more than this
 
     sol_chunk    = np.zeros((n_state, n_output + 1), dtype=ul.npfloat)
     orders_chunk = np.zeros(n_output + 1, dtype=np.int32)
@@ -340,12 +353,6 @@ def run_ps_streaming_adaptive(
     hit_atm_r       = 0.0
     R_ATMOSPHERE    = r_atmosphere   # in R_E; configurable via yaml (default 1.0 = surface)
 
-    # --- pre-allocate scratch for adaptive path ---
-    c_scratch    = np.zeros((n_state, PS_order + 1), dtype=ul.npfloat)
-    zeta_scratch = np.zeros(PS_order + 1, dtype=ul.npfloat)
-    oip1         = _one / (_one + np.arange(PS_order, dtype=ul.npfloat))
-    sum_scratch  = np.zeros(n_state, dtype=ul.npfloat)
-
     # --- internal time ---
     t_internal = ul.npfloat(0.0)
 
@@ -394,18 +401,6 @@ def run_ps_streaming_adaptive(
     else:
         f = None
         dset_y = dset_orders = None
-
-    def _use_fast_path(state, ps_step, min_N):
-        """Return True if ps_step is small enough for the local B field.
-        Check: how many ps_steps fit in one local gyroperiod?
-        If enough (>= min_N), the fast Numba path can handle it."""
-        Bmag2 = state[14]**2 + state[15]**2 + state[16]**2
-        if Bmag2 <= 0.0 or not np.isfinite(Bmag2):
-            return True  # weak/zero field — fast path fine
-        Bmag = np.sqrt(Bmag2)
-        tau_local = _twopi / Bmag
-        effective_N = tau_local / ps_step
-        return effective_N >= min_N
 
     try:
         force_adaptive = False   # set True when fast path diverges
@@ -472,7 +467,6 @@ def run_ps_streaming_adaptive(
                     PS_order, this_chunk, cur_state, tol, qoverm, ps_step,
                     dt_internal, dt_min, dt_max,
                     order_low, order_high, grow_factor, shrink_factor, max_retries,
-                    c_scratch, zeta_scratch, oip1, sum_scratch,
                     t_internal,
                     steps_per_local_gyro=steps_per_local_gyro,
                 )
