@@ -34,7 +34,6 @@ def main(cfg_path, replot=False):
                regenerate plots from cached h5 data).
     """
     cfg = load_config(cfg_path)
-    _config_log = cfg.pop("_config_log", [])
 
     # --- Resolve float type BEFORE compute_derived (needs to be set for builtins) ---
     USE_FLOAT128 = cfg.get("use_float128", False)
@@ -126,7 +125,9 @@ def main(cfg_path, replot=False):
     gyro_radius_si = abs(v_si * np.sin(pitch_rad) * mass_si / (q_e * B_0))
     r_normalization = delta
     v_tau = v_si * tau_time / r_normalization
-    gamma = 1 / (delta / r_normalization)  # if normalizing by delta this should be 1
+    # `gamma` is the field-scale factor in B(y) = B_0 tanh(gamma*y) (paper Eq. 31),
+    # NOT the Lorentz factor. When normalizing length by delta, gamma collapses to 1.
+    gamma = 1 / (delta / r_normalization)
 
     physical_time = norm_time * tau_time
 
@@ -262,7 +263,7 @@ def main(cfg_path, replot=False):
     if "ps" in timing:
         print(f"Run Time PS     : {timing['ps']:.2f} s")
 
-    print(f"Norm Time       : {norm_time:.2e} s")
+    print(f"Norm Time       : {norm_time:.2e}")
     print(f"Physical Time   : {physical_time:.2e} s")
     if orders_used is not None:
         print(f"PS Orders       : max={orders_used.max()}, mean={orders_used.mean():.1f}\n")

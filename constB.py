@@ -36,7 +36,6 @@ def main(cfg_path, replot=False):
 
     print(f"Loading YAML config: {cfg_path}\n")
     cfg = load_config(cfg_path)
-    _config_log = cfg.pop("_config_log", [])
 
     # --- Resolve float type BEFORE compute_derived (needs to be set for builtins) ---
     USE_FLOAT128 = cfg.get("use_float128", False)
@@ -118,7 +117,7 @@ def main(cfg_path, replot=False):
     v_si = npfloat(np.sqrt(npfloat(2 * KE_particle * evtoj / mass)))
     tau_time = mass / (abs(q_e) * B_0)
     v_tau = v_si * tau_time
-    physical_time = norm_time * tau_time
+    # physical_time computed below, after norm_time is rounded to an exact multiple of ps_step
 
     # === Velocity Config ===
     pitch_rad = np.radians(pitch_deg)
@@ -143,6 +142,7 @@ def main(cfg_path, replot=False):
     # This has no impact on the energy calculations.
     steps_ps = int(round(norm_time / ps_step))
     norm_time = steps_ps * ps_step           # <-- adjust total time to be exact multiple
+    physical_time = norm_time * tau_time     # compute after rounding so values stay consistent
     t_eval_ps = np.linspace(0, norm_time, steps_ps + 1, dtype=npfloat)
 
     if USE_RK4:
@@ -153,11 +153,7 @@ def main(cfg_path, replot=False):
         steps_rk45 = steps_ps   # just for plotting consistency
         t_eval_rk45 = np.float64(t_eval_ps)
 
-    phase_warning = False
-    if not np.isclose(ps_step, rk4_step, rtol=1e-12):
-        phase_warning = True
-
-    if phase_warning:
+    if USE_RK4 and not np.isclose(ps_step, rk4_step, rtol=1e-12):
         print(
             "⚠️  Warning: PS and RK4 step sizes or total times do not align exactly.\n"
             "    → Energy drift comparisons are fine.\n"
@@ -195,6 +191,7 @@ def main(cfg_path, replot=False):
             t_eval_rk4 = cached["rk4"]["t"]
         if USE_RK45 and cached["rk45"]:
             solution_rk45 = SimpleNamespace(t=cached["rk45"]["t"], y=cached["rk45"]["y"])
+            t_eval_rk45 = cached["rk45"]["t"]
 
         timing = cached.get("meta", {}).get("timing", {})
         stem = os.path.splitext(os.path.basename(cache_path))[0]
@@ -272,9 +269,7 @@ def main(cfg_path, replot=False):
         print(f"Run Time RK4    : {timing['rk4']:.2f} s")
     if "ps" in timing:
         print(f"Run Time PS     : {timing['ps']:.2f} s")
-    if USE_ANALYTICAL and "ana" in timing:
-        print(f"Run Time Exact    : {timing['ana']:.2f} s")
-    print(f"Norm Time       : {norm_time:.2e} s")
+    print(f"Norm Time       : {norm_time:.2e}")
     print(f"Physical Time   : {physical_time:.2e} s")
     if orders_used is not None:
         print(f"PS Orders       : max={orders_used.max()}, mean={orders_used.mean():.1f}\n")
