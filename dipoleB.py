@@ -1241,6 +1241,7 @@ def main(cfg_path, replot=False):
         output_folder=output_folder, stem=stem, particle_type=particle_type,
         KE_particle=KE_particle, x_initial=x_initial, y_initial=y_initial,
         z_initial=z_initial, pitch_deg=pitch_deg, phi_deg=phi_deg,
+        gyroperiods=gyroperiods,
         dragt_log=dragt_log,
         method_records=_method_records,
     )

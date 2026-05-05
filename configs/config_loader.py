@@ -52,6 +52,23 @@ def _collect_keys(d, prefix=""):
     return keys
 
 
+def _all_base_keys():
+    """Union of keys from every field-type base.yml.
+
+    Used as the validation schema for self-contained (saved) configs that
+    have no base merge — without this, typos in those configs go undetected
+    because the run config's own keys would be treated as the schema.
+    """
+    keys = set()
+    for field in ("dipoleb", "constb", "hyperb"):
+        base_path = os.path.join(_THIS_DIR, field, "base.yml")
+        if os.path.isfile(base_path):
+            with open(base_path) as f:
+                base = yaml.safe_load(f) or {}
+            keys |= _collect_keys(base)
+    return keys
+
+
 def _resolve_mass(particle_name):
     """Map particle name to SI mass."""
     name = particle_name.strip().lower()
@@ -69,6 +86,8 @@ def _resolve_ext_path(root, path):
     If *path* is None/empty, returns None.
     If *path* is already absolute, returns it unchanged.
     Otherwise, joins *root* (which may be None/empty) with *path*.
+    Warns when *root* is empty and *path* is relative — the path will be
+    resolved against cwd at run time, which is rarely what users want.
     """
     if not path:
         return None
@@ -76,6 +95,8 @@ def _resolve_ext_path(root, path):
         return path
     if root:
         return os.path.join(root, path)
+    print(f"\n  WARNING: external_h5 path '{path}' is relative with no root; "
+          f"will be interpreted from cwd at run time\n")
     return path
 
 
@@ -100,7 +121,8 @@ def _apply_step_overrides(steps, overrides, npfloat=np.float64):
     return steps
 
 
-def _resolve_output_paths(config_name, field_prefix="", output_root=None):
+def _resolve_output_paths(config_name, field_prefix="", output_root=None,
+                          batch_group=None):
     """Auto-derive output_folder and run_storage from config name.
 
     Parameters
@@ -112,11 +134,20 @@ def _resolve_output_paths(config_name, field_prefix="", output_root=None):
                    Examples:
                        None              → data/dipoleb/demo/
                        "thesis/chapter3" → thesis/chapter3/data/dipoleb/demo/
+    batch_group  : str or None — optional subdirectory between field_prefix
+                   and config_name, used by batch_runner.py to keep sweep
+                   results separate from single-run configs.
+                   Examples:
+                       "flux_map" → data/dipoleb/flux_map/E1e+07_L2.00_P45.0/
+                       "michel"   → data/dipoleb/michel/E1e+07_L1.50_P85.0_phi30.0/
     """
+    parts = ["data"]
     if field_prefix:
-        data_path = os.path.join("data", field_prefix, config_name)
-    else:
-        data_path = os.path.join("data", config_name)
+        parts.append(field_prefix)
+    if batch_group:
+        parts.append(batch_group)
+    parts.append(config_name)
+    data_path = os.path.join(*parts)
 
     if output_root:
         output_folder = os.path.join(output_root, data_path)
@@ -135,6 +166,9 @@ def copy_config_to_output(cfg_path, output_folder):
     be loaded directly from data/ without needing base.yml nearby.  A
     ``base_config: none`` key tells load_config to skip the base merge.
 
+    Reuses load_config() for parsing, merging, and validation so that
+    unknown-key warnings and critical-value checks fire here too.
+
     Parameters
     ----------
     cfg_path      : str – path to the original YAML config.
@@ -142,26 +176,14 @@ def copy_config_to_output(cfg_path, output_folder):
     """
     import subprocess
 
-    # --- Load and merge (same logic as load_config, but we keep the result) ---
-    with open(cfg_path, "r") as f:
-        run_cfg = yaml.safe_load(f) or {}
+    # Load via the shared loader so we get merge + validation for free
+    merged = load_config(cfg_path)
 
-    # Find the base config
-    if "base_config" in run_cfg:
-        base_path = run_cfg.pop("base_config")
-        if base_path and base_path.lower() != "none" and not os.path.isabs(base_path):
-            base_path = os.path.join(os.path.dirname(os.path.abspath(cfg_path)), base_path)
-    else:
-        base_path = os.path.join(os.path.dirname(os.path.abspath(cfg_path)), "base.yml")
+    # Strip runtime metadata that shouldn't be persisted to disk
+    merged.pop("_config_name", None)
+    merged.pop("_config_log", None)
 
-    if base_path and str(base_path).lower() != "none" and os.path.isfile(base_path):
-        with open(base_path, "r") as f:
-            merged = yaml.safe_load(f) or {}
-        _deep_merge(merged, run_cfg)
-    else:
-        merged = run_cfg
-
-    # --- Add git commit hash ---
+    # Append git commit hash for reproducibility
     try:
         _hash = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
@@ -180,7 +202,7 @@ def copy_config_to_output(cfg_path, output_folder):
 
     merged["git_commit"] = _hash
 
-    # Mark as self-contained so load_config skips the base merge
+    # Mark as self-contained so load_config skips the base merge on re-load
     merged["base_config"] = "none"
 
     # --- Write ---
@@ -286,18 +308,31 @@ def load_config(conf_file):
         log.append("")
 
     # --- Validate: warn about unknown keys ---
-    base_keys = _collect_keys(base_cfg) if base_cfg else _collect_keys(run_cfg)
+    base_keys = _collect_keys(base_cfg) if base_cfg else _all_base_keys()
     run_keys  = _collect_keys(run_cfg)
     unknown   = run_keys - base_keys
     _known_extras = {
         "total_steps", "norm_time_override", "base_config",
-        "output_folder", "run_storage", "output_root",
+        "output_folder", "run_storage", "output_root", "batch_group",
+        "git_commit",
     }
     real_unknown = {k for k in unknown if k.split(".")[0] not in _known_extras}
     if real_unknown:
         print(f"\n  WARNING: Unknown config keys (possible typos): {sorted(real_unknown)}")
         print(f"  Valid top-level keys: {sorted(k for k in base_keys if '.' not in k)}\n")
         log.append(f"WARNING: Unknown config keys: {sorted(real_unknown)}")
+        log.append("")
+
+    # --- Warn if multiple integration-time specs are set in the run config ---
+    # Paper configs that intentionally override (e.g. gyroperiods: null + total_steps: N)
+    # do NOT trigger this; only multiple non-null values in the same run YAML do.
+    _time_priority = ["norm_time_override", "total_steps", "gyroperiods"]
+    _run_set = [k for k in _time_priority if run_cfg.get(k) is not None]
+    if len(_run_set) > 1:
+        msg = (f"multiple integration-time specs in run config: {_run_set}; "
+               f"using {_run_set[0]} (precedence: {' > '.join(_time_priority)})")
+        print(f"\n  WARNING: {msg}\n")
+        log.append(f"WARNING: {msg}")
         log.append("")
 
     # --- Deep merge: run config overrides base ---
@@ -351,28 +386,34 @@ def load_config(conf_file):
 # Stage 2a: Compute derived — dipole
 # ---------------------------------------------------------------------------
 
-def compute_derived_dipoleb(cfg, npfloat=np.float64):
+def compute_derived_dipoleb(cfg, npfloat=None):
     """
     Dipole-specific derived quantities.
 
     Parameters
     ----------
     cfg : dict
-        Raw config from load_config().
-    npfloat : dtype
-        Floating-point type (np.float64 or np.float128).
+        Raw config from load_config(). Mutated in place: when
+        use_gyroradius_L_correction is true, a note is appended to
+        cfg["_config_log"] recording the L_eff value used.
+    npfloat : dtype, optional
+        Floating-point type. If None (default), derived from
+        cfg["use_float128"] — np.float128 when true, else np.float64.
 
     Returns
     -------
     dict
         Flat params dict ready for dipoleb.py.
     """
+    if npfloat is None:
+        npfloat = np.float128 if cfg["use_float128"] else np.float64
 
     mass_si = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
     output_folder, run_storage = _resolve_output_paths(
         config_name, field_prefix="dipoleb",
         output_root=cfg.get("output_root"),
+        batch_group=cfg.get("batch_group"),
     )
 
     # --- Physics seeds ---
@@ -380,11 +421,11 @@ def compute_derived_dipoleb(cfg, npfloat=np.float64):
     phi_deg     = npfloat(cfg["phi_deg"])
     x_initial   = npfloat(cfg["x_initial"])
     KE_particle = npfloat(cfg["energy_eV"])
-    y_initial   = npfloat(cfg.get("y_initial", 0.0))
-    z_initial   = npfloat(cfg.get("z_initial", 0.0))
+    y_initial   = npfloat(cfg["y_initial"])
+    z_initial   = npfloat(cfg["z_initial"])
 
     # --- T_gyro (relativistic or simple) ---
-    if cfg.get("use_gyroradius_L_correction", False):
+    if cfg["use_gyroradius_L_correction"]:
         L_eff, gamma, T_gyro = _compute_relativistic_L_eff(
             KE_particle, mass_si, pitch_deg, phi_deg, x_initial)
         cfg.setdefault("_config_log", []).append(
@@ -393,14 +434,14 @@ def compute_derived_dipoleb(cfg, npfloat=np.float64):
         T_gyro = 2.0 * np.pi * (x_initial ** 3)
 
     # --- Step sizes ---
-    spg = cfg.get("steps_per_gyro", {})
-    round_dec = cfg.get("round_decimals", 1)
+    spg = cfg["steps_per_gyro"]
+    round_dec = cfg["round_decimals"]
     raw_steps = _compute_step_sizes(T_gyro, {
-        "ps":  spg.get("ps", 65),
-        "rk4": spg.get("rk4", 65),
-        "rkg": spg.get("rkg", 65),
+        "ps":  spg["ps"],
+        "rk4": spg["rk4"],
+        "rkg": spg["rkg"],
     }, round_decimals=round_dec)
-    raw_steps = _apply_step_overrides(raw_steps, cfg.get("step_overrides", {}), npfloat)
+    raw_steps = _apply_step_overrides(raw_steps, cfg["step_overrides"], npfloat)
 
     ps_step  = npfloat(raw_steps["ps"])
     rk4_step = npfloat(raw_steps["rk4"])
@@ -414,50 +455,54 @@ def compute_derived_dipoleb(cfg, npfloat=np.float64):
         total_steps = cfg["total_steps"]
         norm_time   = npfloat(total_steps) * ps_step
         gyroperiods = npfloat(norm_time / T_gyro)
-    else:
+    elif cfg.get("gyroperiods") is not None:
         gyroperiods = npfloat(cfg["gyroperiods"])
         norm_time   = npfloat(gyroperiods) * T_gyro
+    else:
+        raise ValueError(
+            "Specify one of: gyroperiods, total_steps, or norm_time_override."
+        )
 
     # --- Plotting ---
-    plot_cfg = cfg.get("plotting", {})
+    plot_cfg = cfg["plotting"]
 
     # --- External h5 ---
-    use_ext = cfg.get("use_external_h5", {})
-    ext     = cfg.get("external_h5", {})
-    ext_root = ext.get("root", "") if isinstance(ext, dict) else ""
+    use_ext = cfg["use_external_h5"]
+    ext     = cfg["external_h5"]
+    ext_root = ext.get("root") or ""
     ext_ps   = _resolve_ext_path(ext_root, ext.get("ps"))
     ext_rk4  = _resolve_ext_path(ext_root, ext.get("rk4"))
     ext_rk45 = _resolve_ext_path(ext_root, ext.get("rk45"))
     ext_rkg  = _resolve_ext_path(ext_root, ext.get("rkg"))
 
     # --- Solvers ---
-    solvers = cfg.get("solvers", {})
+    solvers = cfg["solvers"]
 
     params = {
         # Toggles
-        "READ_DATA":       cfg.get("read_data", True),
-        "USE_RK45":        solvers.get("rk45", False),
-        "USE_RK4":         solvers.get("rk4", False),
-        "USE_RKG":         solvers.get("rkg", False),
-        "USE_PS":          solvers.get("ps", True),
-        "USE_ADAPTIVE":    solvers.get("adaptive", False),
-        "PS_decimate":     cfg.get("ps_decimate", 1),
+        "READ_DATA":       cfg["read_data"],
+        "USE_RK45":        solvers["rk45"],
+        "USE_RK4":         solvers["rk4"],
+        "USE_RKG":         solvers["rkg"],
+        "USE_PS":          solvers["ps"],
+        "USE_ADAPTIVE":    solvers["adaptive"],
+        "PS_decimate":     cfg["ps_decimate"],
 
         # Initial position
         "y_initial": y_initial,
         "z_initial": z_initial,
 
         # Plotting
-        "USE_PLOT_TITLES": plot_cfg.get("titles", False),
-        "USE_FULL_PLOT":   plot_cfg.get("full_plot", True),
-        "slice_mode":      plot_cfg.get("slice_mode", "last"),
-        "gyro_window":     plot_cfg.get("gyro_window", "last"),
+        "USE_PLOT_TITLES": plot_cfg["titles"],
+        "USE_FULL_PLOT":   plot_cfg["full_plot"],
+        "slice_mode":      plot_cfg["slice_mode"],
+        "gyro_window":     plot_cfg["gyro_window"],
 
         # External h5
-        "USE_EXTERNAL_H5_ps":   use_ext.get("ps", False),
-        "USE_EXTERNAL_H5_rk4":  use_ext.get("rk4", False),
-        "USE_EXTERNAL_H5_rk45": use_ext.get("rk45", False),
-        "USE_EXTERNAL_H5_rkg":  use_ext.get("rkg", False),
+        "USE_EXTERNAL_H5_ps":   use_ext["ps"],
+        "USE_EXTERNAL_H5_rk4":  use_ext["rk4"],
+        "USE_EXTERNAL_H5_rk45": use_ext["rk45"],
+        "USE_EXTERNAL_H5_rkg":  use_ext["rkg"],
         "external_h5_ps":   ext_ps,
         "external_h5_rk4":  ext_rk4,
         "external_h5_rk45": ext_rk45,
@@ -481,37 +526,37 @@ def compute_derived_dipoleb(cfg, npfloat=np.float64):
         "ps_step":              ps_step,
         "rk4_step":             rk4_step,
         "rkg_step":             rkg_step,
-        "N_STEPS_PER_GYRO_ps":  spg.get("ps", 65),
-        "N_STEPS_PER_GYRO_rk4": spg.get("rk4", 65),
-        "N_STEPS_PER_GYRO_rkg": spg.get("rkg", 65),
+        "N_STEPS_PER_GYRO_ps":  spg["ps"],
+        "N_STEPS_PER_GYRO_rk4": spg["rk4"],
+        "N_STEPS_PER_GYRO_rkg": spg["rkg"],
 
         # Plotting windows
-        "window_time": npfloat(cfg.get("window_time", 11.6)),
-        "N_GYRO":      plot_cfg.get("n_gyro", 75),
+        "window_time": npfloat(cfg["window_time"]),
+        "N_GYRO":      plot_cfg["n_gyro"],
 
         # Optional overrides
-        "PS_order":        cfg.get("ps_order", 40),
-        "PS_chunk_steps":  int(cfg.get("ps_chunk_steps", 10000)),
-        "rtol_rk45":       cfg.get("rtol_rk45", 1e-8),
-        "atol_rk45":       cfg.get("atol_rk45", 1e-10),
-        "user_min_phase":  cfg.get("user_min_phase", 0.1),
-        "MAX_PLOT_POINTS": cfg.get("max_plot_points", 1_000_000),
-        "USE_FLOAT128":    cfg.get("use_float128", False),
-        "CACHE_VELOCITY_RTOL": cfg.get("cache_velocity_rtol", 0.005),
-        "PLOT_BOUNDARY_PAD":   cfg.get("plot_boundary_pad", 1.1),
+        "PS_order":        cfg["ps_order"],
+        "PS_chunk_steps":  int(cfg["ps_chunk_steps"]),
+        "rtol_rk45":       cfg["rtol_rk45"],
+        "atol_rk45":       cfg["atol_rk45"],
+        "user_min_phase":  cfg["user_min_phase"],
+        "MAX_PLOT_POINTS": cfg.get("max_plot_points", 1_000_000),  # not in base.yml
+        "USE_FLOAT128":    cfg["use_float128"],
+        "CACHE_VELOCITY_RTOL": cfg["cache_velocity_rtol"],
+        "PLOT_BOUNDARY_PAD":   cfg["plot_boundary_pad"],
 
         # Special modes
-        "legacy_h5_path": cfg.get("legacy_h5_path"),
-        "manual_h5_path": cfg.get("manual_h5_path"),
+        "legacy_h5_path": cfg.get("legacy_h5_path"),  # not in base.yml
+        "manual_h5_path": cfg["manual_h5_path"],
 
         # Adaptive PS settings
-        "ps_adaptive": cfg.get("ps_adaptive", {}),
+        "ps_adaptive": cfg["ps_adaptive"],
 
         # Dragt monitor
-        "dragt_monitor_rtol": cfg.get("dragt_monitor_rtol", 1e-4),
+        "dragt_monitor_rtol": cfg["dragt_monitor_rtol"],
 
         # Bounce/drift detection
-        "bounce_drift": cfg.get("bounce_drift", {}),
+        "bounce_drift": cfg["bounce_drift"],
     }
 
     return params
@@ -525,7 +570,7 @@ compute_derived = compute_derived_dipoleb
 # Stage 2b: Compute derived — constant B
 # ---------------------------------------------------------------------------
 
-def compute_derived_constb(cfg, npfloat=np.float64):
+def compute_derived_constb(cfg, npfloat=None):
     """
     Constant-B specific derived quantities.
 
@@ -535,14 +580,17 @@ def compute_derived_constb(cfg, npfloat=np.float64):
     ----------
     cfg : dict
         Raw config from load_config().
-    npfloat : dtype
-        Floating-point type (np.float64 or np.float128).
+    npfloat : dtype, optional
+        Floating-point type. If None (default), derived from
+        cfg["use_float128"] — np.float128 when true, else np.float64.
 
     Returns
     -------
     dict
         Flat params dict ready for constb.py.
     """
+    if npfloat is None:
+        npfloat = np.float128 if cfg["use_float128"] else np.float64
 
     mass = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
@@ -555,27 +603,29 @@ def compute_derived_constb(cfg, npfloat=np.float64):
     pitch_deg   = npfloat(cfg["pitch_deg"])
     phi_deg     = npfloat(cfg["phi_deg"])
     KE_particle = npfloat(cfg["energy_eV"])
-    x_initial   = npfloat(cfg.get("x_initial", 0.0))
-    y_initial   = npfloat(cfg.get("y_initial", 0.0))
-    z_initial   = npfloat(cfg.get("z_initial", 0.0))
+    x_initial   = npfloat(cfg["x_initial"])
+    y_initial   = npfloat(cfg["y_initial"])
+    z_initial   = npfloat(cfg["z_initial"])
     Bfield_si   = np.array(cfg["Bfield_si"], dtype=npfloat)
 
     # --- T_gyro = 2π in normalized time ---
     T_gyro = 2.0 * np.pi
 
     # --- Step sizes ---
-    spg = cfg.get("steps_per_gyro", {})
-    round_dec = cfg.get("round_decimals", 3)
+    spg = cfg["steps_per_gyro"]
+    round_dec = cfg["round_decimals"]
     raw_steps = _compute_step_sizes(T_gyro, {
-        "ps":  spg.get("ps", 100),
-        "rk4": spg.get("rk4", 100),
+        "ps":  spg["ps"],
+        "rk4": spg["rk4"],
     }, round_decimals=round_dec)
-    raw_steps = _apply_step_overrides(raw_steps, cfg.get("step_overrides", {}), npfloat)
+    raw_steps = _apply_step_overrides(raw_steps, cfg["step_overrides"], npfloat)
 
     ps_step  = npfloat(raw_steps["ps"])
     rk4_step = npfloat(raw_steps["rk4"])
 
     # --- Integration time ---
+    if cfg.get("gyroperiods") is None:
+        raise ValueError("gyroperiods must be specified.")
     gyroperiods = npfloat(cfg["gyroperiods"])
     norm_time   = npfloat(gyroperiods) * T_gyro
 
@@ -583,30 +633,30 @@ def compute_derived_constb(cfg, npfloat=np.float64):
     tol = 1.0 * np.finfo(npfloat).eps
 
     # --- Plotting ---
-    plot_cfg = cfg.get("plotting", {})
+    plot_cfg = cfg["plotting"]
 
     # --- Solvers ---
-    solvers = cfg.get("solvers", {})
+    solvers = cfg["solvers"]
 
     # --- External h5 ---
-    ext = cfg.get("external_h5", {}) or {}
-    ext_root = ext.get("root", "")
-    ext_a = ext.get("a", {}) or {}
-    ext_b = ext.get("b", {}) or {}
+    ext = cfg["external_h5"]
+    ext_root = ext.get("root") or ""
+    ext_a = ext.get("a") or {}
+    ext_b = ext.get("b") or {}
 
     params = {
         # Toggles
-        "READ_DATA":       cfg.get("read_data", False),
-        "WRITE_DATA":      cfg.get("write_data", True),
-        "USE_RK45":        solvers.get("rk45", True),
-        "USE_RK4":         solvers.get("rk4", True),
-        "USE_ANALYTICAL":  solvers.get("analytical", True),
-        "USE_FLOAT128":    cfg.get("use_float128", False),
+        "READ_DATA":       cfg["read_data"],
+        "WRITE_DATA":      cfg["write_data"],
+        "USE_RK45":        solvers["rk45"],
+        "USE_RK4":         solvers["rk4"],
+        "USE_ANALYTICAL":  solvers["analytical"],
+        "USE_FLOAT128":    cfg["use_float128"],
 
         # Plotting
-        "USE_PLOT_TITLES": plot_cfg.get("titles", True),
-        "USE_FULL_PLOT":   plot_cfg.get("full_plot", True),
-        "gyro_plot_slice": plot_cfg.get("gyro_plot_slice", 1.5),
+        "USE_PLOT_TITLES": plot_cfg["titles"],
+        "USE_FULL_PLOT":   plot_cfg["full_plot"],
+        "gyro_plot_slice": plot_cfg["gyro_plot_slice"],
 
         # External h5
         "USE_EXTERNAL_H5":  ext_a.get("enabled", False),
@@ -641,10 +691,10 @@ def compute_derived_constb(cfg, npfloat=np.float64):
         "rk4_step": rk4_step,
 
         # Settings
-        "PS_order":  cfg.get("ps_order", 40),
+        "PS_order":  cfg["ps_order"],
         "tol":       tol,
-        "rtol_rk45": cfg.get("rtol_rk45", 1e-8),
-        "atol_rk45": cfg.get("atol_rk45", 1e-10),
+        "rtol_rk45": cfg["rtol_rk45"],
+        "atol_rk45": cfg["atol_rk45"],
     }
 
     return params
@@ -654,7 +704,7 @@ def compute_derived_constb(cfg, npfloat=np.float64):
 # Stage 2c: Compute derived — hyperbolic B
 # ---------------------------------------------------------------------------
 
-def compute_derived_hyperb(cfg, npfloat=np.float64):
+def compute_derived_hyperb(cfg, npfloat=None):
     """
     Hyperbolic-B specific derived quantities.
 
@@ -664,14 +714,17 @@ def compute_derived_hyperb(cfg, npfloat=np.float64):
     ----------
     cfg : dict
         Raw config from load_config().
-    npfloat : dtype
-        Floating-point type (np.float64 or np.float128).
+    npfloat : dtype, optional
+        Floating-point type. If None (default), derived from
+        cfg["use_float128"] — np.float128 when true, else np.float64.
 
     Returns
     -------
     dict
         Flat params dict ready for hyperb.py.
     """
+    if npfloat is None:
+        npfloat = np.float128 if cfg["use_float128"] else np.float64
 
     mass_si = _resolve_mass(cfg["particle"])
     config_name = cfg.get("_config_name", "default")
@@ -686,26 +739,28 @@ def compute_derived_hyperb(cfg, npfloat=np.float64):
     KE_particle  = npfloat(cfg["energy_eV"])
     delta        = cfg["delta"]
     B_0          = npfloat(cfg["B_0"])
-    x_initial_si = npfloat(cfg.get("x_initial_si", 0.0))
-    y_initial_si = npfloat(cfg.get("y_initial_si", 0.0))
-    z_initial_si = npfloat(cfg.get("z_initial_si", 0.0))
+    x_initial_si = npfloat(cfg["x_initial_si"])
+    y_initial_si = npfloat(cfg["y_initial_si"])
+    z_initial_si = npfloat(cfg["z_initial_si"])
 
     # --- T_gyro = 2π in normalized time ---
     T_gyro = 2.0 * np.pi
 
     # --- Step sizes ---
-    spg = cfg.get("steps_per_gyro", {})
-    round_dec = cfg.get("round_decimals", 3)
+    spg = cfg["steps_per_gyro"]
+    round_dec = cfg["round_decimals"]
     raw_steps = _compute_step_sizes(T_gyro, {
-        "ps":  spg.get("ps", 100),
-        "rk4": spg.get("rk4", 100),
+        "ps":  spg["ps"],
+        "rk4": spg["rk4"],
     }, round_decimals=round_dec)
-    raw_steps = _apply_step_overrides(raw_steps, cfg.get("step_overrides", {}), npfloat)
+    raw_steps = _apply_step_overrides(raw_steps, cfg["step_overrides"], npfloat)
 
     ps_step  = npfloat(raw_steps["ps"])
     rk4_step = npfloat(raw_steps["rk4"])
 
     # --- Integration time ---
+    if cfg.get("gyroperiods") is None:
+        raise ValueError("gyroperiods must be specified.")
     gyroperiods = npfloat(cfg["gyroperiods"])
     norm_time   = npfloat(gyroperiods) * T_gyro
 
@@ -713,37 +768,37 @@ def compute_derived_hyperb(cfg, npfloat=np.float64):
     tol = 1.0 * np.finfo(npfloat).eps
 
     # --- Plotting ---
-    plot_cfg = cfg.get("plotting", {})
-    window_gyro = plot_cfg.get("window_gyroperiods", 8)
+    plot_cfg = cfg["plotting"]
+    window_gyro = plot_cfg["window_gyroperiods"]
     window_duration = npfloat(window_gyro * 2 * np.pi)
 
     # --- Solvers ---
-    solvers = cfg.get("solvers", {})
+    solvers = cfg["solvers"]
 
     # --- External h5 ---
-    ext = cfg.get("external_h5", {}) or {}
-    ext_root = ext.get("root", "")
-    ext_a = ext.get("a", {}) or {}
-    ext_b = ext.get("b", {}) or {}
+    ext = cfg["external_h5"]
+    ext_root = ext.get("root") or ""
+    ext_a = ext.get("a") or {}
+    ext_b = ext.get("b") or {}
 
     params = {
         # Toggles
-        "READ_DATA":       cfg.get("read_data", True),
-        "WRITE_DATA":      cfg.get("write_data", True),
-        "USE_RK45":        solvers.get("rk45", True),
-        "USE_RK4":         solvers.get("rk4", True),
-        "USE_FLOAT128":    cfg.get("use_float128", False),
+        "READ_DATA":       cfg["read_data"],
+        "WRITE_DATA":      cfg["write_data"],
+        "USE_RK45":        solvers["rk45"],
+        "USE_RK4":         solvers["rk4"],
+        "USE_FLOAT128":    cfg["use_float128"],
 
         # Plotting
-        "USE_PLOT_TITLES":    plot_cfg.get("titles", True),
-        "USE_FULL_PLOT":      plot_cfg.get("full_plot", False),
+        "USE_PLOT_TITLES":    plot_cfg["titles"],
+        "USE_FULL_PLOT":      plot_cfg["full_plot"],
         "window_duration":    window_duration,
-        "slice_mode":         plot_cfg.get("slice_mode", "last"),
-        "skip_rk4_slice":     plot_cfg.get("skip_rk4_slice", False),
-        "slice_ylim":         plot_cfg.get("slice_ylim"),
-        "slice_ylim_top":     plot_cfg.get("slice_ylim_top"),
-        "slice_equal_aspect": plot_cfg.get("slice_equal_aspect", False),
-        "energy_xlim_left":   plot_cfg.get("energy_xlim_left"),
+        "slice_mode":         plot_cfg["slice_mode"],
+        "skip_rk4_slice":     plot_cfg["skip_rk4_slice"],
+        "slice_ylim":         plot_cfg["slice_ylim"],
+        "slice_ylim_top":     plot_cfg["slice_ylim_top"],
+        "slice_equal_aspect": plot_cfg["slice_equal_aspect"],
+        "energy_xlim_left":   plot_cfg["energy_xlim_left"],
 
         # External h5
         "USE_EXTERNAL_H5":  ext_a.get("enabled", False),
@@ -779,10 +834,10 @@ def compute_derived_hyperb(cfg, npfloat=np.float64):
         "rk4_step": rk4_step,
 
         # Settings
-        "PS_order":  cfg.get("ps_order", 40),
+        "PS_order":  cfg["ps_order"],
         "tol":       tol,
-        "rtol_rk45": cfg.get("rtol_rk45", 1e-12),
-        "atol_rk45": cfg.get("atol_rk45", 1e-14),
+        "rtol_rk45": cfg["rtol_rk45"],
+        "atol_rk45": cfg["atol_rk45"],
     }
 
     return params

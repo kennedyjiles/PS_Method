@@ -19,7 +19,6 @@ read_data: false
 
 steps_per_gyro:
   ps: 20
-round_steps: false
 
 plotting:
   titles: true

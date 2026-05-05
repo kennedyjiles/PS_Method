@@ -121,7 +121,10 @@ bounce_drift:
   min_gap_steps: 3                 # minimum steps between crossings
   gap_gyro_fraction: 0.5           # fraction of T_gyro/ps_step for min gap fallback
 
-# --- External H5 files (for energy comparison across runs) ---
+# --- External H5 files (for energy comparison across solvers) ---
+# Schema is keyed by SOLVER (one external h5 per solver type) — used to
+# compare PS / RK4 / RK45 / RKG runs against each other. (Constb/hyperb
+# use a different schema — slot a/b — because they compare PS orders.)
 # Set root once; file paths are joined with root unless already absolute.
 # Set use_external_h5 to true AND provide the path to enable comparison.
 # Having a path alone does NOT enable it — the toggle must be explicit.

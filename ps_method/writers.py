@@ -797,6 +797,7 @@ def _make_tail_mask(n_points, step_size, tail_start, max_tail_steps):
 def master_csv(
     output_folder, stem, particle_type,
     KE_particle, x_initial, y_initial, z_initial, pitch_deg, phi_deg,
+    gyroperiods,
     dragt_log,
     method_records,
 ):
@@ -809,7 +810,8 @@ def master_csv(
         records.append({
             "run_id": stem,
             "particle": particle_type,
-            "energy_keV": KE_particle,
+            "energy_eV": KE_particle,
+            "gyroperiods": gyroperiods,
             "x": x_initial,
             "y": y_initial,
             "z": z_initial,
@@ -838,7 +840,7 @@ def master_csv(
 
     df_new = pd.DataFrame(records)
     csv_path = f"{output_folder}/master_simulation_log.csv"
-    dup_keys = ["energy_keV", "L_eff", "phi_deg", "pitch_deg", "particle", "method", "steps"]
+    dup_keys = ["energy_eV", "L_eff", "phi_deg", "pitch_deg", "particle", "method", "steps"]
 
     if os.path.exists(csv_path):
         df_existing = pd.read_csv(csv_path)

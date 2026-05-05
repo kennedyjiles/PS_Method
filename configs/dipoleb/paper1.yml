@@ -2,8 +2,6 @@
 # Paper 1 — 100 keV proton, 30° pitch, 5 R_E
 # ===================================================================
 
-output_path: "desktop/test"  # relative path under data/ for output (without trailing slash)
-
 particle: proton
 energy_eV: 100.0e3
 pitch_deg: 30.0

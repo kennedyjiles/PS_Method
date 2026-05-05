@@ -1,5 +1,4 @@
 """
-Walt Transition Diagnostic Plots v3
 =====================================
 eps vs L with three HORIZONTAL zone bands:
   1. Trapped 20+ years     (eps below ~0.8)  — green
@@ -10,7 +9,7 @@ L=1 removed (misleading — surface proximity, not GCA issue).
 Dragt REGULAR/CHAOTIC colors the points.
 
 Usage:
-    python walt_diagnostics_v3.py path/to/master_simulation_log.csv
+    python trappedbands.py path/to/master_simulation_log.csv
 """
 import sys
 import numpy as np
@@ -21,13 +20,13 @@ from matplotlib.patches import Patch
 
 csv_path = sys.argv[1] if len(sys.argv) > 1 else "master_simulation_log.csv"
 df = pd.read_csv(csv_path)
-df["energy_MeV"] = df["energy_keV"] / 1e6
+df["energy_MeV"] = df["energy_eV"] / 1e6
 df["L"] = df["L_eff"].round(2)
 df["eps_max_plot"] = df["eps_max"].clip(upper=5.0)
 df["mu_max_err_plot"] = df["mu_max_err"].clip(lower=1e-3, upper=10.0)
 
 # ── Remove L=1 ──
-df = df[df["L"] > 1.5].copy()
+df = df[df["L"] > 1.0].copy()
 
 # ── Determine horizontal band boundaries from data ──
 # The blue "hits atmosphere" zone spans from the LOWEST atm-hit eps to the
@@ -150,7 +149,7 @@ if len(atm) > 0:
                linewidths=1.2, zorder=10, label="Hits atmosphere")
 
 # ── Energy series: faint connecting line per energy, labeled once ──
-for e_kev, grp in df.groupby("energy_keV"):
+for e_kev, grp in df.groupby("energy_eV"):
     series = (grp.groupby("L")["eps_max_plot"].mean()
                   .reset_index().sort_values("L"))
     if len(series) < 1:
@@ -197,7 +196,7 @@ ax.set_title(
 )
 ax.set_yscale("log")
 ax.set_ylim(y_lo, y_hi)
-ax.set_xlim(1.5, 9.5)
+ax.set_xlim(0.8, 9.5)
 ax.grid(True, alpha=0.15, which="both")
 
 fig.subplots_adjust(right=0.82)
