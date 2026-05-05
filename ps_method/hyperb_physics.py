@@ -36,11 +36,11 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
 
     Returns
     -------
-    final_coeff_matrix : (9, steps_ps+1) array — trajectory + auxiliaries.
-    orders_used        : (steps_ps+1,) int array — PS order used per step.
+    state_history : (9, steps_ps+1) array — trajectory + auxiliaries at each step.
+    orders_used   : (steps_ps+1,) int array — PS order used per step.
     """
     n_total = 9
-    final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
+    state_history = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
 
     # Named indices for readability
     x, y, z = 0, 1, 2
@@ -49,23 +49,25 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
     Bz_aux = 8
 
     # Initial conditions: physical state + auxiliary evaluations at y0
-    final_coeff_matrix[0:6, 0] = initial_pos_vel
+    state_history[0:6, 0] = initial_pos_vel
     y0 = initial_pos_vel[1]
 
-    final_coeff_matrix[sinh_aux, 0] = np.sinh(gamma * y0)
-    final_coeff_matrix[cosh_aux, 0] = np.cosh(gamma * y0)
-    final_coeff_matrix[Bz_aux, 0]   = np.tanh(gamma * y0)
+    state_history[sinh_aux, 0] = np.sinh(gamma * y0)
+    state_history[cosh_aux, 0] = np.cosh(gamma * y0)
+    state_history[Bz_aux, 0]   = np.tanh(gamma * y0)
 
     Bz_series   = np.zeros(PS_order, dtype=ul.npfloat)
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
     _one        = ul.npfloat(1.0)
     oip1        = _one / (_one + np.arange(PS_order))   # 1/(i+1) lookup table
 
-    for j in range(1, steps_ps + 1):
-        c = np.zeros((n_total, PS_order + 1), dtype=ul.npfloat)
-        c[:, 0] = final_coeff_matrix[:, j - 1]         # seed with end of previous step
+    # Pre-allocated buffers reused across steps (avoid per-step alloc churn)
+    c = np.zeros((n_total, PS_order + 1), dtype=ul.npfloat)
+    sum_terms = np.zeros(n_total, dtype=ul.npfloat)
 
-        sum_terms = np.zeros(n_total, dtype=ul.npfloat)
+    for j in range(1, steps_ps + 1):
+        c[:, 0] = state_history[:, j - 1]              # seed with end of previous step
+        sum_terms[:] = 0                               # reset accumulator
         power     = timedelta
         i         = 0
         max_contrib = tol + ul.npfloat(1.0)
@@ -103,25 +105,38 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
             if not np.isfinite(c[:, i+1]).all():
                 break
 
-            sum_terms += c[:, i+1] * power
-            max_contrib = np.abs(c[:, i+1]).max()
+            new_term = c[:, i+1] * power
+            sum_terms += new_term
+            # Convergence test: per-component relative test — stop when
+            # |new_term[k]| < |sum_terms[k]| * tol for every component.
+            # Components with |sum_terms[k]| ≤ tol are treated as already
+            # converged (avoids divide-by-zero on inactive axes).
+            max_contrib = ul.npfloat(0.0)
+            for k in range(n_total):
+                ref = abs(sum_terms[k])
+                if ref > tol:
+                    ratio = abs(new_term[k]) / ref
+                    if ratio > max_contrib:
+                        max_contrib = ratio
+            # Old (paper version):
+            # max_contrib = np.abs(c[:, i+1]).max()
             power *= timedelta
             i += 1
 
-        final_coeff_matrix[:, j] = final_coeff_matrix[:, j - 1] + sum_terms
+        state_history[:, j] = state_history[:, j - 1] + sum_terms
         orders_used[j] = i
 
         # --- Tethering: recompute auxiliaries from exact functions to prevent drift ---
-        y_now = final_coeff_matrix[y, j]
+        y_now = state_history[y, j]
         sinh_now = np.sinh(gamma * y_now)
         cosh_now = np.cosh(gamma * y_now)
         Bz_now = sinh_now / cosh_now
 
-        final_coeff_matrix[sinh_aux, j] = sinh_now
-        final_coeff_matrix[cosh_aux, j] = cosh_now
-        final_coeff_matrix[Bz_aux, j] = Bz_now
+        state_history[sinh_aux, j] = sinh_now
+        state_history[cosh_aux, j] = cosh_now
+        state_history[Bz_aux, j] = Bz_now
 
-    return final_coeff_matrix, orders_used
+    return state_history, orders_used
 
 @ul.maybe_njit
 def lorentz_force(t, d, gamma, qoverm):
