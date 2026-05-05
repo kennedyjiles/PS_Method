@@ -317,8 +317,17 @@ def compute_params(x_ps, y_ps, z_ps, vx_ps, vy_ps, vz_ps, L_shell, charge_sign=1
         print(f"(Boundary closed if charge_sign*P_phi<0 and W0^2 < P_phi^4/16)\n   Boundary status    :{boundary_status}  (threshold={W0_threshold:.6f})")
     else:
         print(f"(Boundary closed if charge_sign*P_phi<0 and W0^2 < P_phi^4/16)\n   Boundary status:   OPEN  (no trapping barrier for this charge/momentum)")
-    print(f"Pitch-angle parameter (Dragt 1965 eq 3.10 mu^2)     :{mu_sq:.6f}  (pitch_eq={np.degrees(np.arcsin(np.sqrt(mu_sq))):.2f} deg)")
-    print(f"Stability (W0^2 < 0.012*mu^2 => regular, Dragt 1965 eq 6.1) character    :{orbit_character}  (W0^2={W0_sq:.6f}, threshold={stability_threshold:.6f}, ratio={W0_sq/stability_threshold:.1f}x)" if stability_threshold > 0 else f"(Stability, W0^2 < 0.012*mu^2 => regular, Dragt 1965 eq 6.1) Orbit character:\n   {orbit_character}  (mu^2=0, field-aligned)")
+    print(f"Pitch-angle parameter (Dragt 1965 eq 3.10 mu^2)     :{mu_sq:.6f}  "
+          f"(pitch_eq={np.degrees(np.arcsin(np.sqrt(mu_sq))):.2f} deg)")
+    if stability_threshold > 0:
+        print(f"Stability (W0^2 < 0.012*mu^2 => regular, Dragt 1965 eq 6.1) "
+              f"character    :{orbit_character}  "
+              f"(W0^2={W0_sq:.6f}, threshold={stability_threshold:.6f}, "
+              f"ratio={W0_sq/stability_threshold:.1f}x)")
+    else:
+        print(f"(Stability, W0^2 < 0.012*mu^2 => regular, Dragt 1965 eq 6.1) "
+              f"Orbit character:\n"
+              f"   {orbit_character}  (mu^2=0, field-aligned)")
 
     return {
         "W0_sq":           W0_sq,
@@ -616,15 +625,23 @@ def run_section(
 
     if not USE_PS:
         # --- L-shell from passed-in initial conditions (no h5 available) ---
-        _rho_init   = np.sqrt(x_initial**2 + y_initial**2)
-        _v_phi_init = (x_initial * vy_initial - y_initial * vx_initial) / _rho_init
-        _P_phi_code = _rho_init * _v_phi_init - charge_sign / _rho_init
-
-        if charge_sign * _P_phi_code < 0:
-            L_shell_dragt = float(-charge_sign / _P_phi_code)
+        _rho_init = np.sqrt(x_initial**2 + y_initial**2)
+        _r_init   = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
+        if _rho_init == 0:
+            # Particle launched on the dipole axis — L-shell is degenerate.
+            # Fall back to radial distance (or 1.0 if also at origin).
+            L_shell_dragt = float(max(_r_init, 1.0))
+            print(f"  WARNING: rho_init=0 (particle on dipole axis); "
+                  f"using L_shell_dragt={L_shell_dragt:.4f} as fallback "
+                  f"(L-shell undefined on axis)")
         else:
-            _r_init = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
-            L_shell_dragt = float(_r_init**3 / _rho_init**2)
+            _v_phi_init = (x_initial * vy_initial - y_initial * vx_initial) / _rho_init
+            _P_phi_code = _rho_init * _v_phi_init - charge_sign / _rho_init
+            if charge_sign * _P_phi_code < 0:
+                L_shell_dragt = float(-charge_sign / _P_phi_code)
+            else:
+                # McIlwain L approximation r³/ρ² for non-trapped orbits
+                L_shell_dragt = float(_r_init**3 / _rho_init**2)
 
         print(f"\n{'='*60}")
         print(f"  Dragt Info")
@@ -640,17 +657,25 @@ def run_section(
     # P_phi = rho * v_phi - charge_sign * rho^2 / r^3
     # where A_phi = -rho/r^3 for the dipole (valid at any z, not just z=0).
     # The simpler formula (charge_sign / rho) is only correct at z=0.
-    _rho_init   = np.sqrt(_y0[0]**2 + _y0[1]**2)
-    _r_init     = np.sqrt(_y0[0]**2 + _y0[1]**2 + _y0[2]**2)
-    _v_phi_init = (_y0[0] * _y0[4] - _y0[1] * _y0[3]) / _rho_init
-    _P_phi_code = _rho_init * _v_phi_init - charge_sign * _rho_init**2 / _r_init**3
+    _rho_init = np.sqrt(_y0[0]**2 + _y0[1]**2)
+    _r_init   = np.sqrt(_y0[0]**2 + _y0[1]**2 + _y0[2]**2)
 
-    if charge_sign * _P_phi_code < 0:
-        L_shell_dragt = float(-charge_sign / _P_phi_code)
+    if _rho_init == 0:
+        # Particle on the dipole axis — L-shell is degenerate.
+        L_shell_dragt = float(max(_r_init, 1.0))
+        print(f"  WARNING: rho_init=0 (particle on dipole axis); "
+              f"using L_shell_dragt={L_shell_dragt:.4f} as fallback "
+              f"(L-shell undefined on axis)")
     else:
-        L_shell_dragt = float(_r_init**3 / _rho_init**2)
-        print("  WARNING: P_phi_code indicates open/untrapped orbit, "
-              "falling back to field-line L-shell")
+        _v_phi_init = (_y0[0] * _y0[4] - _y0[1] * _y0[3]) / _rho_init
+        _P_phi_code = _rho_init * _v_phi_init - charge_sign * _rho_init**2 / _r_init**3
+        if charge_sign * _P_phi_code < 0:
+            L_shell_dragt = float(-charge_sign / _P_phi_code)
+        else:
+            # McIlwain L approximation r³/ρ² for non-trapped orbits
+            L_shell_dragt = float(_r_init**3 / _rho_init**2)
+            print("  WARNING: P_phi_code indicates open/untrapped orbit, "
+                  "falling back to field-line L-shell")
 
     print(f"\n{'='*60}")
     print(f"  Dragt Info")
@@ -735,7 +760,7 @@ def run_section(
             if "ps" in _h5 and "hit_atmosphere" in _h5["ps"].attrs:
                 dragt_log["hit_atmosphere"] = bool(_h5["ps"].attrs["hit_atmosphere"])
                 dragt_log["hit_atm_r"]     = float(_h5["ps"].attrs["hit_atm_r"])
-    except Exception:
+    except (OSError, KeyError):
         pass
 
     return dragt_log, L_shell_dragt

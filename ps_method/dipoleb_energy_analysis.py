@@ -18,24 +18,29 @@ def compute_energy_ps_chunked(
     chunk_cols=200000,
     stride=1,
     dtype=None,
-    return_plot_data=True,
 ):
     """
-    Computes relative kinetic energy drift in a memory-efficient, chunked manner.
-    Optionally returns decimated (stride-sampled) plot arrays only.
+    Compute |E - E_0|/E_0 from a chunked h5 PS dataset, decimated by `stride`.
+
+    Memory-efficient: reads h5 in chunks of `chunk_cols` columns at a time,
+    computes the relative KE drift for that chunk, and writes the
+    stride-aligned points into pre-allocated output arrays.
+
+    Returns
+    -------
+    t_plot, drift_plot : 1D ndarrays
+        Time and relative drift, sampled every `stride` PS-store columns.
     """
     if dtype is None:
         dtype = ul.npfloat
     n_store = ps_y_h5.shape[1]
 
-    if return_plot_data:
-        # Estimate length of final array with stride
-        n_points = (n_store + stride - 1) // stride
-        t_plot = np.empty(n_points, dtype=ul.npfloat)
-        drift_plot = np.empty(n_points, dtype=ul.npfloat)
-        k = 0
+    # Pre-allocate decimated output (upper bound on size)
+    n_points = (n_store + stride - 1) // stride
+    t_plot = np.empty(n_points, dtype=ul.npfloat)
+    drift_plot = np.empty(n_points, dtype=ul.npfloat)
+    k = 0
 
-    j_global = 0
     for j0 in range(0, n_store, chunk_cols):
         j1 = min(j0 + chunk_cols, n_store)
         v = ps_y_h5[3:6, j0:j1].astype(dtype, copy=False)
@@ -43,19 +48,18 @@ def compute_energy_ps_chunked(
         E = 0.5 * np.sum(v * v, axis=0)
         rel = np.abs(E - E0_ps) / E0_ps
 
-        if return_plot_data:
-            for j_local in range(j1 - j0):
-                if j_global % stride == 0:
-                    t_plot[k] = j_global * dt_ps_store
-                    drift_plot[k] = rel[j_local]
-                    k += 1
-                j_global += 1
-        else:
-            # If keeping full rel array
-            raise NotImplementedError("Full array return not yet implemented in memory-saving mode")
+        # Vectorized stride decimation: pick global indices in [j0, j1) that are
+        # multiples of stride. Equivalent to the per-step `j_global % stride == 0`
+        # check but done in one numpy slice instead of a Python loop.
+        first_aligned = ((j0 + stride - 1) // stride) * stride
+        if first_aligned < j1:
+            aligned_global = np.arange(first_aligned, j1, stride)
+            n_pts = len(aligned_global)
+            t_plot[k:k+n_pts]    = aligned_global * dt_ps_store
+            drift_plot[k:k+n_pts] = rel[aligned_global - j0]
+            k += n_pts
 
-    if return_plot_data:
-        return t_plot[:k], drift_plot[:k]
+    return t_plot[:k], drift_plot[:k]
 
 
 # ===================================================================
@@ -172,6 +176,9 @@ def compute_ke_errors(
     load_results_h5_func=None,
 ):
     """Compute KE relative error arrays for every enabled solver.
+
+    Note: rel_drift_ps is decimated by `energy_stride` (the chunked PS reader
+    decimates inline to save memory). rel_drift_rk4/rk45/rkg are full-length.
 
     Returns a dict with keys:
         time_factor, energy_stride,
@@ -295,7 +302,6 @@ def compute_ke_errors(
                 dt_ps_store=ps_step * (PS_decimate if PS_decimate > 1 else 1),
                 chunk_cols=MAX_PLOT_POINTS,
                 stride=energy_stride,
-                return_plot_data=True,
             )
 
     # --- Current-run RKG (Hamiltonian) ---
