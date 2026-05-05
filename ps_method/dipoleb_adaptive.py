@@ -298,6 +298,7 @@ def run_ps_streaming_adaptive(
     N_STEPS_PER_GYRO_ps,
     user_min_phase,
     dragt_monitor=None,
+    r_atmosphere=1.0,
     # ---- adaptive control ----
     order_low=50,
     order_high=300,
@@ -337,7 +338,7 @@ def run_ps_streaming_adaptive(
     hit_atmosphere  = False
     hit_atm_step    = -1
     hit_atm_r       = 0.0
-    R_ATMOSPHERE    = 1.0   # in R_E; change to 1.0157 for ~100 km altitude
+    R_ATMOSPHERE    = r_atmosphere   # in R_E; configurable via yaml (default 1.0 = surface)
 
     # --- pre-allocate scratch for adaptive path ---
     c_scratch    = np.zeros((n_state, PS_order + 1), dtype=ul.npfloat)

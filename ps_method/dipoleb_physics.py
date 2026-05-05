@@ -51,7 +51,7 @@ def lorentz_force(t, y, qoverm):
 @ul.maybe_njit
 def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     n_total = 17
-    final_coeff_matrix = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
+    state_history = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
 
     # For sanity tracking of all variables
     x, y, z, vx, vy, vz = 0, 1, 2, 3, 4, 5
@@ -59,7 +59,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     Bx_aux, By_aux, Bz_aux = 14, 15, 16
 
     # set up initial dynamic variables
-    final_coeff_matrix[0:6, 0] = initial_pos_vel
+    state_history[0:6, 0] = initial_pos_vel
     x0, y0, z0 = initial_pos_vel[0], initial_pos_vel[1], initial_pos_vel[2]  # need for initilizing aux variables
     vx0, vy0, vz0 = initial_pos_vel[3], initial_pos_vel[4], initial_pos_vel[5]
 
@@ -73,18 +73,18 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     f0 = -(three * d0 * vz0 - b0 * vx0)
     g0 = -(three * c0 * vx0 - three * d0 * vy0)
 
-    final_coeff_matrix[r2_aux, 0] = r2_0
-    final_coeff_matrix[a_aux, 0] = a0
-    final_coeff_matrix[b_aux, 0] = b0
-    final_coeff_matrix[c_aux, 0] = c0
-    final_coeff_matrix[d_aux, 0] = d0
-    final_coeff_matrix[e_aux, 0] = e0
-    final_coeff_matrix[f_aux, 0] = f0
-    final_coeff_matrix[g_aux, 0] = g0
+    state_history[r2_aux, 0] = r2_0
+    state_history[a_aux, 0] = a0
+    state_history[b_aux, 0] = b0
+    state_history[c_aux, 0] = c0
+    state_history[d_aux, 0] = d0
+    state_history[e_aux, 0] = e0
+    state_history[f_aux, 0] = f0
+    state_history[g_aux, 0] = g0
 
-    final_coeff_matrix[Bz_aux, 0] = -a0 * b0
-    final_coeff_matrix[By_aux, 0] = -ul.npfloat(3.0) * a0 * c0
-    final_coeff_matrix[Bx_aux, 0] = -ul.npfloat(3.0) * a0 * d0
+    state_history[Bz_aux, 0] = -a0 * b0
+    state_history[By_aux, 0] = -ul.npfloat(3.0) * a0 * c0
+    state_history[Bx_aux, 0] = -ul.npfloat(3.0) * a0 * d0
 
     oip1 = one / (one + np.arange(PS_order, dtype=ul.npfloat))
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
@@ -110,12 +110,12 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     zeta = np.zeros(PS_order + 1, dtype=ul.npfloat)
 
     # initialize base terms outside the loop 
-    c[r2_aux, 0] = final_coeff_matrix[x, 0]**two + final_coeff_matrix[y, 0]**two + final_coeff_matrix[z, 0]**two
+    c[r2_aux, 0] = state_history[x, 0]**two + state_history[y, 0]**two + state_history[z, 0]**two
     c[a_aux, 0] = c[r2_aux, 0]**(-twopointfive)
     zeta[0] = c[a_aux, 0] / c[r2_aux, 0]
 
     for j in range(1, steps_ps + 1):
-        c[:, 0] = final_coeff_matrix[:, j - 1]
+        c[:, 0] = state_history[:, j - 1]
         sum_terms[:] = 0
 
         power = timedelta
@@ -149,15 +149,27 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
             c[By_aux, i+1] = -ul.npfloat(3.0) * cauchy_sum_inline(c[a_aux], c[c_aux], i+1)
             c[Bz_aux, i+1] =        -cauchy_sum_inline(c[a_aux], c[b_aux], i+1)
 
-            sum_terms += c[:, i+1] * power
-            max_contrib = np.abs(c[:, i+1] * power).max()
+            new_term = c[:, i+1] * power
+            sum_terms += new_term
+            # Convergence test: per-component relative test — stop when
+            # |new_term[k]| < |sum_terms[k]| * tol for every component.
+            # Components with |sum_terms[k]| ≤ tol are treated as already
+            # converged (avoids divide-by-zero on inactive axes).
+            max_contrib = ul.npfloat(0.0)
+            for k in range(n_total):
+                ref = abs(sum_terms[k])
+                if ref > tol:
+                    ratio = abs(new_term[k]) / ref
+                    if ratio > max_contrib:
+                        max_contrib = ratio
+            # Old (paper version): max_contrib = np.abs(c[:, i+1] * power).max()
             power *= timedelta
             i += 1
 
-        final_coeff_matrix[:, j] = final_coeff_matrix[:, j - 1] + sum_terms
+        state_history[:, j] = state_history[:, j - 1] + sum_terms
 
-        x_now, y_now, z_now = final_coeff_matrix[x, j], final_coeff_matrix[y, j], final_coeff_matrix[z, j]
-        vx_now, vy_now, vz_now = final_coeff_matrix[vx, j], final_coeff_matrix[vy, j], final_coeff_matrix[vz, j]
+        x_now, y_now, z_now = state_history[x, j], state_history[y, j], state_history[z, j]
+        vx_now, vy_now, vz_now = state_history[vx, j], state_history[vy, j], state_history[vz, j]
 
         # tethering variables
         r2_now = x_now**two + y_now**two + z_now**two
@@ -170,21 +182,21 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
         f_now = (three * d_now * vz_now - b_now * vx_now)
         g_now = (three * c_now * vx_now - three * d_now * vy_now)
 
-        final_coeff_matrix[r2_aux, j] = r2_now
-        final_coeff_matrix[a_aux, j] = a_now
-        final_coeff_matrix[b_aux, j] = b_now
-        final_coeff_matrix[c_aux, j] = c_now
-        final_coeff_matrix[d_aux, j] = d_now
-        final_coeff_matrix[e_aux, j] = -e_now
-        final_coeff_matrix[f_aux, j] = -f_now
-        final_coeff_matrix[g_aux, j] = -g_now
-        final_coeff_matrix[Bx_aux, j] = -ul.npfloat(3.0) * a_now * d_now
-        final_coeff_matrix[By_aux, j] = -ul.npfloat(3.0) * a_now * c_now
-        final_coeff_matrix[Bz_aux, j] = -a_now * b_now
+        state_history[r2_aux, j] = r2_now
+        state_history[a_aux, j] = a_now
+        state_history[b_aux, j] = b_now
+        state_history[c_aux, j] = c_now
+        state_history[d_aux, j] = d_now
+        state_history[e_aux, j] = -e_now
+        state_history[f_aux, j] = -f_now
+        state_history[g_aux, j] = -g_now
+        state_history[Bx_aux, j] = -ul.npfloat(3.0) * a_now * d_now
+        state_history[By_aux, j] = -ul.npfloat(3.0) * a_now * c_now
+        state_history[Bz_aux, j] = -a_now * b_now
 
         orders_used[j] = i
 
-    return final_coeff_matrix, orders_used
+    return state_history, orders_used
 
 # ========================
 # ==== RKG Functions ====
@@ -269,6 +281,7 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
     K[0] = func(0.0, y0, *args)
     K[1] = K[0].copy()
 
+    converged = False
     for n in range(max_iter):
         # Stage values
         for d in range(dim):
@@ -283,11 +296,11 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
         # Convergence check
         normF = np.max(np.abs(F))
         if normF < tol:
+            converged = True
             break
 
         # Build Jacobian by finite differences
-        for d in range(dim):
-            J[:, :] = 0.0
+        J.fill(0.0)
         for i in range(2):
             for j in range(dim):
                 # Save, perturb, evaluate, restore
@@ -315,19 +328,25 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
     result = np.zeros(dim, dtype=ul.npfloat)
     for d in range(dim):
         result[d] = y0[d] + dt * (b1 * K[0, d] + b2 * K[1, d])
-    return result
+    return result, converged
 
 @ul.maybe_njit
 def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
+    """Symplectic integration loop. Returns (trajectory, n_failed) where
+    n_failed is the count of steps that hit max_iter without Newton convergence.
+    """
     d_out = np.zeros((steps + 1, len(y0)), dtype=ul.npfloat)
     d_out[0] = y0
+    n_failed = 0
 
     for i in range(1, steps + 1):
-        d_out[i] = rkgl4_hamiltonian_step(
+        d_out[i], converged = rkgl4_hamiltonian_step(
             func, d_out[i - 1], dt, args
         )
+        if not converged:
+            n_failed += 1
 
-    return d_out
+    return d_out, n_failed
 
 # ===================================
 # === Decimate/Chunking Functions ===
@@ -348,6 +367,7 @@ def run_ps_streaming_with_decimation(
     N_STEPS_PER_GYRO_ps,
     user_min_phase,
     dragt_monitor=None,
+    r_atmosphere=1.0,
 ):
     start_time_ps = time.time()
 
@@ -361,7 +381,7 @@ def run_ps_streaming_with_decimation(
     hit_atmosphere = False
     hit_atm_step   = -1
     hit_atm_r      = 0.0
-    R_ATMOSPHERE   = 1.0   # in R_E; change to 1.0157 for ~100 km altitude
+    R_ATMOSPHERE   = r_atmosphere   # in R_E; configurable via yaml (default 1.0 = surface)
 
     if write_data:
         f = h5py.File(cache_path, "w")

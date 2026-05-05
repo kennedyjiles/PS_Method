@@ -557,6 +557,9 @@ def compute_derived_dipoleb(cfg, npfloat=None):
 
         # Bounce/drift detection
         "bounce_drift": cfg["bounce_drift"],
+
+        # Atmospheric impact threshold (R_E)
+        "r_atmosphere": cfg["r_atmosphere"],
     }
 
     return params

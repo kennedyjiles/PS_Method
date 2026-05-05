@@ -161,6 +161,8 @@ def main(cfg_path, replot=False):
     min_gap_steps           = bounce_drift_cfg.get("min_gap_steps", 3)
     gap_gyro_fraction       = bounce_drift_cfg.get("gap_gyro_fraction", 0.5)
 
+    r_atmosphere            = params["r_atmosphere"]   # atmospheric impact threshold (R_E)
+
     # === Misc Odds and Ends ===
     PS_CHUNKING = True     # PS data always streamed to disk in chunks (no in-memory option)
     WRITE_DATA  = True     # always write h5 (required by chunked streaming)
@@ -168,7 +170,10 @@ def main(cfg_path, replot=False):
     os.makedirs(run_storage, exist_ok=True)    # ensures file for the storagae for raw data exists
     os.makedirs(output_folder, exist_ok=True)  # ensures file for the storagae for images and text file exists
     plt.ioff()                                 # turn off interactive mode for plots
-    if USE_FLOAT128: USE_RKG = False
+    if USE_FLOAT128 and USE_RKG:
+        print("  NOTE: RKG disabled because use_float128=True "
+              "(numba JIT off + implicit Newton + np.linalg.solve makes it impractically slow).")
+        USE_RKG = False
 
 
     # --- Safety defaults for variables assigned only inside conditional
@@ -324,7 +329,8 @@ def main(cfg_path, replot=False):
 
     physical_time = norm_time * abs(tau_time)           # actual physical time, t; normalized time =t/tau_time
     window_duration = window_time/tau_time              # converting window_time to dimensionless time
-    tol_local = npfloat(tol) * tau_time                 # Scale tolerance by tau_0
+    # Old (paper version): tol_local = npfloat(tol) * tau_time   # Scale tolerance by tau_0
+    tol_local = npfloat(tol)                            # plain machine eps; advisor's relative test in ps_integrate handles scaling
 
     # === Velocity Config based on INput Angles ===
     pitch_rad = npfloat(np.radians(pitch_deg))              # degrees to radians, pitch
@@ -522,6 +528,7 @@ def main(cfg_path, replot=False):
                     N_STEPS_PER_GYRO_ps=N_STEPS_PER_GYRO_ps,
                     user_min_phase=user_min_phase,
                     dragt_monitor=dragt_mon,
+                    r_atmosphere=r_atmosphere,
                 )
                 if USE_ADAPTIVE:
                     _stream_args.update(
@@ -582,7 +589,7 @@ def main(cfg_path, replot=False):
                 steps_rkg = max(1, steps_rkg)
 
                 start_time_rkg = time.time()
-                solution_rkg = dp.rkgl4_hamiltonian(
+                solution_rkg, rkg_n_failed = dp.rkgl4_hamiltonian(
                     dp.hamiltonian_rhs,
                     y0,
                     rkg_step,
@@ -590,6 +597,11 @@ def main(cfg_path, replot=False):
                     args=(qoverm,),
                 )
                 end_time_rkg = time.time()
+                if rkg_n_failed > 0:
+                    pct = 100.0 * rkg_n_failed / steps_rkg
+                    print(f"  WARNING: {rkg_n_failed:,} of {steps_rkg:,} RKG steps "
+                          f"({pct:.2f}%) hit max_iter without Newton convergence. "
+                          f"Consider reducing rkg_step or increasing max_iter.")
 
             results = {
                 "ps": None,
