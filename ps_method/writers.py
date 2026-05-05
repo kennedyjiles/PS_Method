@@ -30,9 +30,9 @@ Field-specific summaries:
     summary_txt_hyperb  — human-readable run summary for hyperbolic-B
 
 Dipoleb-only extras:
-    expand_h5_to_full — expand compact 9-row h5 array to full 17-row state
-    _make_tail_mask   — boolean mask for tail-end sampling of a time series
-    master_csv        — aggregate multi-run results into a CSV table
+    expand_h5_to_full   — expand compact 9-row h5 array to full 17-row state
+    _tail_start_index   — start index for tail-end sampling of a time series
+    master_csv          — aggregate multi-run results into a CSV table
 """
 
 import os
@@ -52,7 +52,7 @@ import h5py
 def _to_serializable(x):
     """Coerce numpy scalars and arrays to native Python types so json.dumps
     doesn't choke on them."""
-    if isinstance(x, (np.floating, np.float32, np.float64)):
+    if isinstance(x, np.floating):
         return float(x)
     if isinstance(x, (np.integer,)):
         return int(x)
@@ -247,7 +247,7 @@ n_save = len(SAVE_ROWS)
 def save_results_h5_dipoleb(h5_path, results, summary):
     """Write solver arrays and metadata to a new HDF5 cache file."""
     with h5py.File(h5_path, "w") as f:
-        f.attrs["summary_json"] = json.dumps(summary)
+        f.attrs["summary_json"] = json.dumps(summary, default=_to_serializable)
 
         for k in ("ps", "rk4", "rk45", "rkg"):
             if k not in results or results[k] is None:
@@ -273,14 +273,15 @@ def save_results_h5_dipoleb(h5_path, results, summary):
 
 
 def load_results_h5_dipoleb(h5_path):
-    """Load solver arrays and metadata from an HDF5 cache file."""
+    """Load solver arrays and metadata from an HDF5 cache file.
+
+    Note: dipoleb's save writes ``summary_json``, not ``params_json``,
+    so no params dict is returned. The cache filename is derived from
+    a hash of the run-params dict in the driver, not from anything in
+    the file itself, so consumers don't need it.
+    """
     with h5py.File(h5_path, "r") as f:
         loaded = {"meta": {"timing": {}}}
-
-        if "params_json" in f.attrs:
-            loaded["params"] = json.loads(f.attrs["params_json"])
-        else:
-            loaded["params"] = None
 
         def _read_grp(name):
             if name not in f:
@@ -478,16 +479,16 @@ def summary_txt_dipoleb(
 
     if USE_PS:
         step_ps = ps_store_stride * ps_step
-        _, j0_ps = _make_tail_mask(rel_drift_ps.size, step_ps, tail_start, MAX_TAIL_STEPS)
+        j0_ps = _tail_start_index(rel_drift_ps.size, step_ps, tail_start, MAX_TAIL_STEPS)
 
     if USE_RK45:
-        _, j0_rk45 = _make_tail_mask(len(rel_drift_rk45), ps_step, tail_start, MAX_TAIL_STEPS)
+        j0_rk45 = _tail_start_index(len(rel_drift_rk45), ps_step, tail_start, MAX_TAIL_STEPS)
 
     if USE_RK4:
-        _, j0_rk4 = _make_tail_mask(len(rel_drift_rk4), rk4_step, tail_start, MAX_TAIL_STEPS)
+        j0_rk4 = _tail_start_index(len(rel_drift_rk4), rk4_step, tail_start, MAX_TAIL_STEPS)
 
     if USE_RKG:
-        _, j0_rkg = _make_tail_mask(len(rel_drift_rkg), rkg_step, tail_start, MAX_TAIL_STEPS)
+        j0_rkg = _tail_start_index(len(rel_drift_rkg), rkg_step, tail_start, MAX_TAIL_STEPS)
 
     # --- Write file ---
     output_filename = build_filename(summary, run_folder, stem,
@@ -775,23 +776,17 @@ def expand_h5_to_full(compact_arr):
     return full
 
 
-def _make_tail_mask(n_points, step_size, tail_start, max_tail_steps):
-    """Build a boolean mask for the last fraction of a time series."""
+def _tail_start_index(n_points, step_size, tail_start, max_tail_steps):
+    """Start index for the last fraction of a time series, capped at max_tail_steps."""
     j0 = int(tail_start / step_size)
     j0 = max(0, min(j0, n_points - 1))
-
     if n_points - j0 > max_tail_steps:
         j0 = n_points - max_tail_steps
-
-    mask = np.zeros(n_points, dtype=bool)
-    mask[j0:] = True
-
-    if not np.any(mask):
+    # Defensive fallback: if j0 ended up out of bounds, use last NMIN points
+    if j0 >= n_points or j0 < 0:
         NMIN = min(1000, n_points)
-        mask[-NMIN:] = True
-        j0 = n_points - NMIN
-
-    return mask, j0
+        j0 = max(0, n_points - NMIN)
+    return j0
 
 
 def master_csv(
@@ -839,7 +834,7 @@ def master_csv(
         })
 
     df_new = pd.DataFrame(records)
-    csv_path = f"{output_folder}/master_simulation_log.csv"
+    csv_path = os.path.join(output_folder, "master_simulation_log.csv")
     dup_keys = ["energy_eV", "L_eff", "phi_deg", "pitch_deg", "particle", "method", "steps"]
 
     if os.path.exists(csv_path):
