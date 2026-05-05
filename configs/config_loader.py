@@ -154,8 +154,9 @@ def _resolve_output_paths(config_name, field_prefix="", output_root=None,
     else:
         output_folder = data_path
     run_storage = os.path.join(output_folder, "_rawdata")
-    os.makedirs(output_folder, exist_ok=True)
-    os.makedirs(run_storage, exist_ok=True)
+    # Note: directory creation is the caller's (driver's) responsibility — we
+    # don't makedirs here so that loading or inspecting a config doesn't
+    # silently create empty folders before the run actually executes.
     return output_folder, run_storage
 
 
