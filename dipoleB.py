@@ -54,8 +54,27 @@ def main(cfg_path, replot=False):
     cfg        = load_config(cfg_path)
 
     # --- Resolve float type BEFORE importing physics modules so @maybe_njit
-    #     sees the correct type (float128 skips njit, float64 compiles). ---
+    #     sees the correct type (float128 skips njit, float64 compiles).
+    #     YAML governs the default. If a manual h5 is being loaded, its saved
+    #     dtype takes precedence so physics modules import at the right
+    #     precision and builtins.npfloat stays consistent throughout. ---
+    manual_h5_path = cfg.get("manual_h5_path")
     USE_FLOAT128 = cfg.get("use_float128", False)
+
+    if manual_h5_path and os.path.exists(manual_h5_path):
+        try:
+            with h5py.File(manual_h5_path, "r") as _f:
+                if "summary_json" in _f.attrs:
+                    _saved = json.loads(_f.attrs["summary_json"])["meta"].get("dtype")
+                    if _saved:
+                        _file_use_float128 = (np.dtype(_saved).type == np.float128)
+                        if _file_use_float128 != USE_FLOAT128:
+                            print(f"  NOTE: manual h5 file uses {_saved}; "
+                                  f"overriding YAML use_float128={USE_FLOAT128}.")
+                        USE_FLOAT128 = _file_use_float128
+        except (OSError, KeyError, json.JSONDecodeError):
+            pass  # fall through to YAML setting
+
     npfloat = np.float128 if USE_FLOAT128 else np.float64
     builtins.npfloat = npfloat
     tol = 1.0 * np.finfo(npfloat).eps
@@ -144,22 +163,24 @@ def main(cfg_path, replot=False):
     rtol_rk45       = params["rtol_rk45"]
     atol_rk45       = params["atol_rk45"]
     user_min_phase  = params["user_min_phase"]
-    MAX_PLOT_POINTS_local = params.get("MAX_PLOT_POINTS", 1_000_000)
-    CACHE_VELOCITY_RTOL   = params.get("CACHE_VELOCITY_RTOL", 0.005)
-    PLOT_BOUNDARY_PAD     = params.get("PLOT_BOUNDARY_PAD", 1.1)
-    manual_h5_path  = params.get("manual_h5_path", None)
+    MAX_PLOT_POINTS_local = params.get("MAX_PLOT_POINTS", 1_000_000)  # not in base.yml
+    CACHE_VELOCITY_RTOL   = params["CACHE_VELOCITY_RTOL"]
+    PLOT_BOUNDARY_PAD     = params["PLOT_BOUNDARY_PAD"]
+    # manual_h5_path already set at top of main() (used to resolve npfloat); reassign
+    # here from params for consistency — value is the same.
+    manual_h5_path  = params["manual_h5_path"]
 
     # --- Adaptive PS settings ---
-    ps_adaptive = params.get("ps_adaptive", {})
+    ps_adaptive = params["ps_adaptive"]
 
     # --- Dragt monitor ---
-    dragt_monitor_rtol = params.get("dragt_monitor_rtol", 1e-4)
+    dragt_monitor_rtol = params["dragt_monitor_rtol"]
 
     # --- Bounce/drift detection ---
-    bounce_drift_cfg        = params.get("bounce_drift", {})
-    velocity_epsilon_scale  = bounce_drift_cfg.get("velocity_epsilon_scale", 1e-14)
-    min_gap_steps           = bounce_drift_cfg.get("min_gap_steps", 3)
-    gap_gyro_fraction       = bounce_drift_cfg.get("gap_gyro_fraction", 0.5)
+    bounce_drift_cfg        = params["bounce_drift"]
+    velocity_epsilon_scale  = bounce_drift_cfg["velocity_epsilon_scale"]
+    min_gap_steps           = bounce_drift_cfg["min_gap_steps"]
+    gap_gyro_fraction       = bounce_drift_cfg["gap_gyro_fraction"]
 
     r_atmosphere            = params["r_atmosphere"]   # atmospheric impact threshold (R_E)
 
@@ -228,7 +249,7 @@ def main(cfg_path, replot=False):
                 B_0 = meta["B0_T"]
                 gyroperiods = meta["gyroperiods"]
                 norm_time = meta["norm_time"]
-                npfloat = np.dtype(meta["dtype"]).type  # optional
+                # npfloat already resolved at the top of main() from this file's saved dtype.
 
                 T_gyro = meta.get("T_gyro", 2.0 * np.pi * (x_initial**3))  # fallback for older h5 files
 
@@ -276,8 +297,6 @@ def main(cfg_path, replot=False):
 
                 # === PS (chunked — data stays on disk, read in slices later) ===
                 if USE_PS and "ps" in cached:
-                    solution_ps = None
-                    orders_used = None
                     # Trimmed files have fewer columns than the original run.
                     # Override steps_ps and norm_time so downstream windowing
                     # uses actual data size.
@@ -419,7 +438,7 @@ def main(cfg_path, replot=False):
                 B_0 = meta["B0_T"]
                 gyroperiods = meta["gyroperiods"]
                 norm_time = meta["norm_time"]
-                npfloat = np.dtype(meta["dtype"]).type  # optional
+                # npfloat already resolved at the top of main() from this file's saved dtype.
 
                 # ---- PS config ----
                 ps_cfg = summary["ps"]
@@ -459,8 +478,6 @@ def main(cfg_path, replot=False):
                 # ---- Load solver data ------
                 # === PS ===
                 if USE_PS and "ps" in cached:
-                    solution_ps = None
-                    orders_used = None
                     # Guard against trimmed files with fewer columns than metadata claims
                     n_store_actual = cached["ps"]["y"].shape[1]
                     ps_store_stride = PS_decimate if PS_decimate > 1 else 1
@@ -471,6 +488,7 @@ def main(cfg_path, replot=False):
                         steps_ps = steps_ps_actual
                         norm_time = steps_ps * ps_step
                         gyroperiods = norm_time / (2.0 * np.pi)
+                        physical_time = norm_time * abs(tau_time)   # keep consistent with new norm_time
                         trim_end = cached["ps"].attrs.get("trim_end", "trimmed")
                         trim_window = cached["ps"].attrs.get("trim_window_s", "")
                         if trim_window:
@@ -492,7 +510,7 @@ def main(cfg_path, replot=False):
         else:
             print("No matching file or 'Read Data' skipped. Running solvers...\n")
 
-            # Common grid size (used by RK45, PS needs to be enabled)
+            # PS-grid step count, also used as RK45's t_eval grid
             steps_ps = int(norm_time / ps_step)
             # ====== Run PS ======
             max_ps = None
@@ -532,12 +550,12 @@ def main(cfg_path, replot=False):
                 )
                 if USE_ADAPTIVE:
                     _stream_args.update(
-                        order_low=ps_adaptive.get("order_low", 50),
-                        order_high=ps_adaptive.get("order_high", 300),
-                        grow_factor=ps_adaptive.get("grow_factor", 1.5),
-                        shrink_factor=ps_adaptive.get("shrink_factor", 0.5),
-                        steps_per_local_gyro=ps_adaptive.get("steps_per_local_gyro", 200),
-                        min_fast_path_N=ps_adaptive.get("min_fast_path_N", 100),
+                        order_low=ps_adaptive["order_low"],
+                        order_high=ps_adaptive["order_high"],
+                        grow_factor=ps_adaptive["grow_factor"],
+                        shrink_factor=ps_adaptive["shrink_factor"],
+                        steps_per_local_gyro=ps_adaptive["steps_per_local_gyro"],
+                        min_fast_path_N=ps_adaptive["min_fast_path_N"],
                     )
                     max_ps, elapsed_ps = run_ps_streaming_adaptive(**_stream_args)
                 else:
@@ -815,15 +833,14 @@ def main(cfg_path, replot=False):
     # =====================================================
     # ============= Data Set Access for Stream ============
     # =====================================================
-    tracemalloc.start()
+    if DEBUG: tracemalloc.start()
 
     ps_order_label = None # for plotting later
 
     if USE_PS:
         with h5py.File(cache_path, "r") as ps_h5:
             ps_grp = ps_h5["ps"]
-            n_ps = steps_ps
-            stride = max(1, n_ps // MAX_PLOT_POINTS_local)
+            stride = max(1, steps_ps // MAX_PLOT_POINTS_local)
             ps_order_label = int(ps_grp.attrs["max_ps"])
 
             if USE_FULL_PLOT:
@@ -852,13 +869,13 @@ def main(cfg_path, replot=False):
     if USE_PS and "ps" in timing:
         print(f"Run Time PS     : {timing['ps']:.2f} s")
 
-    print(f"Norm Time       : {norm_time:.2e} ")
+    print(f"Norm Time       : {norm_time:.2e}")
     print(f"Physical Time   : {physical_time:.2e} s")
     print(f"PS Orders       : max={ps_order_label}")
     print(f"% of c          : {100*v_si/spdlight:.8f}")
 
     if DEBUG:
-        logger.debug(f"Norm Time: {norm_time:.2e} MB")
+        logger.debug(f"Norm Time: {norm_time:.2e}")
         logger.debug(f"Physical Time   : {physical_time:.2e} s")
         logger.debug(f"ps_step: {ps_step}, norm_time: {norm_time}, steps_ps: {steps_ps}")
         # logger.debug(f"t_common[0]: {t_common[0]}, t_common[-1]: {t_common[-1]}")
@@ -866,9 +883,9 @@ def main(cfg_path, replot=False):
 
 
     # === Create run-specific output subfolders ===
-    # data/<config>/<run-hash>/figures/   ← plots
-    # data/<config>/<run-hash>/           ← summary, config copy, log
-    # data/<config>/_rawdata/             ← h5 trajectory files
+    # data/dipoleb/<config>/<run-hash>/figures/   ← plots
+    # data/dipoleb/<config>/<run-hash>/           ← summary, config copy, log
+    # data/dipoleb/<config>/_rawdata/             ← h5 trajectory files
     run_folder = os.path.join(output_folder, stem)
     fig_folder = os.path.join(run_folder, "figures")
     os.makedirs(fig_folder, exist_ok=True)
@@ -974,7 +991,7 @@ def main(cfg_path, replot=False):
     if DEBUG: tracemalloc.start()
 
     _ke = ea.compute_ke_errors(
-        T_gyro, n_ps=n_ps, MAX_PLOT_POINTS=MAX_PLOT_POINTS_local,
+        T_gyro, n_ps=steps_ps, MAX_PLOT_POINTS=MAX_PLOT_POINTS_local,
         USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
         PS_decimate=PS_decimate, E0_ps=E0_ps,
         USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
@@ -1041,10 +1058,11 @@ def main(cfg_path, replot=False):
     # =========================================================
     # PLOT RELATIVE ERROR OF CANONICAL ANGULAR MOMENTUM
     # =========================================================
-
-    pphi = ea.compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
-    dplt.pphi_error(fig_folder, pphi["t_gyro"], pphi["rel_error_log"],
-                    pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"], stem=stem)
+    # Reads chunked PS data from the cache file; only meaningful when PS ran.
+    if USE_PS:
+        pphi = ea.compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
+        dplt.pphi_error(fig_folder, pphi["t_gyro"], pphi["rel_error_log"],
+                        pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"], stem=stem)
 
 
     # ============================================================
@@ -1115,11 +1133,11 @@ def main(cfg_path, replot=False):
 
     if DEBUG: tracemalloc.start()
 
-    print(f"\n{'='*60}")
-    print(f"  Bounce/Drift Statistics")
-    print(f"{'='*60}")
-
     if USE_PS:
+        print(f"\n{'='*60}")
+        print(f"  Bounce/Drift Statistics")
+        print(f"{'='*60}")
+
         v_eps = npfloat(velocity_epsilon_scale) * v_tau
         user_min_gap = max(min_gap_steps, int(gap_gyro_fraction * T_gyro / ps_step))
 
