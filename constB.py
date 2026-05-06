@@ -409,17 +409,14 @@ def main(cfg_path, replot=False):
 
         # --- Recompute PS at various orders ---
         _ps_orders = [4, 5, 6, 7, 10]
-        _ps_colors = ["crimson", "#0072B2", "#56B4E9", "#D55E00", "#999999"]
-        _ps_styles = [":", "-.", ":", "--", "-."]
         ps_drifts = []
-        for order, color, ls in zip(_ps_orders, _ps_colors, _ps_styles):
+        for order in _ps_orders:
             sol, _ = cp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
-            vx, vy, vz = ea.extract_v(sol)
-            drift = ea.compute_energy_drift(vx, vy, vz)
-            ps_drifts.append((order, drift, color, ls))
+            drift = ea.compute_energy_drift(*ea.extract_v(sol))
+            ps_drifts.append((order, drift,
+                              fplt.COLORS[f"ps{order}"],
+                              fplt.LINESTYLES[f"ps{order}"]))
 
-        # Add main PS (max order). RK drifts already computed in the
-        # KE-error section above — reuse them.
         ps_drifts.append((orders_used.max(), rel_drift_ps, "#009E73", ":"))
 
         fplt.ke_error_multi(
@@ -474,7 +471,6 @@ def main(cfg_path, replot=False):
     # ============================================
     # ======= Write Summary Output to File =======
     # ============================================
-
     output_filename = f"{run_folder}/{stem}_summary.txt"
 
     wr.summary_txt_constb(

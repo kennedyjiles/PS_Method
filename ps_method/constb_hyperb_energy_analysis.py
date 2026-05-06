@@ -18,7 +18,7 @@ two  = ul.npfloat(2.0)
 
 @ul.maybe_njit
 def relative_drift(values):
-    return np.abs(values - values[0]) / values[0]s
+    return np.abs(values - values[0]) / values[0]
 
 @ul.maybe_njit
 def kinetic_energy(vx, vy, vz, m=ul.npfloat(1.0)):
