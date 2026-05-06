@@ -1,9 +1,12 @@
 """
-Kinetic energy conservation functions shared by constb and hyperb drivers.
+Kinetic energy conservation + small math primitives shared by constb / hyperb.
 
-    kinetic_energy         — KE from velocity components
-    compute_energy_drift   — relative KE drift over time
-    extract_v              — pull (vx, vy, vz) from PS solution array
+    relative_drift             — |arr - arr[0]| / arr[0]  (drift-from-IC primitive)
+    kinetic_energy             — KE from velocity components
+    compute_energy_drift       — KE drift over time (njit, float64)
+    compute_energy_drift_pure  — KE drift, non-JIT, any dtype (e.g. float128)
+    extract_v                  — pull (vx, vy, vz) from PS solution array
+    trajectory_error_xy        — XY distance from a reference, normalized by scale
 """
 
 import numpy as np
@@ -12,15 +15,25 @@ from . import utils as ul
 half = ul.npfloat(0.5)
 two  = ul.npfloat(2.0)
 
+
+@ul.maybe_njit
+def relative_drift(values):
+    return np.abs(values - values[0]) / values[0]s
+
 @ul.maybe_njit
 def kinetic_energy(vx, vy, vz, m=ul.npfloat(1.0)):
     return half * m * (vx**two + vy**two + vz**two)
 
 @ul.maybe_njit
 def compute_energy_drift(vx, vy, vz):
-    KE = kinetic_energy(vx, vy, vz)
+    return relative_drift(kinetic_energy(vx, vy, vz))
+
+def compute_energy_drift_pure(vx, vy, vz):
+    KE = 0.5 * (vx**2 + vy**2 + vz**2)
     return np.abs(KE - KE[0]) / KE[0]
 
-@ul.maybe_njit
-def extract_v(sol):  # assumes PS output has x, y, z, vx, vy, vz as initial entries
+def extract_v(sol):
     return sol[3], sol[4], sol[5]
+
+def trajectory_error_xy(sol, x_ref, y_ref, scale):
+    return np.sqrt((sol[0] - x_ref)**2 + (sol[1] - y_ref)**2) / scale

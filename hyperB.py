@@ -384,18 +384,16 @@ def main(cfg_path, replot=False):
             external = wr.load_results_h5_hyperb(external_h5)
             ext_ps = external["ps"]
             t_ext, y_ext = ext_ps["t"], ext_ps["y"]
-            vxe, vye, vze = y_ext[3].astype(np.float128), y_ext[4].astype(np.float128), y_ext[5].astype(np.float128)
-            E_ext = 0.5 * (vxe**2 + vye**2 + vze**2)
-            rel_drift_ext = (E_ext - E_ext[0]) / E_ext[0]
+            y_ext_f128 = y_ext.astype(np.float128)
+            rel_drift_ext = ea.compute_energy_drift_pure(*ea.extract_v(y_ext_f128))
             ext_data = (t_ext, rel_drift_ext, PS_order_ext)
 
         if USE_EXTERNAL_H5b:
             externalb = wr.load_results_h5_hyperb(external_h5b)
             ext_psb = externalb["ps"]
             t_extb, y_extb = ext_psb["t"], ext_psb["y"]
-            vxeb, vyeb, vzeb = y_extb[3].astype(np.float128), y_extb[4].astype(np.float128), y_extb[5].astype(np.float128)
-            E_extb = 0.5 * (vxeb**2 + vyeb**2 + vzeb**2)
-            rel_drift_extb = (E_extb - E_extb[0]) / E_extb[0]
+            y_extb_f128 = y_extb.astype(np.float128)
+            rel_drift_extb = ea.compute_energy_drift_pure(*ea.extract_v(y_extb_f128))
             extb_data = (t_extb, rel_drift_extb, PS_order_extb)
 
         # --- Recompute PS at various orders ---

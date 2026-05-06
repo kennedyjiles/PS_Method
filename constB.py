@@ -395,22 +395,16 @@ def main(cfg_path, replot=False):
             external = wr.load_results_h5_constb(external_h5)
             ext_ps = external["ps"]
             t_ext, y_ext = ext_ps["t"], ext_ps["y"]
-            # Explicit float128 upcast: external h5 files are reference runs
-            # and we compute their drift at higher precision than the current
-            # (float64) run for an apples-to-apples comparison. Bypassing the
-            # @maybe_njit helper because Numba can't handle float128 inputs.
-            vxe, vye, vze = y_ext[3].astype(np.float128), y_ext[4].astype(np.float128), y_ext[5].astype(np.float128)
-            E_ext = 0.5 * (vxe**2 + vye**2 + vze**2)
-            rel_drift_ext = (E_ext - E_ext[0]) / E_ext[0]
+            y_ext_f128 = y_ext.astype(np.float128)
+            rel_drift_ext = ea.compute_energy_drift_pure(*ea.extract_v(y_ext_f128))
             ext_data = (t_ext, rel_drift_ext, PS_order_ext)
 
         if USE_EXTERNAL_H5b:
             externalb = wr.load_results_h5_constb(external_h5b)
             ext_psb = externalb["ps"]
             t_extb, y_extb = ext_psb["t"], ext_psb["y"]
-            vxeb, vyeb, vzeb = y_extb[3].astype(np.float128), y_extb[4].astype(np.float128), y_extb[5].astype(np.float128)
-            E_extb = 0.5 * (vxeb**2 + vyeb**2 + vzeb**2)
-            rel_drift_extb = (E_extb - E_extb[0]) / E_extb[0]
+            y_extb_f128 = y_extb.astype(np.float128)
+            rel_drift_extb = ea.compute_energy_drift_pure(*ea.extract_v(y_extb_f128))
             extb_data = (t_extb, rel_drift_extb, PS_order_extb)
 
         # --- Recompute PS at various orders ---
@@ -445,32 +439,32 @@ def main(cfg_path, replot=False):
     if USE_ANALYTICAL:
         x_ana = solution_analytical[0]
         y_ana = solution_analytical[1]
-        rel_err_ps = np.sqrt((solution_ps[0] - x_ana)**2 + (solution_ps[1] - y_ana)**2) / gyro_radius_si
+        rel_traj_err_ps = ea.trajectory_error_xy(solution_ps, x_ana, y_ana, gyro_radius_si)
 
-        rel_err_rk4 = None
+        rel_traj_err_rk4 = None
         if USE_RK4:
-            rel_err_rk4 = np.sqrt((solution_rk4[0] - x_ana)**2 + (solution_rk4[1] - y_ana)**2) / gyro_radius_si
+            rel_traj_err_rk4 = ea.trajectory_error_xy(solution_rk4, x_ana, y_ana, gyro_radius_si)
 
-        rel_err_rk45 = None
+        rel_traj_err_rk45 = None
         if USE_RK45:
-            rel_err_rk45 = np.sqrt((solution_rk45.y[0] - x_ana)**2 + (solution_rk45.y[1] - y_ana)**2) / gyro_radius_si
+            rel_traj_err_rk45 = ea.trajectory_error_xy(solution_rk45.y, x_ana, y_ana, gyro_radius_si)
 
         # External h5 trajectory error
         t_ext_traj = None
-        rel_err_ext = None
+        rel_traj_err_ext = None
         if USE_EXTERNAL_H5:
             external = wr.load_results_h5_constb(external_h5)
             ext_ps = external["ps"]
             t_ext_traj = ext_ps["t"]
             y_ext = ext_ps["y"]
-            rel_err_ext = np.sqrt((y_ext[0] - x_ana)**2 + (y_ext[1] - y_ana)**2) / gyro_radius_si
+            rel_traj_err_ext = ea.trajectory_error_xy(y_ext, x_ana, y_ana, gyro_radius_si)
 
         fplt.trajectory_error(
             f"{_base}_TrajError.png",
-            t_eval_ps=t_eval_ps, rel_err_ps=rel_err_ps, orders_used=orders_used,
-            t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_err_rk4=rel_err_rk4,
-            t_eval_rk45=t_eval_rk45 if USE_RK45 else None, rel_err_rk45=rel_err_rk45,
-            t_ext=t_ext_traj, rel_err_ext=rel_err_ext, ps_order_ext=PS_order_ext,
+            t_eval_ps=t_eval_ps, rel_traj_err_ps=rel_traj_err_ps, orders_used=orders_used,
+            t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_traj_err_rk4=rel_traj_err_rk4,
+            t_eval_rk45=t_eval_rk45 if USE_RK45 else None, rel_traj_err_rk45=rel_traj_err_rk45,
+            t_ext=t_ext_traj, rel_traj_err_ext=rel_traj_err_ext, ps_order_ext=PS_order_ext,
             use_rk4=USE_RK4, use_rk45=USE_RK45, use_external_h5=USE_EXTERNAL_H5,
             use_full_plot=USE_FULL_PLOT,
             field_label="a Constant Magnetic Field", **{k: v for k, v in _plot_kw.items() if k != "field_label"},

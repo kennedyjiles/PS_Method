@@ -372,10 +372,10 @@ def ke_error_multi(
 # =====================================================================
 def trajectory_error(
     save_path, *,
-    t_eval_ps, rel_err_ps, orders_used,
-    t_eval_rk4=None, rel_err_rk4=None,
-    t_eval_rk45=None, rel_err_rk45=None,
-    t_ext=None, rel_err_ext=None, ps_order_ext=None,
+    t_eval_ps, rel_traj_err_ps, orders_used,
+    t_eval_rk4=None, rel_traj_err_rk4=None,
+    t_eval_rk45=None, rel_traj_err_rk45=None,
+    t_ext=None, rel_traj_err_ext=None, ps_order_ext=None,
     use_rk4=False, use_rk45=False, use_external_h5=False,
     use_full_plot=False,
     particle_type="", field_label="", use_plot_titles=True,
@@ -392,20 +392,20 @@ def trajectory_error(
     fig, ax = plt.subplots(figsize=(10, 5))
 
     lines = {}
-    if use_rk45 and rel_err_rk45 is not None:
+    if use_rk45 and rel_traj_err_rk45 is not None:
         lines["rk45"], = ax.semilogy(
-            ul.f64(t_eval_rk45) * time_factor, np.abs(ul.f64(rel_err_rk45)),
+            ul.f64(t_eval_rk45) * time_factor, np.abs(ul.f64(rel_traj_err_rk45)),
             label="RK45", linestyle=LINESTYLES["rk45"], color=COLORS["rk45"])
-    if use_rk4 and rel_err_rk4 is not None:
+    if use_rk4 and rel_traj_err_rk4 is not None:
         lines["rk4"], = ax.semilogy(
-            ul.f64(t_eval_rk4) * time_factor, np.abs(ul.f64(rel_err_rk4)),
+            ul.f64(t_eval_rk4) * time_factor, np.abs(ul.f64(rel_traj_err_rk4)),
             label="RK4", linestyle=LINESTYLES["rk4"], color=COLORS["rk4"])
     lines["ps"], = ax.semilogy(
-        ul.f64(t_eval_ps) * time_factor, np.abs(ul.f64(rel_err_ps)),
+        ul.f64(t_eval_ps) * time_factor, np.abs(ul.f64(rel_traj_err_ps)),
         label=f"PS{orders_used.max()}", linestyle=LINESTYLES["ps"], color=COLORS["ps"])
-    if use_external_h5 and rel_err_ext is not None:
+    if use_external_h5 and rel_traj_err_ext is not None:
         lines["ext"], = ax.semilogy(
-            ul.f64(t_ext) * time_factor, np.abs(ul.f64(rel_err_ext)),
+            ul.f64(t_ext) * time_factor, np.abs(ul.f64(rel_traj_err_ext)),
             label=f"PS{ps_order_ext}*", linestyle="-.", color=COLORS["ext"])
 
     ul.setup_log_axes(ax)
@@ -424,15 +424,15 @@ def trajectory_error(
 
     endpoints = []
     if use_rk45 and "rk45" in lines:
-        endpoints.append((t_eval_rk45[-1], np.abs(rel_err_rk45[-1]),
+        endpoints.append((t_eval_rk45[-1], np.abs(rel_traj_err_rk45[-1]),
                           "RK45", lines["rk45"].get_color()))
     if use_rk4 and "rk4" in lines:
-        endpoints.append((t_eval_rk4[-1], np.abs(rel_err_rk4[-1]),
+        endpoints.append((t_eval_rk4[-1], np.abs(rel_traj_err_rk4[-1]),
                           "RK4", lines["rk4"].get_color()))
     if use_external_h5 and "ext" in lines:
-        endpoints.append((t_ext[-1], np.abs(rel_err_ext[-1]),
+        endpoints.append((t_ext[-1], np.abs(rel_traj_err_ext[-1]),
                           f"PS{ps_order_ext}*", lines["ext"].get_color()))
-    endpoints.append((t_eval_ps[-1], np.abs(rel_err_ps[-1]),
+    endpoints.append((t_eval_ps[-1], np.abs(rel_traj_err_ps[-1]),
                       f"PS{orders_used.max()}", lines["ps"].get_color()))
 
     ul.place_endpoint_labels(fig, ax, endpoints)
