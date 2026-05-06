@@ -140,12 +140,12 @@ def main(cfg_path, replot=False):
     v_si = npfloat(np.sqrt(npfloat(2 * KE_particle * evtoj / mass_si))) / 1000  # /1000 puts things in km
     tau_time = mass_si / (abs(q_e) * B_0)
 
-    gyro_radius_si = abs(v_si * np.sin(pitch_rad) * mass_si / (q_e * B_0))
+    gyro_radius_si = v_si * np.sin(pitch_rad) * mass_si / (abs(q_e) * B_0)
     r_normalization = delta
     v_tau = v_si * tau_time / r_normalization
     # `gamma` is the field-scale factor in B(y) = B_0 tanh(gamma*y) (paper Eq. 31),
-    # NOT the Lorentz factor. When normalizing length by delta, gamma collapses to 1.
-    gamma = 1 / (delta / r_normalization)
+    # NOT the Lorentz factor. With r_normalization = delta it's exactly 1.
+    gamma = npfloat(1.0)
 
     physical_time = norm_time * tau_time
 
@@ -397,7 +397,10 @@ def main(cfg_path, replot=False):
             extb_data = (t_extb, rel_drift_extb, PS_order_extb)
 
         # --- Recompute PS at various orders ---
-        _ps_orders = [5, 6, 7, 10, 15]
+        # Skip any order that matches the main run's PS order — otherwise
+        # the comparison plot would draw two lines for the same order.
+        _main_order = int(orders_used.max())
+        _ps_orders = [n for n in (5, 6, 7, 10, 15) if n != _main_order]
         ps_drifts = []
         for order in _ps_orders:
             sol, _ = hp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, gamma, qoverm, tol)
@@ -406,7 +409,8 @@ def main(cfg_path, replot=False):
                               fplt.COLORS[f"ps{order}"],
                               fplt.LINESTYLES[f"ps{order}"]))
 
-        ps_drifts.append((orders_used.max(), rel_drift_ps, "#009E73", ":"))
+        ps_drifts.append((orders_used.max(), rel_drift_ps,
+                          fplt.COLORS["ps"], fplt.LINESTYLES["ps"]))
 
         fplt.ke_error_multi(
             f"{_base}_KEerror_many.png",

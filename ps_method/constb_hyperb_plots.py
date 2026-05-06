@@ -318,9 +318,6 @@ def ke_error_multi(
             np.abs(ul.f64(drift[1:])),
             linestyle=ls, color=color)
 
-    # Main PS (max order) — last entry in ps_drifts is assumed to be the main one
-    # (already plotted above)
-
     # External h5 overlays
     if ext_data is not None:
         t_ext, drift_ext, ps_order_ext = ext_data

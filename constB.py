@@ -149,7 +149,7 @@ def main(cfg_path, replot=False):
     if abs(vy_initial) < tol: vy_initial = npfloat(0.0)
     if abs(vz_initial) < tol: vz_initial = npfloat(0.0)
 
-    gyro_radius_si = abs(v_si * np.sin(pitch_rad) * mass / (q_e * B_0))
+    gyro_radius_si = v_si * np.sin(pitch_rad) * mass / (abs(q_e) * B_0)
 
     initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)
 
@@ -408,7 +408,10 @@ def main(cfg_path, replot=False):
             extb_data = (t_extb, rel_drift_extb, PS_order_extb)
 
         # --- Recompute PS at various orders ---
-        _ps_orders = [4, 5, 6, 7, 10]
+        # Skip any order that matches the main run's PS order — otherwise
+        # the comparison plot would draw two lines for the same order.
+        _main_order = int(orders_used.max())
+        _ps_orders = [n for n in (4, 5, 6, 7, 10) if n != _main_order]
         ps_drifts = []
         for order in _ps_orders:
             sol, _ = cp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
@@ -417,7 +420,8 @@ def main(cfg_path, replot=False):
                               fplt.COLORS[f"ps{order}"],
                               fplt.LINESTYLES[f"ps{order}"]))
 
-        ps_drifts.append((orders_used.max(), rel_drift_ps, "#009E73", ":"))
+        ps_drifts.append((orders_used.max(), rel_drift_ps,
+                          fplt.COLORS["ps"], fplt.LINESTYLES["ps"]))
 
         fplt.ke_error_multi(
             f"{_base}_KEerror_manyPS.png",
