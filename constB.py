@@ -328,16 +328,16 @@ def main(cfg_path, replot=False):
     # ================================================================
     # ==================KE Error Plot Over time Only =================
     # ================================================================
-    rel_drift_ps = ea.compute_energy_drift(*ea.extract_v(solution_ps))
+    rel_drift_ps = ea.energy_drift(*ea.extract_v(solution_ps))
 
     rel_drift_rk4 = None
     rel_drift_rk45 = None
 
     if USE_RK45:
-        rel_drift_rk45 = ea.compute_energy_drift(*ea.extract_v(solution_rk45.y))
+        rel_drift_rk45 = ea.energy_drift(*ea.extract_v(solution_rk45.y))
 
     if USE_RK4:
-        rel_drift_rk4 = ea.compute_energy_drift(*ea.extract_v(solution_rk4))
+        rel_drift_rk4 = ea.energy_drift(*ea.extract_v(solution_rk4))
 
     fplt.ke_error(
         f"{_base}_KEerror.png",
@@ -396,7 +396,7 @@ def main(cfg_path, replot=False):
             ext_ps = external["ps"]
             t_ext, y_ext = ext_ps["t"], ext_ps["y"]
             y_ext_f128 = y_ext.astype(np.float128)
-            rel_drift_ext = ea.compute_energy_drift_pure(*ea.extract_v(y_ext_f128))
+            rel_drift_ext = ea.energy_drift_pure(*ea.extract_v(y_ext_f128))
             ext_data = (t_ext, rel_drift_ext, PS_order_ext)
 
         if USE_EXTERNAL_H5b:
@@ -404,7 +404,7 @@ def main(cfg_path, replot=False):
             ext_psb = externalb["ps"]
             t_extb, y_extb = ext_psb["t"], ext_psb["y"]
             y_extb_f128 = y_extb.astype(np.float128)
-            rel_drift_extb = ea.compute_energy_drift_pure(*ea.extract_v(y_extb_f128))
+            rel_drift_extb = ea.energy_drift_pure(*ea.extract_v(y_extb_f128))
             extb_data = (t_extb, rel_drift_extb, PS_order_extb)
 
         # --- Recompute PS at various orders ---
@@ -412,7 +412,7 @@ def main(cfg_path, replot=False):
         ps_drifts = []
         for order in _ps_orders:
             sol, _ = cp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
-            drift = ea.compute_energy_drift(*ea.extract_v(sol))
+            drift = ea.energy_drift(*ea.extract_v(sol))
             ps_drifts.append((order, drift,
                               fplt.COLORS[f"ps{order}"],
                               fplt.LINESTYLES[f"ps{order}"]))

@@ -3,8 +3,8 @@ Kinetic energy conservation + small math primitives shared by constb / hyperb.
 
     relative_drift             — |arr - arr[0]| / arr[0]  (drift-from-IC primitive)
     kinetic_energy             — KE from velocity components
-    compute_energy_drift       — KE drift over time (njit, float64)
-    compute_energy_drift_pure  — KE drift, non-JIT, any dtype (e.g. float128)
+    energy_drift               — KE drift over time (njit, float64)
+    energy_drift_pure          — KE drift, non-JIT, any dtype (e.g. float128)
     extract_v                  — pull (vx, vy, vz) from PS solution array
     trajectory_error_xy        — XY distance from a reference, normalized by scale
 """
@@ -15,7 +15,6 @@ from . import utils as ul
 half = ul.npfloat(0.5)
 two  = ul.npfloat(2.0)
 
-
 @ul.maybe_njit
 def relative_drift(values):
     return np.abs(values - values[0]) / values[0]
@@ -25,10 +24,10 @@ def kinetic_energy(vx, vy, vz, m=ul.npfloat(1.0)):
     return half * m * (vx**two + vy**two + vz**two)
 
 @ul.maybe_njit
-def compute_energy_drift(vx, vy, vz):
+def energy_drift(vx, vy, vz):
     return relative_drift(kinetic_energy(vx, vy, vz))
 
-def compute_energy_drift_pure(vx, vy, vz):
+def energy_drift_pure(vx, vy, vz):
     KE = 0.5 * (vx**2 + vy**2 + vz**2)
     return np.abs(KE - KE[0]) / KE[0]
 
