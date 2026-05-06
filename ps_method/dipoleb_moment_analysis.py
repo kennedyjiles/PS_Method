@@ -92,6 +92,7 @@ def compute_mu_deviation_rk(
     solution, steps, dt, N_GYRO, N_STEPS_PER_GYRO,
     mass, gyro_window, time_factor,
     solver_type="rk4",
+    y_initial=None,
 ):
     """
     Compute magnetic moment deviation for an in-memory RK solver solution.
@@ -129,9 +130,15 @@ def compute_mu_deviation_rk(
     i0, i1 = _gyro_window_indices(gyro_window, steps, window_steps)
 
     if solver_type == "rkg":
-        # RKG stores (N, 6) with canonical momentum — need to convert to velocity
-        r0 = solution[0, 0:3]
-        p0 = solution[0, 3:6]
+        # RKG stores (N, 6) with canonical momentum — need to convert to velocity.
+        # For trimmed files, y_initial preserves the source IC so mu0 is the
+        # true baseline rather than mu at trim-start.
+        if y_initial is not None:
+            r0 = y_initial[0:3]
+            p0 = y_initial[3:6]
+        else:
+            r0 = solution[0, 0:3]
+            p0 = solution[0, 3:6]
         A0 = dp.vector_potential(r0)
         v0 = p0 - A0
         state0 = np.hstack((r0, v0))[None, :]
@@ -146,8 +153,13 @@ def compute_mu_deviation_rk(
         state_win = np.hstack((r_win, v_win))
         mu_win = compute_mu_rk(state_win, mass)
     else:
-        # RK4 and RK45: shape (6, N) — columns are time steps
-        mu0 = compute_mu_rk(solution[:, 0:1].T, mass)[0]
+        # RK4 and RK45: shape (6, N) — columns are time steps.
+        # See y_initial note above (rkg branch).
+        if y_initial is not None:
+            state0_src = y_initial.reshape(1, 6)
+        else:
+            state0_src = solution[:, 0:1].T
+        mu0 = compute_mu_rk(state0_src, mass)[0]
         mu_win = compute_mu_rk(solution[:, i0:i1].T, mass)
 
     mudrift = np.abs(mu_win - mu0) / mu0

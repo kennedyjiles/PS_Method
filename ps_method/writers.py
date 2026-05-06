@@ -76,7 +76,7 @@ def h5_path_for(params, output_folder):
     return os.path.join(output_folder, f"{run_hash(params)}.h5")
 
 
-def build_filename(summary, output_folder, stem, figure_tag, ext="png"):
+def build_filename(output_folder, stem, figure_tag, ext="png"):
     """Build the full path for a figure or output file."""
     return os.path.join(output_folder, f"{stem}_{figure_tag}.{ext}")
 
@@ -491,7 +491,7 @@ def summary_txt_dipoleb(
         j0_rkg = _tail_start_index(len(rel_drift_rkg), rkg_step, tail_start, MAX_TAIL_STEPS)
 
     # --- Write file ---
-    output_filename = build_filename(summary, run_folder, stem,
+    output_filename = build_filename(run_folder, stem,
                                      figure_tag="summary", ext="txt")
 
     with open(output_filename, "w") as f:

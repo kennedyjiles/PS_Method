@@ -53,12 +53,12 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, t
         i = 0
 
         while max_contrib > tol and i < order_max:
-            # Position coefficients: dx/dt = v  →  x_{n+1} = v_n / (n+1)
+            # Position coefficients
             c[x, i+1] = oip1[i] * c[vx, i]
             c[y, i+1] = oip1[i] * c[vy, i]
             c[z, i+1] = oip1[i] * c[vz, i]
 
-            # Velocity coefficients: dv/dt = (q/m)(v × B)  →  cross product at order n
+            # Velocity coefficients
             c[vx, i+1] = oip1[i] * qoverm * (Bfield[2]*c[vy, i] - Bfield[1]*c[vz, i])
             c[vy, i+1] = oip1[i] * qoverm * (Bfield[0]*c[vz, i] - Bfield[2]*c[vx, i])
             c[vz, i+1] = oip1[i] * qoverm * (Bfield[1]*c[vx, i] - Bfield[0]*c[vy, i])

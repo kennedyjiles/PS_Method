@@ -160,11 +160,11 @@ def compute_ke_errors(
     # PS
     USE_PS=False, cache_path=None, ps_step=None, PS_decimate=1, E0_ps=None,
     # RK4
-    USE_RK4=False, solution_rk4=None, rk4_step=None,
+    USE_RK4=False, solution_rk4=None, rk4_step=None, rk4_y_initial=None,
     # RKG
-    USE_RKG=False, solution_rkg=None, rkg_step=None,
+    USE_RKG=False, solution_rkg=None, rkg_step=None, rkg_y_initial=None,
     # RK45
-    USE_RK45=False, y_rk45_common=None,
+    USE_RK45=False, y_rk45_common=None, rk45_y_initial=None,
     # External h5 overlay files
     USE_EXTERNAL_H5_ps=False,  external_h5_ps=None,
     USE_EXTERNAL_H5_rk4=False, external_h5_rk4=None,
@@ -305,6 +305,8 @@ def compute_ke_errors(
             )
 
     # --- Current-run RKG (Hamiltonian) ---
+    # For trimmed files, *_y_initial preserves the source IC so E0 reflects
+    # the true initial energy rather than the energy at trim-start.
     rel_drift_rkg = None
     if USE_RKG:
         r_rkg = solution_rkg[:, 0:3]
@@ -314,7 +316,11 @@ def compute_ke_errors(
             A_rkg[i] = vector_potential_func(r_rkg[i])
         v_rkg = p_rkg - A_rkg
         E_rkg = ul.npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=ul.npfloat)
-        E_rkg_0 = E_rkg[0]
+        if rkg_y_initial is not None:
+            v0 = rkg_y_initial[3:6] - vector_potential_func(rkg_y_initial[0:3])
+            E_rkg_0 = ul.npfloat(0.5) * ul.npfloat(np.sum(v0 * v0))
+        else:
+            E_rkg_0 = E_rkg[0]
         rel_drift_rkg = np.abs(E_rkg - E_rkg_0) / E_rkg_0
 
     # --- Current-run RK45 ---
@@ -322,7 +328,11 @@ def compute_ke_errors(
     if USE_RK45:
         v_rk45 = y_rk45_common[3:6]
         E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-        E_rk45_0 = E_rk45[0]
+        if rk45_y_initial is not None:
+            v0 = rk45_y_initial[3:6]
+            E_rk45_0 = 0.5 * float(np.sum(v0 * v0))
+        else:
+            E_rk45_0 = E_rk45[0]
         rel_drift_rk45 = np.abs(E_rk45 - E_rk45_0) / E_rk45_0
 
     # --- Current-run RK4 ---
@@ -330,7 +340,11 @@ def compute_ke_errors(
     if USE_RK4:
         v_rk4 = solution_rk4[3:6]
         E_rk4 = ul.npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=ul.npfloat)
-        E_rk4_0 = E_rk4[0]
+        if rk4_y_initial is not None:
+            v0 = rk4_y_initial[3:6]
+            E_rk4_0 = ul.npfloat(0.5) * ul.npfloat(np.sum(v0 * v0))
+        else:
+            E_rk4_0 = E_rk4[0]
         rel_drift_rk4 = np.abs(E_rk4 - E_rk4_0) / E_rk4_0
 
     # --- Build time arrays ---

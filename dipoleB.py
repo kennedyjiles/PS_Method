@@ -53,6 +53,19 @@ def main(cfg_path, replot=False):
 
     cfg        = load_config(cfg_path)
 
+    # --- Resolve manual_h5_path. For a relative path, try yml-relative first
+    #     (so trim_h5's auto-companion yml can use just a basename — the h5 is
+    #     a sibling of the yml). Fall back to the raw path (cwd-relative) for
+    #     legacy yml configs that point at e.g. data/dipoleb/.../*.h5. ---
+    _raw_manual = cfg.get("manual_h5_path")
+    if _raw_manual and not os.path.isabs(_raw_manual):
+        _yml_relative = os.path.join(
+            os.path.dirname(os.path.abspath(cfg_path)), _raw_manual
+        )
+        if os.path.exists(_yml_relative):
+            cfg["manual_h5_path"] = _yml_relative
+        # else: leave as-is — interpreted relative to cwd at run time
+
     # --- Resolve float type BEFORE importing physics modules so @maybe_njit
     #     sees the correct type (float128 skips njit, float64 compiles).
     #     YAML governs the default. If a manual h5 is being loaded, its saved
@@ -212,6 +225,9 @@ def main(cfg_path, replot=False):
     max_ps_value  = None
     steps_rk4     = None
     steps_rkg     = None
+    rk4_y_initial  = None
+    rk45_y_initial = None
+    rkg_y_initial  = None
 
     # ===============================================
     # ============= Manual File Load ================
@@ -252,6 +268,20 @@ def main(cfg_path, replot=False):
                 # npfloat already resolved at the top of main() from this file's saved dtype.
 
                 T_gyro = meta.get("T_gyro", 2.0 * np.pi * (x_initial**3))  # fallback for older h5 files
+
+                # ---- Heads-up: yml asks for solvers the h5 doesn't carry ----
+                # Solver-enabled flags below come from the h5 (it's authoritative
+                # — you can't plot data that doesn't exist). Warn if the yml
+                # requested a method the h5 lacks, so the user isn't surprised
+                # when their plot is missing curves.
+                _yml_wants = {"ps": USE_PS, "rk4": USE_RK4,
+                              "rk45": USE_RK45, "rkg": USE_RKG}
+                _missing = [m for m in _yml_wants
+                            if _yml_wants[m] and not summary[m]["enabled"]]
+                if _missing:
+                    print(f"  Note: yml requests {_missing} but the h5 has no "
+                          f"data for {'these' if len(_missing) > 1 else 'it'}. "
+                          f"Skipping silently.")
 
                 # ---- PS config ----
                 ps_cfg = summary["ps"]
@@ -295,39 +325,77 @@ def main(cfg_path, replot=False):
                 does the chunking method. I have not tried to apply it to RK method until we find specific needs beccause it was a lot of work.
                 """
 
+                # === Detect trimmed file (independent of which solvers are enabled) ===
+                # summary_json preserves ORIGINAL run identity verbatim. Any solver
+                # group carrying a `trim_end` attr means the data spans only part of
+                # that original run, so meta-derived values (gyroperiods, norm_time,
+                # physical_time) are stale. Recompute from actual data length using
+                # the highest-priority group available (PS > RK4 > RKG).
+                trim_attr_grp = None
+                for _g in ("ps", "rk4", "rkg"):
+                    if _g in cached and "trim_end" in cached[_g].attrs and "y" in cached[_g]:
+                        trim_attr_grp = _g
+                        break
+                if trim_attr_grp is not None:
+                    _gsrc = cached[trim_attr_grp]
+                    if trim_attr_grp == "ps":
+                        _stride = int(_gsrc.attrs.get("decimate", 1)) or 1
+                        _n_eff = _gsrc["y"].shape[1] * _stride
+                    elif trim_attr_grp == "rkg":
+                        _n_eff = _gsrc["y"].shape[0]
+                    else:
+                        _n_eff = _gsrc["y"].shape[1]
+                    _dt = float(_gsrc.attrs["dt"])
+                    norm_time = _n_eff * _dt
+                    gyroperiods = norm_time / T_gyro
+                    trim_end_label = _gsrc.attrs.get("trim_end", "trimmed")
+                    trim_window_label = _gsrc.attrs.get("trim_window_s", "")
+                    print(f"  Trimmed file: {trim_end_label} {trim_window_label}s "
+                          f"(source: {_gsrc.attrs.get('trim_source', '?')}) — "
+                          f"effective gyroperiods={gyroperiods:.4g}")
+                    if trim_window_label:
+                        stem = f"{stem}_{trim_end_label}_{trim_window_label}s"
+                    else:
+                        stem = f"{stem}_{trim_end_label}"
+
                 # === PS (chunked — data stays on disk, read in slices later) ===
                 if USE_PS and "ps" in cached:
-                    # Trimmed files have fewer columns than the original run.
-                    # Override steps_ps and norm_time so downstream windowing
-                    # uses actual data size.
+                    # Defense in depth: catches accidental truncation even when the
+                    # file isn't a trim_h5 product (no trim_end attr).
                     n_store_actual = cached["ps"]["y"].shape[1]
                     ps_store_stride = PS_decimate if PS_decimate > 1 else 1
                     steps_ps_actual = n_store_actual * ps_store_stride
                     if steps_ps_actual < steps_ps:
-                        print(f"  Trimmed file detected: {n_store_actual:,} stored columns "
-                              f"(original {steps_ps:,} steps → effective {steps_ps_actual:,})")
                         steps_ps = steps_ps_actual
-                        norm_time = steps_ps * ps_step
-                        gyroperiods = norm_time / (2.0 * np.pi)
-                        # Append trim label to stem so figures don't overwrite originals
-                        trim_end = cached["ps"].attrs.get("trim_end", "trimmed")
-                        trim_window = cached["ps"].attrs.get("trim_window_s", "")
-                        if trim_window:
-                            stem = f"{stem}_{trim_end}_{trim_window}s"
-                        else:
-                            stem = f"{stem}_{trim_end}"
 
                 # === RK4 ===
                 if USE_RK4 and "rk4" in cached:
+                    n_actual_rk4 = cached["rk4"]["y"].shape[1]
+                    if n_actual_rk4 < steps_rk4:
+                        print(f"  Trimmed file detected (rk4): {n_actual_rk4:,} columns "
+                              f"(original {steps_rk4:,} steps)")
+                        steps_rk4 = n_actual_rk4
                     solution_rk4 = cached["rk4"]["y"][()]
+                    if "y_initial" in cached["rk4"]:
+                        rk4_y_initial = cached["rk4"]["y_initial"][()]
 
                 # === RK45 ===
                 if USE_RK45 and "rk45" in cached:
                     solution_rk45 = SimpleNamespace(t=cached["rk45"]["t"][()], y=cached["rk45"]["y"][()])
+                    if "y_initial" in cached["rk45"]:
+                        rk45_y_initial = cached["rk45"]["y_initial"][()]
 
                 # === RKG ===
                 if USE_RKG and "rkg" in cached:
+                    # rkg stores y as (n_steps, n_dim) — axis 0 is time
+                    n_actual_rkg = cached["rkg"]["y"].shape[0]
+                    if n_actual_rkg < steps_rkg:
+                        print(f"  Trimmed file detected (rkg): {n_actual_rkg:,} rows "
+                              f"(original {steps_rkg:,} steps)")
+                        steps_rkg = n_actual_rkg
                     solution_rkg = cached["rkg"]["y"][()]
+                    if "y_initial" in cached["rkg"]:
+                        rkg_y_initial = cached["rkg"]["y_initial"][()]
 
     # for file/plot naming
     if mass_si == m_e: particle_type = "Electron"
@@ -440,6 +508,20 @@ def main(cfg_path, replot=False):
                 norm_time = meta["norm_time"]
                 # npfloat already resolved at the top of main() from this file's saved dtype.
 
+                # ---- Heads-up: yml asks for solvers the h5 doesn't carry ----
+                # Solver-enabled flags below come from the h5 (it's authoritative
+                # — you can't plot data that doesn't exist). Warn if the yml
+                # requested a method the h5 lacks, so the user isn't surprised
+                # when their plot is missing curves.
+                _yml_wants = {"ps": USE_PS, "rk4": USE_RK4,
+                              "rk45": USE_RK45, "rkg": USE_RKG}
+                _missing = [m for m in _yml_wants
+                            if _yml_wants[m] and not summary[m]["enabled"]]
+                if _missing:
+                    print(f"  Note: yml requests {_missing} but the h5 has no "
+                          f"data for {'these' if len(_missing) > 1 else 'it'}. "
+                          f"Skipping silently.")
+
                 # ---- PS config ----
                 ps_cfg = summary["ps"]
                 USE_PS = ps_cfg["enabled"]
@@ -476,37 +558,76 @@ def main(cfg_path, replot=False):
 
 
                 # ---- Load solver data ------
+                # === Detect trimmed file (independent of which solvers are enabled) ===
+                # Same logic as manual-mode block above. Recompute norm_time /
+                # gyroperiods / physical_time from actual data length so plots,
+                # axes, and labels reflect the trim regardless of which solver
+                # the user is replotting.
+                trim_attr_grp = None
+                for _g in ("ps", "rk4", "rkg"):
+                    if _g in cached and "trim_end" in cached[_g].attrs and "y" in cached[_g]:
+                        trim_attr_grp = _g
+                        break
+                if trim_attr_grp is not None:
+                    _gsrc = cached[trim_attr_grp]
+                    if trim_attr_grp == "ps":
+                        _stride = int(_gsrc.attrs.get("decimate", 1)) or 1
+                        _n_eff = _gsrc["y"].shape[1] * _stride
+                    elif trim_attr_grp == "rkg":
+                        _n_eff = _gsrc["y"].shape[0]
+                    else:
+                        _n_eff = _gsrc["y"].shape[1]
+                    _dt = float(_gsrc.attrs["dt"])
+                    norm_time = _n_eff * _dt
+                    gyroperiods = norm_time / T_gyro
+                    physical_time = norm_time * abs(tau_time)
+                    trim_end_label = _gsrc.attrs.get("trim_end", "trimmed")
+                    trim_window_label = _gsrc.attrs.get("trim_window_s", "")
+                    print(f"  Trimmed file: {trim_end_label} {trim_window_label}s "
+                          f"(source: {_gsrc.attrs.get('trim_source', '?')}) — "
+                          f"effective gyroperiods={gyroperiods:.4g}")
+                    if trim_window_label:
+                        stem = f"{stem}_{trim_end_label}_{trim_window_label}s"
+                    else:
+                        stem = f"{stem}_{trim_end_label}"
+
                 # === PS ===
                 if USE_PS and "ps" in cached:
-                    # Guard against trimmed files with fewer columns than metadata claims
+                    # Defense in depth for accidental truncation (no trim_end attr).
                     n_store_actual = cached["ps"]["y"].shape[1]
                     ps_store_stride = PS_decimate if PS_decimate > 1 else 1
                     steps_ps_actual = n_store_actual * ps_store_stride
                     if steps_ps_actual < steps_ps:
-                        print(f"  Trimmed file detected: {n_store_actual:,} stored columns "
-                              f"(original {steps_ps:,} steps → effective {steps_ps_actual:,})")
                         steps_ps = steps_ps_actual
-                        norm_time = steps_ps * ps_step
-                        gyroperiods = norm_time / (2.0 * np.pi)
-                        physical_time = norm_time * abs(tau_time)   # keep consistent with new norm_time
-                        trim_end = cached["ps"].attrs.get("trim_end", "trimmed")
-                        trim_window = cached["ps"].attrs.get("trim_window_s", "")
-                        if trim_window:
-                            stem = f"{stem}_{trim_end}_{trim_window}s"
-                        else:
-                            stem = f"{stem}_{trim_end}"
 
                 # === RK4 ===
                 if USE_RK4 and "rk4" in cached:
+                    n_actual_rk4 = cached["rk4"]["y"].shape[1]
+                    if n_actual_rk4 < steps_rk4:
+                        print(f"  Trimmed file detected (rk4): {n_actual_rk4:,} columns "
+                              f"(original {steps_rk4:,} steps)")
+                        steps_rk4 = n_actual_rk4
                     solution_rk4 = cached["rk4"]["y"][()]
+                    if "y_initial" in cached["rk4"]:
+                        rk4_y_initial = cached["rk4"]["y_initial"][()]
 
                 # === RK45 ===
                 if USE_RK45 and "rk45" in cached:
                     solution_rk45 = SimpleNamespace(t=cached["rk45"]["t"][()], y=cached["rk45"]["y"][()])
+                    if "y_initial" in cached["rk45"]:
+                        rk45_y_initial = cached["rk45"]["y_initial"][()]
 
                 # === RKG ===
                 if USE_RKG and "rkg" in cached:
+                    # rkg stores y as (n_steps, n_dim) — axis 0 is time
+                    n_actual_rkg = cached["rkg"]["y"].shape[0]
+                    if n_actual_rkg < steps_rkg:
+                        print(f"  Trimmed file detected (rkg): {n_actual_rkg:,} rows "
+                              f"(original {steps_rkg:,} steps)")
+                        steps_rkg = n_actual_rkg
                     solution_rkg = cached["rkg"]["y"][()]
+                    if "y_initial" in cached["rkg"]:
+                        rkg_y_initial = cached["rkg"]["y_initial"][()]
         else:
             print("No matching file or 'Read Data' skipped. Running solvers...\n")
 
@@ -897,7 +1018,7 @@ def main(cfg_path, replot=False):
         print(f"Debug log redirected to {_log_path}\n")
 
     # --- Copy config YAML to run folder (with git hash) ---
-    copy_config_to_output(cfg_path, run_folder)
+    copy_config_to_output(cfg_path, run_folder, cfg=cfg)
 
     # =====================================================
     # ============== Full Trajectory Plots ================
@@ -906,7 +1027,7 @@ def main(cfg_path, replot=False):
 
     if USE_FULL_PLOT:
         _traj_common = dict(
-            summary=summary, run_folder=fig_folder, stem=stem,
+            run_folder=fig_folder, stem=stem,
             particle_type=particle_type, plotbounds=plotbounds,
             ps_order_label=ps_order_label, USE_PLOT_TITLES=USE_PLOT_TITLES,
             USE_RK45=USE_RK45, USE_RK4=USE_RK4, USE_RKG=USE_RKG, USE_PS=USE_PS,
@@ -959,7 +1080,7 @@ def main(cfg_path, replot=False):
     # ================ Trajectory Slice Plots =============
     # =====================================================
     _slice_common = dict(
-        summary=summary, run_folder=fig_folder, stem=stem,
+        run_folder=fig_folder, stem=stem,
         particle_type=particle_type, ps_order_label=ps_order_label,
         USE_PLOT_TITLES=USE_PLOT_TITLES,
         USE_RK45=USE_RK45, USE_RK4=USE_RK4, USE_RKG=USE_RKG, USE_PS=USE_PS,
@@ -995,8 +1116,11 @@ def main(cfg_path, replot=False):
         USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
         PS_decimate=PS_decimate, E0_ps=E0_ps,
         USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
+        rk4_y_initial=rk4_y_initial,
         USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
+        rkg_y_initial=rkg_y_initial,
         USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
+        rk45_y_initial=rk45_y_initial,
         USE_EXTERNAL_H5_ps=USE_EXTERNAL_H5_ps,   external_h5_ps=external_h5_ps,
         USE_EXTERNAL_H5_rk4=USE_EXTERNAL_H5_rk4, external_h5_rk4=external_h5_rk4,
         USE_EXTERNAL_H5_rk45=USE_EXTERNAL_H5_rk45, external_h5_rk45=external_h5_rk45,
@@ -1013,7 +1137,7 @@ def main(cfg_path, replot=False):
     rel_drift_rkg  = _ke["rel_drift_rkg"]
 
     dplt.ke_error(
-        summary=summary, run_folder=fig_folder, stem=stem,
+        run_folder=fig_folder, stem=stem,
         particle_type=particle_type, ps_order_label=ps_order_label,
         USE_PLOT_TITLES=USE_PLOT_TITLES, time_factor=time_factor, norm_time=norm_time,
         ps_data=_ke["ke_ps"], rk4_data=_ke["ke_rk4"],
@@ -1076,19 +1200,19 @@ def main(cfg_path, replot=False):
         mu_rk4_result = mp.compute_mu_deviation_rk(
             solution_rk4, steps_rk4, rk4_step,
             N_GYRO, N_STEPS_PER_GYRO_rk4, mass, gyro_window, time_factor,
-            solver_type="rk4")
+            solver_type="rk4", y_initial=rk4_y_initial)
 
     if USE_RKG:
         mu_rkg_result = mp.compute_mu_deviation_rk(
             solution_rkg, steps_rkg, rkg_step,
             N_GYRO, N_STEPS_PER_GYRO_rkg, mass, gyro_window, time_factor,
-            solver_type="rkg")
+            solver_type="rkg", y_initial=rkg_y_initial)
 
     if USE_RK45:
         mu_rk45_result = mp.compute_mu_deviation_rk(
             y_rk45_common, steps_ps, ps_step,
             N_GYRO, N_STEPS_PER_GYRO_ps, mass, gyro_window, time_factor,
-            solver_type="rk45")
+            solver_type="rk45", y_initial=rk45_y_initial)
 
     if USE_PS:
         mu_ps_result = mp.compute_mu_deviation_ps(
@@ -1103,7 +1227,7 @@ def main(cfg_path, replot=False):
     mu0_rk45 = mu_rk45_result["mu0"] if mu_rk45_result else None
 
     dplt.mu_deviation(
-        summary, fig_folder, stem, particle_type, ps_order_label,
+        fig_folder, stem, particle_type, ps_order_label,
         USE_PLOT_TITLES,
         ps_data=(mu_ps_result["t"], mu_ps_result["mudrift_plot"]) if mu_ps_result else None,
         rk4_data=(mu_rk4_result["t"], mu_rk4_result["mudrift"]) if mu_rk4_result else None,

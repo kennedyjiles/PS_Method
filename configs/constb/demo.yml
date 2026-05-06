@@ -2,7 +2,8 @@
 # Demo run — quick test with default physics at 10 gyroperiods
 # ===================================================================
 
-particle: proton
+use_float128: true
+particle: electron
 energy_eV: 100
 pitch_deg: 45.0
 phi_deg: 45.0
@@ -22,3 +23,8 @@ plotting:
 
 read_data: false
 write_data: true
+
+
+step_overrides:
+  ps: null
+  rk4: null

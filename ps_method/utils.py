@@ -28,7 +28,6 @@ builtins.npfloat has been set.
 """
 
 import builtins
-import os
 import numpy as np
 from numba import njit
 import matplotlib.pyplot as plt

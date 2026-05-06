@@ -61,7 +61,6 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
     _one        = ul.npfloat(1.0)
     oip1        = _one / (_one + np.arange(PS_order))   # 1/(i+1) lookup table
 
-    # Pre-allocated buffers reused across steps (avoid per-step alloc churn)
     c = np.zeros((n_total, PS_order + 1), dtype=ul.npfloat)
     sum_terms = np.zeros(n_total, dtype=ul.npfloat)
 
@@ -87,17 +86,17 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
             vyBz = cauchy_sum(c[vy], Bz_series, i)
             vxBz = cauchy_sum(c[vx], Bz_series, i)
 
-            # Position coefficients: dx/dt = v  →  x_{n+1} = v_n / (n+1)
+            # Position coefficients
             c[x, i+1]  = oip1[i] * c[vx, i]
             c[y, i+1]  = oip1[i] * c[vy, i]
             c[z, i+1]  = oip1[i] * c[vz, i]
 
-            # Velocity coefficients: dv/dt = (q/m)(v × B)
+            # Velocity coefficients
             c[vx, i+1] =  qoverm * oip1[i] * vyBz
             c[vy, i+1] = -qoverm * oip1[i] * vxBz
             c[vz, i+1] = 0.0
 
-            # Auxiliary coefficients: d/dt sinh(γy) = γ cosh(γy) vy  (chain rule)
+            # Auxiliary coefficients
             c[sinh_aux, i+1] = oip1[i] * gamma * cauchy_sum(c[cosh_aux], c[vy], i)
             c[cosh_aux, i+1] = oip1[i] * gamma * cauchy_sum(c[sinh_aux], c[vy], i)
             c[Bz_aux,   i+1] = Bz_series[i]
@@ -126,7 +125,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
         state_history[:, j] = state_history[:, j - 1] + sum_terms
         orders_used[j] = i
 
-        # --- Tethering: recompute auxiliaries from exact functions to prevent drift ---
+        # --- Tethering: recompute auxiliaries from exact functions to minimize drift ---
         y_now = state_history[y, j]
         sinh_now = np.sinh(gamma * y_now)
         cosh_now = np.cosh(gamma * y_now)

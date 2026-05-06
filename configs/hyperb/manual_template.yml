@@ -1,0 +1,90 @@
+# ===================================================================
+# manual_template.yml — Template for hand-written manual h5 loads
+# ===================================================================
+# Copy this file (e.g. to data/hyperb/<run>/manual.yml or anywhere
+# convenient), point manual_h5_path at the h5 you want to replot,
+# and edit the plotting / output fields as needed.
+#
+# How manual mode works:
+#   1. The yml below is loaded with base_config: "none" — nothing is
+#      merged from base.yml. Every field the code reads must exist here.
+#   2. hyperb.py opens the h5 at manual_h5_path and OVERWRITES the
+#      identity / solver-config fields from its params_json:
+#        particle, energy_eV, pitch_deg, phi_deg,
+#        x/y/z_initial_si, B_0, delta,
+#        norm_time → gyroperiods, ps_step / rk4_step → step_overrides,
+#        ps_order, rtol_rk45, atol_rk45.
+#      So values you set for those here are IGNORED.
+#   3. Everything else (plotting, solvers toggles, output, external
+#      overlays) comes from this yml.
+#
+# Run with:
+#   python run.py path/to/this.yml
+# (Paths under data/ auto-trigger replot mode. Otherwise add --replot.)
+# ===================================================================
+
+
+base_config: "none"
+manual_h5_path: "REPLACE_WITH_PATH_TO.h5"
+
+
+# === Fields below are IGNORED in manual mode (h5 provides them) ===
+particle: electron
+energy_eV: 10.0e3
+pitch_deg: 75.0
+phi_deg: 45.0
+delta: 500
+B_0: 10.0e-9
+x_initial_si: 0.0
+y_initial_si: 125.0
+z_initial_si: 0.0
+gyroperiods: 100
+use_float128: false
+
+
+# === Fields below MATTER — edit to control the replot ============
+
+solvers:
+  ps: true
+  rk4: true
+  rk45: true
+
+plotting:
+  titles: true
+  full_plot: false
+  window_gyroperiods: 8       # gyroperiods in the trajectory slice window
+  slice_mode: last            # "first" or "last"
+  skip_rk4_slice: false
+  slice_ylim: null
+  slice_ylim_top: null
+  slice_equal_aspect: false
+  energy_xlim_left: null
+
+output_root: null
+read_data: true
+write_data: true
+
+
+# === Advanced — keys must exist; values mostly overridden by h5 ===
+ps_order: 40
+rtol_rk45: 1.0e-12
+atol_rk45: 1.0e-14
+
+steps_per_gyro:
+  ps: 100
+  rk4: 100
+step_overrides:
+  ps: null
+  rk4: null
+round_decimals: 3
+
+external_h5:
+  root: null
+  a:
+    enabled: false
+    file: null
+    ps_order: null
+  b:
+    enabled: false
+    file: null
+    ps_order: null

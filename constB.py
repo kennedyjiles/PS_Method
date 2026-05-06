@@ -20,7 +20,10 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 
-from configs.config_loader import load_config, compute_derived_constb, copy_config_to_output
+from configs.config_loader import (
+    load_config, compute_derived_constb, copy_config_to_output,
+    apply_manual_h5_overrides,
+)
 from ps_method.constants import q_e, evtoj
 
 
@@ -36,6 +39,21 @@ def main(cfg_path, replot=False):
 
     print(f"Loading YAML config: {cfg_path}\n")
     cfg = load_config(cfg_path)
+
+    # --- Manual h5 mode: peek at the cached file, override identity in cfg
+    #     so all downstream derived quantities use the h5's values rather
+    #     than whatever the yml had. Path is tried yml-relative first, then
+    #     cwd-relative (so e.g. companion ymls next to a trimmed h5 work). ---
+    _raw_manual = cfg.get("manual_h5_path")
+    if _raw_manual and not os.path.isabs(_raw_manual):
+        _yml_relative = os.path.join(os.path.dirname(os.path.abspath(cfg_path)), _raw_manual)
+        if os.path.exists(_yml_relative):
+            cfg["manual_h5_path"] = _yml_relative
+    manual_h5_path = cfg.get("manual_h5_path")
+    USE_MANUAL_FILE = manual_h5_path is not None and os.path.exists(manual_h5_path)
+    if USE_MANUAL_FILE:
+        print(f"Manual h5 mode: loading identity from {manual_h5_path}")
+        apply_manual_h5_overrides(cfg, manual_h5_path, field="constb")
 
     # --- Resolve float type BEFORE compute_derived (needs to be set for builtins) ---
     USE_FLOAT128 = cfg.get("use_float128", False)
@@ -174,7 +192,10 @@ def main(cfg_path, replot=False):
                        pitch_deg, phi_deg,
                        norm_time, ps_step, rk4_step,
                        PS_order, tol, qoverm)
-    cache_path = wr.h5_path_for(params, run_storage)
+    if USE_MANUAL_FILE:
+        cache_path = manual_h5_path
+    else:
+        cache_path = wr.h5_path_for(params, run_storage)
     os.makedirs(run_storage, exist_ok=True)
 
     if os.path.exists(cache_path) and READ_DATA:
@@ -282,7 +303,7 @@ def main(cfg_path, replot=False):
     os.makedirs(fig_folder, exist_ok=True)
 
     # --- Copy config YAML to run folder (with git hash) ---
-    copy_config_to_output(cfg_path, run_folder)
+    copy_config_to_output(cfg_path, run_folder, cfg=cfg)
 
     # --- Filename helper (shared stem for all plots) ---
     _base = f"{fig_folder}/{stem}"
@@ -307,22 +328,16 @@ def main(cfg_path, replot=False):
     # ================================================================
     # ==================KE Error Plot Over time Only =================
     # ================================================================
-    v_ps = solution_ps[3:6]
-    E_ps = npfloat(0.5) * np.sum(v_ps**2, axis=0, dtype=npfloat)
-    rel_drift_ps = (E_ps - E_ps[0]) / E_ps[0]
+    rel_drift_ps = ea.compute_energy_drift(*ea.extract_v(solution_ps))
 
     rel_drift_rk4 = None
     rel_drift_rk45 = None
 
     if USE_RK45:
-        v_rk45 = solution_rk45.y[3:6]
-        E_rk45 = 0.5 * np.sum(v_rk45**2, axis=0)
-        rel_drift_rk45 = (E_rk45 - E_rk45[0]) / E_rk45[0]
+        rel_drift_rk45 = ea.compute_energy_drift(*ea.extract_v(solution_rk45.y))
 
     if USE_RK4:
-        v_rk4 = solution_rk4[3:6]
-        E_rk4 = npfloat(0.5) * np.sum(v_rk4**2, axis=0, dtype=npfloat)
-        rel_drift_rk4 = (E_rk4 - E_rk4[0]) / E_rk4[0]
+        rel_drift_rk4 = ea.compute_energy_drift(*ea.extract_v(solution_rk4))
 
     fplt.ke_error(
         f"{_base}_KEerror.png",
@@ -380,6 +395,10 @@ def main(cfg_path, replot=False):
             external = wr.load_results_h5_constb(external_h5)
             ext_ps = external["ps"]
             t_ext, y_ext = ext_ps["t"], ext_ps["y"]
+            # Explicit float128 upcast: external h5 files are reference runs
+            # and we compute their drift at higher precision than the current
+            # (float64) run for an apples-to-apples comparison. Bypassing the
+            # @maybe_njit helper because Numba can't handle float128 inputs.
             vxe, vye, vze = y_ext[3].astype(np.float128), y_ext[4].astype(np.float128), y_ext[5].astype(np.float128)
             E_ext = 0.5 * (vxe**2 + vye**2 + vze**2)
             rel_drift_ext = (E_ext - E_ext[0]) / E_ext[0]
@@ -405,18 +424,8 @@ def main(cfg_path, replot=False):
             drift = ea.compute_energy_drift(vx, vy, vz)
             ps_drifts.append((order, drift, color, ls))
 
-        # Add the main PS (max order)
-        if USE_RK4:
-            vx_rk4 = np.array(solution_rk4[3], dtype=npfloat)
-            vy_rk4 = np.array(solution_rk4[4], dtype=npfloat)
-            vz_rk4 = np.array(solution_rk4[5], dtype=npfloat)
-            rel_drift_rk4 = ea.compute_energy_drift(vx_rk4, vy_rk4, vz_rk4)
-        if USE_RK45:
-            vx_rk45 = np.array(solution_rk45.y[3], dtype=npfloat)
-            vy_rk45 = np.array(solution_rk45.y[4], dtype=npfloat)
-            vz_rk45 = np.array(solution_rk45.y[5], dtype=npfloat)
-            rel_drift_rk45 = ea.compute_energy_drift(vx_rk45, vy_rk45, vz_rk45)
-
+        # Add main PS (max order). RK drifts already computed in the
+        # KE-error section above — reuse them.
         ps_drifts.append((orders_used.max(), rel_drift_ps, "#009E73", ":"))
 
         fplt.ke_error_multi(

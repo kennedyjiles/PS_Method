@@ -54,7 +54,7 @@ LINESTYLES = {
 # ============== Full 2D Trajectory Plot ==============
 # =====================================================
 def full_2d(
-    summary, run_folder, stem, particle_type, plotbounds, ps_order_label,
+    run_folder, stem, particle_type, plotbounds, ps_order_label,
     USE_PLOT_TITLES, USE_RK45, USE_RK4, USE_RKG, USE_PS,
     solution_rk45=None, solution_rk4=None, solution_rkg=None,
     x_ps_plot=None, y_ps_plot=None,
@@ -83,7 +83,7 @@ def full_2d(
     ax.set_aspect('equal', adjustable='box')
     ax.grid(True)
 
-    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="2D", ext="png")
+    fig_path = wr.build_filename(run_folder, stem, figure_tag="2D", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -92,7 +92,7 @@ def full_2d(
 # ============== Full 3D Trajectory Plot ==============
 # =====================================================
 def full_3d(
-    summary, run_folder, stem, particle_type, plotbounds, ps_order_label,
+    run_folder, stem, particle_type, plotbounds, ps_order_label,
     USE_PLOT_TITLES, USE_RK45, USE_RK4, USE_RKG, USE_PS,
     solution_rk45=None, solution_rk4=None, solution_rkg=None,
     x_ps_plot=None, y_ps_plot=None, z_ps_plot=None,
@@ -121,7 +121,7 @@ def full_3d(
         ax.set_title(f"3D {particle_type} Trajectory in Dipole B Field")
     ax.legend(loc="upper right")
 
-    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="3D", ext="png")
+    fig_path = wr.build_filename(run_folder, stem, figure_tag="3D", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -130,7 +130,7 @@ def full_3d(
 # ================ 2D Trajectory Slice ================
 # =====================================================
 def slice_2d(
-    summary, run_folder, stem, particle_type, ps_order_label,
+    run_folder, stem, particle_type, ps_order_label,
     USE_PLOT_TITLES, USE_RK45, USE_RK4, USE_RKG, USE_PS,
     rk45_x_slice=None, rk45_y_slice=None,
     rk4_x_slice=None, rk4_y_slice=None,
@@ -157,7 +157,7 @@ def slice_2d(
     ax.legend(loc="upper right")
     ax.grid(True)
 
-    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="2Dslice", ext="png")
+    fig_path = wr.build_filename(run_folder, stem, figure_tag="2Dslice", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -166,7 +166,7 @@ def slice_2d(
 # ================ 3D Trajectory Slice ================
 # =====================================================
 def slice_3d(
-    summary, run_folder, stem, particle_type, plotbounds, ps_order_label,
+    run_folder, stem, particle_type, plotbounds, ps_order_label,
     USE_PLOT_TITLES, USE_RK45, USE_RK4, USE_RKG, USE_PS,
     rk45_x_slice=None, rk45_y_slice=None, rk45_z_slice=None,
     rk4_x_slice=None, rk4_y_slice=None, rk4_z_slice=None,
@@ -199,7 +199,7 @@ def slice_3d(
         ax.set_title(f'3D Trajectory Slice of {particle_type} Orbits in Dipole B Field')
     ax.legend(loc="upper right")
 
-    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="3Dslice", ext="png")
+    fig_path = wr.build_filename(run_folder, stem, figure_tag="3Dslice", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -208,7 +208,7 @@ def slice_3d(
 # ============== KE Relative Error Plot ===============
 # =====================================================
 def ke_error(
-    summary, run_folder, stem, particle_type, ps_order_label,
+    run_folder, stem, particle_type, ps_order_label,
     USE_PLOT_TITLES, time_factor, norm_time,
     ps_data=None, rk4_data=None, rk45_data=None, rkg_data=None,
     ext_ps_data=None, ext_rk4_data=None, ext_rk45_data=None, ext_rkg_data=None,
@@ -310,7 +310,7 @@ def ke_error(
     ul.place_endpoint_labels(fig, ax, endpoints)
 
     # === Save and Close ===
-    fig_path = wr.build_filename(summary, run_folder, stem, figure_tag="KEerror", ext="png")
+    fig_path = wr.build_filename(run_folder, stem, figure_tag="KEerror", ext="png")
     plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
@@ -457,7 +457,7 @@ def pphi_error(run_folder, t_pphi_gyro, rel_error_log, P_phi_initial, max_err, y
 # ============== Magnetic Moment Deviations ===========
 # =====================================================
 def mu_deviation(
-    summary, run_folder, stem, particle_type, ps_order_label,
+    run_folder, stem, particle_type, ps_order_label,
     USE_PLOT_TITLES,
     ps_data=None, rk4_data=None, rk45_data=None, rkg_data=None,
 ):
@@ -523,7 +523,7 @@ def mu_deviation(
     ul.place_endpoint_labels(fig, ax, endpoints)
 
     # === Save and Close ===
-    fig_path_mu = wr.build_filename(summary, run_folder, stem, figure_tag="mu", ext="png")
+    fig_path_mu = wr.build_filename(run_folder, stem, figure_tag="mu", ext="png")
     plt.savefig(fig_path_mu, dpi=600, bbox_inches="tight")
     plt.close(fig)
 

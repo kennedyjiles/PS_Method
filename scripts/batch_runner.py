@@ -55,7 +55,7 @@ ENERGIES_EV = {
 
 # L-shells (equatorial launch distance in R_E)
 # L_FINE   = list(np.arange(1.0, 4.1, 0.5))
-L_FINE  = list(np.arange(3.6, 4.0, 0.01))
+L_FINE  = list(np.arange(3.51, 3.6, 0.01))
 L_INNER   = [4.5, 5.0]
 
 L_SHELLS = {

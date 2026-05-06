@@ -1,7 +1,7 @@
 """
 YAML config loader for all field types (dipoleb, constb, hyperb).
 
-Two-stage design (following advisor's config pattern):
+Two-stage design:
   1. load_config()               — loads YAML, merges with base, validates, prints.
                                    Returns the raw merged dict (no physics computation).
                                    Base config is auto-discovered from the run YAML's directory.
@@ -21,6 +21,7 @@ Usage:
 
 import os
 import copy
+import json
 import yaml
 import numpy as np
 from ps_method.constants import q_e, m_e, m_p, spdlight, RE, B_0 as B_0_dipole
@@ -160,25 +161,105 @@ def _resolve_output_paths(config_name, field_prefix="", output_root=None,
     return output_folder, run_storage
 
 
-def copy_config_to_output(cfg_path, output_folder):
+def apply_manual_h5_overrides(cfg, manual_h5_path, field):
+    """Override identity fields in cfg from a cached h5's params_json.
+
+    Used by constb / hyperb manual-mode loading. The h5 is authoritative for
+    identity (energy, pitch, position, B field, particle, step sizes); the
+    yml is for plotting / output knobs only. Mutates ``cfg`` in place and
+    forces ``read_data = True`` so the driver takes the cached-load path.
+
+    Parameters
+    ----------
+    cfg : dict
+        Parsed yml config (post base merge). Identity keys are overwritten.
+    manual_h5_path : str
+        Path to the h5 file. Must contain ``params_json`` at root attrs.
+    field : {"constb", "hyperb"}
+        Which field's identity schema to use. constb stores ``Bfield_si`` as
+        a 3D vector and uses normalized positions (``x_initial``); hyperb
+        stores ``B_0`` scalar plus ``delta`` and uses SI-unit positions
+        (``x_initial_si``).
+    """
+    import h5py
+
+    with h5py.File(manual_h5_path, "r") as f:
+        if "params_json" not in f.attrs:
+            raise RuntimeError(
+                f"Manual h5 at {manual_h5_path} has no params_json — "
+                "this file was written by an older version."
+            )
+        p = json.loads(f.attrs["params_json"])
+
+    cfg["energy_eV"] = float(p["KE_particle"])
+    cfg["pitch_deg"] = float(p["pitch_deg"])
+    cfg["phi_deg"]   = float(p["phi_deg"])
+    cfg["particle"]  = "electron" if float(p["qoverm"]) < 0 else "proton"
+
+    if field == "constb":
+        cfg["x_initial"] = float(p["x_initial"])
+        cfg["y_initial"] = float(p["y_initial"])
+        cfg["z_initial"] = float(p["z_initial"])
+        # Direction is lost in cache (only B_0 magnitude is stored). Manual
+        # mode doesn't run the integrator, so synthesizing [0, 0, B_0] is
+        # safe — the only consumer is np.linalg.norm for tau_time/B_0.
+        cfg["Bfield_si"] = [0.0, 0.0, float(p["B_0"])]
+    elif field == "hyperb":
+        cfg["x_initial_si"] = float(p["x_initial"])
+        cfg["y_initial_si"] = float(p["y_initial"])
+        cfg["z_initial_si"] = float(p["z_initial"])
+        cfg["B_0"]          = float(p["B_0"])
+        cfg["delta"]        = float(p["delta"])
+    else:
+        raise ValueError(f"field must be 'constb' or 'hyperb', got {field!r}")
+
+    # Translate norm_time + step sizes back to gyroperiods / step_overrides.
+    # T_gyro = 2π in normalized units for both constb and hyperb.
+    norm_time = float(p["norm_time"])
+    cfg["gyroperiods"] = norm_time / (2.0 * np.pi)
+
+    cfg.setdefault("step_overrides", {})
+    cfg["step_overrides"]["ps"]  = float(p["ps_step"])
+    cfg["step_overrides"]["rk4"] = float(p["rk4_step"])
+
+    cfg["ps_order"]  = int(p["PS_order"])
+    cfg["rtol_rk45"] = float(p["rtol_rk45"])
+    cfg["atol_rk45"] = float(p["atol_rk45"])
+
+    cfg["read_data"] = True
+
+
+def copy_config_to_output(cfg_path, output_folder, cfg=None):
     """Write the fully-merged config into the output folder with the git hash.
 
     The saved file is self-contained (includes all base defaults) so it can
     be loaded directly from data/ without needing base.yml nearby.  A
     ``base_config: none`` key tells load_config to skip the base merge.
 
-    Reuses load_config() for parsing, merging, and validation so that
-    unknown-key warnings and critical-value checks fire here too.
-
     Parameters
     ----------
-    cfg_path      : str – path to the original YAML config.
+    cfg_path      : str – path to the original YAML config (used for the
+                    saved-file header and basename).
     output_folder : str – the run's output directory (e.g. data/dipoleb/demo/).
+    cfg           : dict, optional – pre-loaded cfg dict reflecting the actual
+                    run state (e.g. with manual-mode h5 overrides already
+                    applied). When provided, it's used verbatim instead of
+                    re-loading from ``cfg_path``. This is what makes the
+                    persisted yml truly match what the run executed — without
+                    it, the persisted file would still carry the input yml's
+                    placeholder identity values rather than the h5's actual
+                    ones. Caller is responsible for the contents being
+                    accurate.
     """
     import subprocess
 
-    # Load via the shared loader so we get merge + validation for free
-    merged = load_config(cfg_path)
+    if cfg is None:
+        # Re-load via the shared loader so we get merge + validation
+        merged = load_config(cfg_path)
+    else:
+        # Caller passes an already-mutated cfg; deep-copy so we don't mutate
+        # their dict when stripping runtime metadata below.
+        merged = copy.deepcopy(cfg)
 
     # Strip runtime metadata that shouldn't be persisted to disk
     merged.pop("_config_name", None)
