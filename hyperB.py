@@ -131,7 +131,7 @@ def main(cfg_path, replot=False):
         mpl.rcParams['agg.path.chunksize'] = 100
 
     particle_type = p["particle"].capitalize()
-    qoverm = npfloat(-1) if p["particle"].lower() in ("electron", "e") else npfloat(1)
+    charge_sign = npfloat(-1) if p["particle"].lower() in ("electron", "e") else npfloat(1)
 
     # === Misc Normalization  ===
     pitch_rad = np.radians(pitch_deg)
@@ -184,7 +184,8 @@ def main(cfg_path, replot=False):
                        x_initial, y_initial, z_initial,
                        pitch_deg, phi_deg,
                        norm_time, ps_step, rk4_step,
-                       PS_order, tol, qoverm)
+                       PS_order, tol, charge_sign,
+                       dtype=npfloat.__name__)
     if USE_MANUAL_FILE:
         cache_path = manual_h5_path
     else:
@@ -217,7 +218,7 @@ def main(cfg_path, replot=False):
             solution_rk45 = solve_ivp(
                 hp.lorentz_force, (0, norm_time),
                 initial_pos_vel, method='RK45',
-                t_eval=t_eval_rk45, args=(gamma, qoverm),
+                t_eval=t_eval_rk45, args=(gamma, charge_sign),
                 rtol=rtol_rk45,
                 atol=atol_rk45)
             end_time_rk45 = time.time()
@@ -228,7 +229,7 @@ def main(cfg_path, replot=False):
             rk4_dt = npfloat(t_eval_rk4[1] - t_eval_rk4[0])
             solution_rk4 = ul.rk4_fixed_step(
                 hp.lorentz_force, initial_pos_vel,
-                rk4_dt, steps_rk4, args=(gamma,qoverm))
+                rk4_dt, steps_rk4, args=(gamma,charge_sign))
             end_time_rk4 = time.time()
 
         # ===== Run PS Method ====
@@ -236,7 +237,7 @@ def main(cfg_path, replot=False):
         solution_ps, orders_used = hp.ps_integrate(
             PS_order, steps_ps,
             initial_pos_vel, ps_step, gamma,
-            qoverm, tol)
+            charge_sign, tol)
         end_time_ps = time.time()
 
         # Prepare a results dict for saving
@@ -332,12 +333,42 @@ def main(cfg_path, replot=False):
     if USE_RK45:
         rel_drift_rk45 = ea.energy_drift(*ea.extract_v(solution_rk45.y))
 
+    # --- External h5 KE drift overlays (used by ke_error AND ke_error_multi) ---
+    # Loaded here (before either plot) so the simple ke_error gets the same
+    # overlay as the multi-PS plot. yml > h5 saved attr > computed from orders.
+    def _resolve_ext_order(yml_value, ext_grp):
+        if yml_value is not None:
+            return yml_value
+        saved = ext_grp.get("max_ps")
+        if saved is not None:
+            return int(saved)
+        if "orders" in ext_grp:
+            return int(np.max(ext_grp["orders"]))
+        return None
+
+    ext_data = extb_data = None
+    if USE_EXTERNAL_H5:
+        external = wr.load_results_h5_hyperb(external_h5)
+        ext_ps = external["ps"]
+        t_ext, y_ext = ext_ps["t"], ext_ps["y"]
+        rel_drift_ext = ea.energy_drift_pure(*ea.extract_v(y_ext))
+        ext_data = (t_ext, rel_drift_ext, _resolve_ext_order(PS_order_ext, ext_ps))
+
+    if USE_EXTERNAL_H5b:
+        externalb = wr.load_results_h5_hyperb(external_h5b)
+        ext_psb = externalb["ps"]
+        t_extb, y_extb = ext_psb["t"], ext_psb["y"]
+        rel_drift_extb = ea.energy_drift_pure(*ea.extract_v(y_extb))
+        extb_data = (t_extb, rel_drift_extb, _resolve_ext_order(PS_order_extb, ext_psb))
+
     fplt.ke_error(
         f"{_base}_KEerror.png",
         t_eval_ps=t_eval_ps, rel_drift_ps=rel_drift_ps, orders_used=orders_used,
         t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_drift_rk4=rel_drift_rk4,
         t_eval_rk45=t_eval_rk45 if USE_RK45 else None, rel_drift_rk45=rel_drift_rk45,
-        use_rk4=USE_RK4, use_rk45=USE_RK45, **_plot_kw,
+        use_rk4=USE_RK4, use_rk45=USE_RK45,
+        ext_data=ext_data, extb_data=extb_data,
+        **_plot_kw,
     )
 
     # ==========================================
@@ -377,24 +408,8 @@ def main(cfg_path, replot=False):
     # ================ Multi-PS-order KE error ===================
     # ============================================================
     if USE_FULL_PLOT and not USE_FLOAT128:
-        # --- Load external h5 data ---
-        ext_data = None
-        extb_data = None
-        if USE_EXTERNAL_H5:
-            external = wr.load_results_h5_hyperb(external_h5)
-            ext_ps = external["ps"]
-            t_ext, y_ext = ext_ps["t"], ext_ps["y"]
-            y_ext_f128 = y_ext.astype(np.float128)
-            rel_drift_ext = ea.energy_drift_pure(*ea.extract_v(y_ext_f128))
-            ext_data = (t_ext, rel_drift_ext, PS_order_ext)
-
-        if USE_EXTERNAL_H5b:
-            externalb = wr.load_results_h5_hyperb(external_h5b)
-            ext_psb = externalb["ps"]
-            t_extb, y_extb = ext_psb["t"], ext_psb["y"]
-            y_extb_f128 = y_extb.astype(np.float128)
-            rel_drift_extb = ea.energy_drift_pure(*ea.extract_v(y_extb_f128))
-            extb_data = (t_extb, rel_drift_extb, PS_order_extb)
+        # ext_data / extb_data already loaded above (so the simple ke_error
+        # plot can use them too). They're reused here unchanged.
 
         # --- Recompute PS at various orders ---
         # Skip any order that matches the main run's PS order — otherwise
@@ -403,7 +418,7 @@ def main(cfg_path, replot=False):
         _ps_orders = [n for n in (5, 6, 7, 10, 15) if n != _main_order]
         ps_drifts = []
         for order in _ps_orders:
-            sol, _ = hp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, gamma, qoverm, tol)
+            sol, _ = hp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, gamma, charge_sign, tol)
             drift = ea.energy_drift(*ea.extract_v(sol))
             ps_drifts.append((order, drift,
                               fplt.COLORS[f"ps{order}"],

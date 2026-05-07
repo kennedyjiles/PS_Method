@@ -402,8 +402,10 @@ def main(cfg_path, replot=False):
     elif mass_si == m_p: particle_type = "Proton"
     else: particle_type = "Particle"
 
-    qoverm      = npfloat(-1) if mass_si == m_e else npfloat(1)
-    charge_sign = float(qoverm)   # +1 proton, -1 electron (used in Dragt canonical momentum)
+    # +1 for protons, -1 for electrons. Stored at npfloat precision so it
+    # composes correctly with the rest of the physics state; the Dragt
+    # analysis casts to float() at its call sites where it needs float64.
+    charge_sign = npfloat(-1) if mass_si == m_e else npfloat(1)
 
     # === Misc Conversions  ===
     KE_joules = KE_particle * evtoj                     # converting KE from eV to Joules
@@ -475,7 +477,7 @@ def main(cfg_path, replot=False):
                         x_initial, y_initial, z_initial,
                         pitch_deg, phi_deg,
                         norm_time, ps_step, rk4_step, rkg_step,
-                        PS_order, tol_local, qoverm, rtol_rk45, atol_rk45)
+                        PS_order, tol_local, charge_sign, rtol_rk45, atol_rk45)
         cache_path = wr.h5_path_for(run_params, run_storage)
         if os.path.exists(cache_path) and READ_DATA:
             print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
@@ -657,7 +659,7 @@ def main(cfg_path, replot=False):
                     ps_step=ps_step,
                     PS_order=PS_order,
                     tol=tol_local,
-                    qoverm=qoverm,
+                    charge_sign=charge_sign,
                     E0_ps=E0_ps,
                     mu0_ps=mu0_ps,
                     cache_path=cache_path,
@@ -695,7 +697,7 @@ def main(cfg_path, replot=False):
                     (0.0, norm_time),
                     initial_pos_vel,
                     method="RK45",
-                    args=(qoverm,),
+                    args=(charge_sign,),
                     t_eval=t_common,
                     rtol=rtol_rk45,
                     atol=atol_rk45,)
@@ -710,7 +712,7 @@ def main(cfg_path, replot=False):
                     initial_pos_vel,
                     rk4_step,
                     steps_rk4,
-                    args=(qoverm,),)
+                    args=(charge_sign,),)
                 end_time_rk4 = time.time()
 
             # ====== Run RKG ======
@@ -733,7 +735,7 @@ def main(cfg_path, replot=False):
                     y0,
                     rkg_step,
                     steps_rkg,
-                    args=(qoverm,),
+                    args=(charge_sign,),
                 )
                 end_time_rkg = time.time()
                 if rkg_n_failed > 0:
@@ -850,7 +852,7 @@ def main(cfg_path, replot=False):
                         "norm_time": float(norm_time),
                         "physical_time": float(physical_time),
                         "percent_c": float(v_si/spdlight),
-                        "qoverm": float(qoverm),
+                        "charge_sign": float(charge_sign),
                         "dtype": npfloat.__name__,
                         "tau0": tau_time,
                         "T_gyro": float(T_gyro),

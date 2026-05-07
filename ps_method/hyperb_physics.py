@@ -24,7 +24,7 @@ def cauchy_sum(a, b, n):
 
 
 @ul.maybe_njit
-def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, tol):
+def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, charge_sign, tol):
     """Advance a charged particle through B = ẑ tanh(γy) using power-series method.
 
     The state vector has 9 components: the 6 physical variables [x, y, z, vx,
@@ -92,8 +92,8 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
             c[z, i+1]  = oip1[i] * c[vz, i]
 
             # Velocity coefficients
-            c[vx, i+1] =  qoverm * oip1[i] * vyBz
-            c[vy, i+1] = -qoverm * oip1[i] * vxBz
+            c[vx, i+1] =  charge_sign * oip1[i] * vyBz
+            c[vy, i+1] = -charge_sign * oip1[i] * vxBz
             c[vz, i+1] = 0.0
 
             # Auxiliary coefficients
@@ -138,7 +138,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, qoverm, 
     return state_history, orders_used
 
 @ul.maybe_njit
-def lorentz_force(t, d, gamma, qoverm):
+def lorentz_force(t, d, gamma, charge_sign):
     """Right-hand side for the Lorentz equation in a tanh magnetic field.
 
     B = ẑ tanh(γy), so the force is (q/m)(v × B):
@@ -157,8 +157,8 @@ def lorentz_force(t, d, gamma, qoverm):
     x, y, z, vx, vy, vz = d
 
     Bz = np.tanh(gamma * y)
-    ax =  qoverm * vy * Bz
-    ay = -qoverm * vx * Bz
+    ax =  charge_sign * vy * Bz
+    ay = -charge_sign * vx * Bz
     az = ul.npfloat(0.0)
 
     return np.array([vx, vy, vz, ax, ay, az], dtype=ul.npfloat)

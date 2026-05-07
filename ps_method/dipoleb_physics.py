@@ -30,7 +30,7 @@ five = ul.npfloat(5.0)
 twopointfive = ul.npfloat(2.5)
 
 @ul.maybe_njit
-def lorentz_force(t, d, qoverm):
+def lorentz_force(t, d, charge_sign):
     # t is required by the solver's RHS call signature (solve_ivp /
     # rk4_fixed_step); unused here.
     x, y, z, vx, vy, vz = d
@@ -43,14 +43,14 @@ def lorentz_force(t, d, qoverm):
     Bz = -(three * z**two - r2) * r5inv
 
     # Lorentz force
-    ax = qoverm * (vy * Bz - vz * By)
-    ay = qoverm * (vz * Bx - vx * Bz)
-    az = qoverm * (vx * By - vy * Bx)
+    ax = charge_sign * (vy * Bz - vz * By)
+    ay = charge_sign * (vz * Bx - vx * Bz)
+    az = charge_sign * (vx * By - vy * Bx)
 
     return np.array([vx, vy, vz, ax, ay, az], dtype=ul.npfloat)
 
 @ul.maybe_njit
-def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
+def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelta):
     n_total = 17
     state_history = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
 
@@ -127,9 +127,9 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
             c[x, i+1]  = c[vx, i] * oip1[i]
             c[y, i+1]  = c[vy, i] * oip1[i]
             c[z, i+1]  = c[vz, i] * oip1[i]
-            c[vx, i+1] = qoverm * cauchy_sum_inline(c[a_aux], c[e_aux], i) * oip1[i]
-            c[vy, i+1] = qoverm * cauchy_sum_inline(c[a_aux], c[f_aux], i) * oip1[i]
-            c[vz, i+1] = qoverm * cauchy_sum_inline(c[a_aux], c[g_aux], i) * oip1[i]
+            c[vx, i+1] = charge_sign * cauchy_sum_inline(c[a_aux], c[e_aux], i) * oip1[i]
+            c[vy, i+1] = charge_sign * cauchy_sum_inline(c[a_aux], c[f_aux], i) * oip1[i]
+            c[vz, i+1] = charge_sign * cauchy_sum_inline(c[a_aux], c[g_aux], i) * oip1[i]
 
             c[r2_aux, i+1] = cauchy_sum_inline(c[x], c[x], i+1) + cauchy_sum_inline(c[y], c[y], i+1) + cauchy_sum_inline(c[z], c[z], i+1)
             cauchy_divide(c[a_aux], c[r2_aux], zeta, i+1)      #This is modifying zeta in place 
@@ -221,7 +221,7 @@ def vector_potential(r):
     return np.array([Ax, Ay, Az], dtype=ul.npfloat)
 
 @ul.maybe_njit
-def hamiltonian_rhs(t, d, qoverm):
+def hamiltonian_rhs(t, d, charge_sign):
     # t is required by the solver's RHS call signature (solve_ivp /
     # rkgl4_hamiltonian_step); unused here.
     x, y, z = d[0], d[1], d[2]
@@ -241,8 +241,8 @@ def hamiltonian_rhs(t, d, qoverm):
     Az = 0.0
 
     # Mechanical momentum
-    Pix = px - qoverm * Ax
-    Piy = py - qoverm * Ay
+    Pix = px - charge_sign * Ax
+    Piy = py - charge_sign * Ay
     Piz = pz
 
     # dq/dt
@@ -251,17 +251,17 @@ def hamiltonian_rhs(t, d, qoverm):
     dzdt = Piz
 
     # dp/dt (hardcoded)
-    dpxdt = qoverm * (
+    dpxdt = charge_sign * (
         -3 * x * y / r5 * Pix
         - (1.0 / r3 - 3 * x * x / r5) * Piy
     )
 
-    dpydt = qoverm * (
+    dpydt = charge_sign * (
         (1.0 / r3 - 3 * y * y / r5) * Pix
         + 3 * x * y / r5 * Piy
     )
 
-    dpzdt = qoverm * 3 * z / r5 * (-y * Pix + x * Piy)
+    dpzdt = charge_sign * 3 * z / r5 * (-y * Pix + x * Piy)
 
     return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=ul.npfloat)
 
@@ -362,7 +362,7 @@ def run_ps_streaming_with_decimation(
     ps_step,
     PS_order,
     tol,
-    qoverm,
+    charge_sign,
     E0_ps,
     mu0_ps,
     cache_path,
@@ -433,7 +433,7 @@ def run_ps_streaming_with_decimation(
             this_chunk = min(chunk_steps, remaining)
 
             sol_chunk, orders_chunk = ps_integrate(
-                PS_order, this_chunk, cur_state, tol, qoverm, ps_step
+                PS_order, this_chunk, cur_state, tol, charge_sign, ps_step
             )
 
             idx_chunk = np.arange(global_index, global_index + this_chunk + 1)

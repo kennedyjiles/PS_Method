@@ -122,7 +122,7 @@ def get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUN
                           x_initial, y_initial, z_initial,
                           pitch_deg, phi_deg,
                           norm_time, ps_step, rk4_step, rkg_step,
-                          PS_order, tol, qoverm, rtol_rk45, atol_rk45):
+                          PS_order, tol, charge_sign, rtol_rk45, atol_rk45):
     """Collect all knobs that define a unique dipoleb run."""
     return {
         # toggles
@@ -160,7 +160,7 @@ def get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUN
         "atol_rk45": _to_serializable(atol_rk45),
 
         # charge/mass normalization used in RHS
-        "qoverm": _to_serializable(qoverm),
+        "charge_sign": _to_serializable(charge_sign),
     }
 
 
@@ -169,8 +169,13 @@ def get_run_params_constb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                           x_initial, y_initial, z_initial,
                           pitch_deg, phi_deg,
                           norm_time, ps_step, rk4_step,
-                          PS_order, tol, qoverm):
-    """Collect all knobs that define a unique constb run."""
+                          PS_order, tol, charge_sign, dtype):
+    """Collect all knobs that define a unique constb run.
+
+    `dtype` is the numpy dtype name (``"float64"`` or ``"float128"``) the
+    run is using. Stored in params_json so manual-mode loaders can recover
+    the precision without inferring from ``tol``.
+    """
     return {
         "USE_RK45": bool(USE_RK45),
         "USE_RK4":  bool(USE_RK4),
@@ -195,7 +200,8 @@ def get_run_params_constb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
         "rtol_rk45": _to_serializable(rtol_rk45),
         "atol_rk45": _to_serializable(atol_rk45),
 
-        "qoverm": _to_serializable(qoverm),
+        "charge_sign": _to_serializable(charge_sign),
+        "dtype": str(dtype),
     }
 
 
@@ -204,8 +210,13 @@ def get_run_params_hyperb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                          x_initial, y_initial, z_initial,
                          pitch_deg, phi_deg,
                          norm_time, ps_step, rk4_step,
-                         PS_order, tol, qoverm):
-    """Collect all knobs that define a unique hyperb run."""
+                         PS_order, tol, charge_sign, dtype):
+    """Collect all knobs that define a unique hyperb run.
+
+    `dtype` is the numpy dtype name (``"float64"`` or ``"float128"``) the
+    run is using. Stored in params_json so manual-mode loaders can recover
+    the precision without inferring from ``tol``.
+    """
     return {
         "USE_RK45": bool(USE_RK45),
         "USE_RK4":  bool(USE_RK4),
@@ -231,7 +242,8 @@ def get_run_params_hyperb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
         "rtol_rk45": _to_serializable(rtol_rk45),
         "atol_rk45": _to_serializable(atol_rk45),
 
-        "qoverm": _to_serializable(qoverm),
+        "charge_sign": _to_serializable(charge_sign),
+        "dtype": str(dtype),
     }
 
 
@@ -353,6 +365,12 @@ def save_results_h5_constb(h5_path, params, results):
                         continue
                     grp.create_dataset(name, data=arr, compression="gzip", compression_opts=1, shuffle=True)
 
+        # Self-describing PS order so external-h5 comparison plots can
+        # auto-detect the order without the consuming yml having to spell
+        # it out. Reads as ps.attrs["max_ps"] alongside ps/orders.
+        if results.get("ps") and results["ps"].get("orders") is not None:
+            f["ps"].attrs["max_ps"] = int(np.max(results["ps"]["orders"]))
+
         meta = results.get("meta", {})
         gmeta = f.create_group("meta")
         for mk, mv in meta.get("timing", {}).items():
@@ -375,6 +393,8 @@ def load_results_h5_constb(h5_path):
             out = {}
             for ds in g:
                 out[ds] = g[ds][...]
+            for a in g.attrs:
+                out[a] = g.attrs[a]
             return out
 
         for k in ("ps", "rk4", "rk45"):
@@ -402,6 +422,12 @@ def save_results_h5_hyperb(h5_path, params, results):
                         continue
                     grp.create_dataset(name, data=arr, compression="gzip", compression_opts=1, shuffle=True)
 
+        # Self-describing PS order so external-h5 comparison plots can
+        # auto-detect the order without the consuming yml having to spell
+        # it out. Reads as ps.attrs["max_ps"] alongside ps/orders.
+        if results.get("ps") and results["ps"].get("orders") is not None:
+            f["ps"].attrs["max_ps"] = int(np.max(results["ps"]["orders"]))
+
         meta = results.get("meta", {})
         gmeta = f.create_group("meta")
         for mk, mv in meta.get("timing", {}).items():
@@ -424,6 +450,8 @@ def load_results_h5_hyperb(h5_path):
             out = {}
             for ds in g:
                 out[ds] = g[ds][...]
+            for a in g.attrs:
+                out[a] = g.attrs[a]
             return out
 
         for k in ("ps", "rk4", "rk45", "rkg"):

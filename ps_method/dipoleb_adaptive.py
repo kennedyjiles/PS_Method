@@ -111,7 +111,7 @@ def _use_fast_path(state, ps_step, min_N):
 
 
 def _ps_adaptive_chunk(
-    PS_order, n_output, cur_state, tol, qoverm, ps_step,
+    PS_order, n_output, cur_state, tol, charge_sign, ps_step,
     dt_internal, dt_min, dt_max,
     order_low, order_high, grow_factor, shrink_factor, max_retries,
     t_internal,
@@ -170,7 +170,7 @@ def _ps_adaptive_chunk(
             # ---- ONE Numba call ----
             sol_batch, orders_batch = dp.ps_integrate(
                 PS_order, n_sub, cur_state[:6].copy(),
-                tol, qoverm, dt_actual,
+                tol, charge_sign, dt_actual,
             )
 
             # ---- find first bad step ----
@@ -301,7 +301,7 @@ def run_ps_streaming_adaptive(
     ps_step,
     PS_order,
     tol,
-    qoverm,
+    charge_sign,
     E0_ps,
     mu0_ps,
     cache_path,
@@ -415,7 +415,7 @@ def run_ps_streaming_adaptive(
                 # =============================================
                 sol_chunk, orders_chunk = dp.ps_integrate(
                     PS_order, this_chunk, cur_state[:6].copy(),
-                    tol, qoverm, ps_step,
+                    tol, charge_sign, ps_step,
                 )
 
                 chunk_max = int(orders_chunk[1:].max()) if this_chunk > 0 else 0
@@ -464,7 +464,7 @@ def run_ps_streaming_adaptive(
                  t_internal, chunk_max_ps, chunk_substeps, chunk_rejections,
                  halted
                 ) = _ps_adaptive_chunk(
-                    PS_order, this_chunk, cur_state, tol, qoverm, ps_step,
+                    PS_order, this_chunk, cur_state, tol, charge_sign, ps_step,
                     dt_internal, dt_min, dt_max,
                     order_low, order_high, grow_factor, shrink_factor, max_retries,
                     t_internal,

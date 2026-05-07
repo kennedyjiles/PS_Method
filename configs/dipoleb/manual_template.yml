@@ -7,19 +7,17 @@
 #
 # How manual mode works:
 #   1. The yml below is loaded with base_config: "none" — nothing is
-#      merged in from base.yml. Every field the code reads must be
-#      present in this file.
+#      merged in from base.yml. Every field the code reads must exist
+#      here, even if its value will be ignored.
 #   2. dipoleb.py opens the h5 at manual_h5_path and OVERWRITES the
-#      identity + solver-config fields from its summary_json:
+#      identity / solver-config fields from its summary_json:
 #        particle, energy_eV, pitch_deg, phi_deg, x/y/z_initial,
-#        gyroperiods, norm_time, B_0, mass_si, T_gyro, ps_step,
-#        steps_ps, ps_decimate, ordercap, max_ps, E0, mu0,
-#        rk*_step, steps_per_gyro, etc.
-#      So values you set for those here are IGNORED. They're listed
-#      below for completeness but marked as such.
-#   3. Everything else (plotting, slice, output, external overlays)
-#      comes from this yml. Tweak as needed for the trimmed/replotted
-#      view you want.
+#        B_0, mass_si, T_gyro, gyroperiods, norm_time,
+#        ps_step / steps_ps / ps_decimate / ordercap / max_ps / E0 / mu0,
+#        rk*_step / steps_per_gyro_*, rtol_rk45 / atol_rk45.
+#      It also peeks at the h5's saved dtype and overrides use_float128.
+#   3. Everything else (plotting, slice, output, external overlays,
+#      bounce/drift detection, plot cosmetics) comes from this yml.
 #
 # Run with:
 #   python run.py path/to/this.yml
@@ -27,20 +25,16 @@
 # ===================================================================
 
 
-# --- Self-contained: do NOT merge with base.yml ---
 base_config: "none"
-
-# --- Pointer to the cached h5 file ---
-# Relative paths are tried yml-relative first, then cwd-relative.
 manual_h5_path: "REPLACE_WITH_PATH_TO.h5"
 
+
 # ===================================================================
-# === Fields below MATTER — edit to control the replot ============
+# === Fields that MATTER in manual mode — edit these ===============
 # ===================================================================
 
-# --- Which solver curves to include in plots ---
-# Set to false to drop a method from comparison plots even if the
-# h5 has its data. (Adaptive is irrelevant in replot mode.)
+# Which solver curves to include in plots. Drop any method to hide its
+# line even if the h5 has its data. (adaptive is irrelevant on replot.)
 solvers:
   ps: true
   rk4: true
@@ -48,7 +42,6 @@ solvers:
   rkg: true
   adaptive: false
 
-# --- Plotting controls ---
 plotting:
   titles: false           # show plot titles
   full_plot: true         # all diagnostic plots vs paper plots only
@@ -56,34 +49,28 @@ plotting:
   gyro_window: last       # "first" or "last" — window for detailed view
   n_gyro: 75              # gyroperiods in the slice window
                           # IMPORTANT: for trimmed files, n_gyro must be
-                          # smaller than the trimmed file's gyroperiods
-                          # or the slice will be empty.
+                          # ≤ the trimmed file's gyroperiods or the slice
+                          # will be empty.
 
 # Time window for slice plots (normalized units)
 window_time: 11.6
 
-# --- Output ---
-# Output goes to data/dipoleb/<yml-stem>/. Set output_root to prepend.
+# Output destination — data/dipoleb/<yml-stem>/<h5-stem>/...
 output_root: null
-read_data: true           # always true in manual mode
 
-# --- Plot cosmetics ---
+# Plot cosmetics
 plot_boundary_pad: 1.1    # padding multiplier for trajectory boundaries
 
-# --- Drift detection (used by post-processing) ---
+# Drift detection sensitivity (used by post-processing on the cached data)
 user_min_phase: 0.1
 
-# --- Atmospheric impact threshold (R_E) ---
-# 1.0 = surface; 1.0157 ≈ 100 km altitude. Used by atmospheric overlay.
-r_atmosphere: 1.0
-
-# --- Bounce/drift detection ---
+# Bounce/drift detection (used by post-processing on the cached data)
 bounce_drift:
   velocity_epsilon_scale: 1.0e-14
   min_gap_steps: 3
   gap_gyro_fraction: 0.5
 
-# --- External h5 overlays (compare against another run) ---
+# External h5 overlays (compare against another run)
 use_external_h5:
   ps:   false
   rk4:  false
@@ -99,9 +86,35 @@ external_h5:
 
 
 # ===================================================================
-# === Advanced — values below are mostly overridden by h5 but the ==
-# === keys must exist for the code to read them without error. =====
+# === Fields IGNORED in manual mode — keys required, values dead ===
 # ===================================================================
+# These keys must exist (compute_derived_dipoleb reads them) but their
+# values are either overwritten from the h5's summary_json, peeked
+# from the h5's saved dtype, or never consulted because no solver
+# actually runs in manual mode. Leave as-is.
+
+# --- Identity (overwritten from h5) ---
+particle: proton
+energy_eV: 1.0e1
+pitch_deg: 99.0
+phi_deg: 99.0
+x_initial: 0.0
+y_initial: 0.0
+z_initial: 0.0
+gyroperiods: 100
+use_gyroradius_L_correction: false
+
+# --- Float precision (peeked from h5's saved dtype) ---
+use_float128: false
+
+# --- Bookkeeping (forced or never read in manual mode) ---
+read_data: true        # forced True by run.py's replot auto-detection
+write_data: true       # never reached — manual mode skips the solve branch
+
+# --- Atmospheric flag (the h5 already records hit_atmosphere/hit_atm_*) ---
+r_atmosphere: 1.0
+
+# --- PS / RK / RKG solver settings (overwritten from h5; no fresh solve) ---
 ps_decimate: 1
 ps_order: 40
 ps_chunk_steps: 10000
@@ -121,6 +134,7 @@ step_overrides:
 
 round_decimals: 1
 
+# --- Adaptive PS settings (no fresh solve in manual mode) ---
 ps_adaptive:
   order_low: 50
   order_high: 300
@@ -129,19 +143,5 @@ ps_adaptive:
   steps_per_local_gyro: 200
   min_fast_path_N: 100
 
+# --- Dragt conservation monitor (no fresh solve in manual mode) ---
 dragt_monitor_rtol: 1.0e-4
-
-# ===================================================================
-# === Fields below are IGNORED in manual mode (h5 provides them) ===
-# Listed only because the code reads the keys; values don't matter.
-# ===================================================================
-particle: proton
-energy_eV: 1.0e1
-pitch_deg: 99.0
-phi_deg: 99.0
-x_initial: 0.0
-y_initial: 0.0
-z_initial: 0.0
-gyroperiods: 100
-use_float128: false
-use_gyroradius_L_correction: false

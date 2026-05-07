@@ -16,7 +16,7 @@ from . import utils as ul
 one = ul.npfloat(1.0)
 
 @ul.maybe_njit
-def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, tol):
+def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, charge_sign, tol):
     """Advance a charged particle through a uniform B field using a power-series method.
 
     At each time step the coefficients c[n] of position and velocity are
@@ -59,9 +59,9 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, t
             c[z, i+1] = oip1[i] * c[vz, i]
 
             # Velocity coefficients
-            c[vx, i+1] = oip1[i] * qoverm * (Bfield[2]*c[vy, i] - Bfield[1]*c[vz, i])
-            c[vy, i+1] = oip1[i] * qoverm * (Bfield[0]*c[vz, i] - Bfield[2]*c[vx, i])
-            c[vz, i+1] = oip1[i] * qoverm * (Bfield[1]*c[vx, i] - Bfield[0]*c[vy, i])
+            c[vx, i+1] = oip1[i] * charge_sign * (Bfield[2]*c[vy, i] - Bfield[1]*c[vz, i])
+            c[vy, i+1] = oip1[i] * charge_sign * (Bfield[0]*c[vz, i] - Bfield[2]*c[vx, i])
+            c[vz, i+1] = oip1[i] * charge_sign * (Bfield[1]*c[vx, i] - Bfield[0]*c[vy, i])
 
             new_term = c[:, i+1] * power
             sum_terms += new_term
@@ -89,7 +89,7 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, qoverm, t
 
 
 @ul.maybe_njit
-def analytical(tau, d, qoverm):
+def analytical(tau, d, charge_sign):
     """Exact closed-form trajectory in a uniform magnetic field.
     In normalized coordinates (ω_c = |qB/m| = 1) 
 
@@ -97,7 +97,7 @@ def analytical(tau, d, qoverm):
     ----------
     tau     : 1-D array of normalized times.
     d       : length-6 initial state [x0, y0, z0, vx0, vy0, vz0].
-    qoverm  : sign of q/m (+1 proton, −1 electron in a +z field).
+    charge_sign  : sign of q/m (+1 proton, −1 electron in a +z field).
 
     Returns
     -------
@@ -105,7 +105,7 @@ def analytical(tau, d, qoverm):
     """
     x0, y0, z0, vx0, vy0, vz0 = d
 
-    s = np.sign(qoverm)
+    s = np.sign(charge_sign)
 
     sin_t = np.sin(s * tau)
     cos_t = np.cos(s * tau)
@@ -122,7 +122,7 @@ def analytical(tau, d, qoverm):
 
 
 @ul.maybe_njit
-def lorentz_force(t, d, Bfield, qoverm):
+def lorentz_force(t, d, Bfield, charge_sign):
     """Right-hand side for the Lorentz equation of motion in a uniform B field.
 
     Returns d/dt [x, y, z, vx, vy, vz]
@@ -131,9 +131,9 @@ def lorentz_force(t, d, Bfield, qoverm):
     # t is required by the solver's RHS call signature (solve_ivp /
     # rk4_fixed_step); unused here.
     x, y, z, vx, vy, vz = d
-    dvx = qoverm * (vy * Bfield[2] - vz * Bfield[1])
-    dvy = qoverm * (vz * Bfield[0] - vx * Bfield[2])
-    dvz = qoverm * (vx * Bfield[1] - vy * Bfield[0])
+    dvx = charge_sign * (vy * Bfield[2] - vz * Bfield[1])
+    dvy = charge_sign * (vz * Bfield[0] - vx * Bfield[2])
+    dvz = charge_sign * (vx * Bfield[1] - vy * Bfield[0])
 
     return np.array([vx, vy, vz, dvx, dvy, dvz])
 

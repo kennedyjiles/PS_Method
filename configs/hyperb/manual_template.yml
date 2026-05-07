@@ -7,16 +7,14 @@
 #
 # How manual mode works:
 #   1. The yml below is loaded with base_config: "none" — nothing is
-#      merged from base.yml. Every field the code reads must exist here.
+#      merged from base.yml. Every field the code reads must exist
+#      here, even if its value will be ignored.
 #   2. hyperb.py opens the h5 at manual_h5_path and OVERWRITES the
-#      identity / solver-config fields from its params_json:
-#        particle, energy_eV, pitch_deg, phi_deg,
-#        x/y/z_initial_si, B_0, delta,
-#        norm_time → gyroperiods, ps_step / rk4_step → step_overrides,
-#        ps_order, rtol_rk45, atol_rk45.
-#      So values you set for those here are IGNORED.
-#   3. Everything else (plotting, solvers toggles, output, external
-#      overlays) comes from this yml.
+#      identity / solver-config fields (energy, pitch, position, B_0,
+#      delta, step sizes, ps_order, rk45 tolerances, etc.) from
+#      params_json. It also forces read_data=true.
+#   3. Everything else (output_root, solvers toggles, plotting block,
+#      external h5 overlays, use_float128) comes from this yml.
 #
 # Run with:
 #   python run.py path/to/this.yml
@@ -25,25 +23,14 @@
 
 
 base_config: "none"
-manual_h5_path: "REPLACE_WITH_PATH_TO.h5"
+manual_h5_path: "REPLACE_WITH_H5_PATH.h5"
 
 
-# === Fields below are IGNORED in manual mode (h5 provides them) ===
-particle: electron
-energy_eV: 10.0e3
-pitch_deg: 75.0
-phi_deg: 45.0
-delta: 500
-B_0: 10.0e-9
-x_initial_si: 0.0
-y_initial_si: 125.0
-z_initial_si: 0.0
-gyroperiods: 100
-use_float128: false
+# ===================================================================
+# === Fields that MATTER in manual mode — edit these ===============
+# ===================================================================
 
-
-# === Fields below MATTER — edit to control the replot ============
-
+# Which solver curves to include in plots
 solvers:
   ps: true
   rk4: true
@@ -60,12 +47,47 @@ plotting:
   slice_equal_aspect: false
   energy_xlim_left: null
 
+# Output destination — data/hyperb/<yml-stem>/<h5-stem>/...
 output_root: null
-read_data: true
-write_data: true
+
+# External h5 overlays for cross-run PS-order comparison
+external_h5:
+  root: null
+  a:
+    enabled: false
+    file: null
+  b:
+    enabled: false
+    file: null
 
 
-# === Advanced — keys must exist; values mostly overridden by h5 ===
+# ===================================================================
+# === Fields IGNORED in manual mode — keys required, values dead ===
+# ===================================================================
+# These keys must exist (compute_derived_hyperb reads them) but their
+# values are either overwritten from the h5's params_json or never
+# consulted in the cache-load path. Leave them as-is.
+
+# --- Identity (overwritten from h5) ---
+particle: electron
+energy_eV: 10.0e3
+pitch_deg: 75.0
+phi_deg: 45.0
+delta: 500
+B_0: 10.0e-9
+x_initial_si: 0.0
+y_initial_si: 125.0
+z_initial_si: 0.0
+gyroperiods: 100
+
+# --- Float precision (overwritten from h5's params_json["dtype"]) ---
+use_float128: false
+
+# --- Bookkeeping (forced or never read in manual mode) ---
+read_data: true       # forced True by apply_manual_h5_overrides
+write_data: true      # never reached — manual mode skips the solve branch
+
+# --- Solver settings (overwritten from h5) ---
 ps_order: 40
 rtol_rk45: 1.0e-12
 atol_rk45: 1.0e-14
@@ -77,14 +99,3 @@ step_overrides:
   ps: null
   rk4: null
 round_decimals: 3
-
-external_h5:
-  root: null
-  a:
-    enabled: false
-    file: null
-    ps_order: null
-  b:
-    enabled: false
-    file: null
-    ps_order: null

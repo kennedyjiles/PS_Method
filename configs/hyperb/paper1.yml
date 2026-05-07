@@ -35,8 +35,6 @@ external_h5:
   a:
     enabled: false
     file: "run_8d05c562f1137db2.h5"
-    ps_order: 25
   b:
     enabled: false
     file: "run_2e64db24ec88cb7e.h5"
-    ps_order: 10

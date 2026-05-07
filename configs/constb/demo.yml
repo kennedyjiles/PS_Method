@@ -28,3 +28,7 @@ write_data: true
 step_overrides:
   ps: null
   rk4: null
+
+steps_per_gyro:
+  ps: 10
+  rk4: 10

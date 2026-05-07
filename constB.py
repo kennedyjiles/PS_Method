@@ -127,7 +127,7 @@ def main(cfg_path, replot=False):
 
     particle_type = p["particle"].capitalize()
 
-    qoverm = npfloat(-1) if p["particle"].lower() in ("electron", "e") else npfloat(1)
+    charge_sign = npfloat(-1) if p["particle"].lower() in ("electron", "e") else npfloat(1)
 
     # === Misc Normalizing  ===
     B_0 = np.linalg.norm(Bfield_si)  # Magnitude of the field
@@ -182,7 +182,7 @@ def main(cfg_path, replot=False):
         start_time_analytical = time.time()
         solution_analytical = cp.analytical(
             t_eval_ps,
-            initial_pos_vel, qoverm)
+            initial_pos_vel, charge_sign)
         end_time_analytical = time.time()
 
     # === Build parameter signature & check cache ===
@@ -191,7 +191,8 @@ def main(cfg_path, replot=False):
                        x_initial, y_initial, z_initial,
                        pitch_deg, phi_deg,
                        norm_time, ps_step, rk4_step,
-                       PS_order, tol, qoverm)
+                       PS_order, tol, charge_sign,
+                       dtype=npfloat.__name__)
     if USE_MANUAL_FILE:
         cache_path = manual_h5_path
     else:
@@ -226,7 +227,7 @@ def main(cfg_path, replot=False):
             solution_rk45 = solve_ivp(
                 cp.lorentz_force, (0, norm_time),
                 initial_pos_vel, method='RK45',
-                t_eval=t_eval_rk45, args=(Bfield, qoverm),
+                t_eval=t_eval_rk45, args=(Bfield, charge_sign),
                 rtol=rtol_rk45,
                 atol=atol_rk45)
             end_time_rk45 = time.time()
@@ -237,14 +238,14 @@ def main(cfg_path, replot=False):
             rk4_dt = npfloat(t_eval_rk4[1] - t_eval_rk4[0])
             solution_rk4 = ul.rk4_fixed_step(
                 cp.lorentz_force, initial_pos_vel,
-                rk4_dt, steps_rk4, args=(Bfield, qoverm))
+                rk4_dt, steps_rk4, args=(Bfield, charge_sign))
             end_time_rk4 = time.time()
 
         # ===== Run PS Method ====
         start_time_ps = time.time()
         solution_ps, orders_used = cp.ps_integrate(
             PS_order, steps_ps, initial_pos_vel,
-            ps_step, Bfield, qoverm, tol)
+            ps_step, Bfield, charge_sign, tol)
         end_time_ps = time.time()
 
         # Prepare a results dict for saving
@@ -339,12 +340,42 @@ def main(cfg_path, replot=False):
     if USE_RK4:
         rel_drift_rk4 = ea.energy_drift(*ea.extract_v(solution_rk4))
 
+    # --- External h5 KE drift overlays (used by ke_error AND ke_error_multi) ---
+    # Loaded here (before either plot) so the simple ke_error gets the same
+    # overlay as the multi-PS plot. yml > h5 saved attr > computed from orders.
+    def _resolve_ext_order(yml_value, ext_grp):
+        if yml_value is not None:
+            return yml_value
+        saved = ext_grp.get("max_ps")
+        if saved is not None:
+            return int(saved)
+        if "orders" in ext_grp:
+            return int(np.max(ext_grp["orders"]))
+        return None
+
+    ext_data = extb_data = None
+    if USE_EXTERNAL_H5:
+        external = wr.load_results_h5_constb(external_h5)
+        ext_ps = external["ps"]
+        t_ext, y_ext = ext_ps["t"], ext_ps["y"]
+        rel_drift_ext = ea.energy_drift_pure(*ea.extract_v(y_ext))
+        ext_data = (t_ext, rel_drift_ext, _resolve_ext_order(PS_order_ext, ext_ps))
+
+    if USE_EXTERNAL_H5b:
+        externalb = wr.load_results_h5_constb(external_h5b)
+        ext_psb = externalb["ps"]
+        t_extb, y_extb = ext_psb["t"], ext_psb["y"]
+        rel_drift_extb = ea.energy_drift_pure(*ea.extract_v(y_extb))
+        extb_data = (t_extb, rel_drift_extb, _resolve_ext_order(PS_order_extb, ext_psb))
+
     fplt.ke_error(
         f"{_base}_KEerror.png",
         t_eval_ps=t_eval_ps, rel_drift_ps=rel_drift_ps, orders_used=orders_used,
         t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_drift_rk4=rel_drift_rk4,
         t_eval_rk45=t_eval_rk45 if USE_RK45 else None, rel_drift_rk45=rel_drift_rk45,
-        use_rk4=USE_RK4, use_rk45=USE_RK45, **_plot_kw,
+        use_rk4=USE_RK4, use_rk45=USE_RK45,
+        ext_data=ext_data, extb_data=extb_data,
+        **_plot_kw,
     )
 
     # ======================================
@@ -388,24 +419,8 @@ def main(cfg_path, replot=False):
     # === Multi-PS-order KE error comparison ========================
     # ===============================================================
     if USE_FULL_PLOT and not USE_FLOAT128:
-        # --- Load external h5 data ---
-        ext_data = None
-        extb_data = None
-        if USE_EXTERNAL_H5:
-            external = wr.load_results_h5_constb(external_h5)
-            ext_ps = external["ps"]
-            t_ext, y_ext = ext_ps["t"], ext_ps["y"]
-            y_ext_f128 = y_ext.astype(np.float128)
-            rel_drift_ext = ea.energy_drift_pure(*ea.extract_v(y_ext_f128))
-            ext_data = (t_ext, rel_drift_ext, PS_order_ext)
-
-        if USE_EXTERNAL_H5b:
-            externalb = wr.load_results_h5_constb(external_h5b)
-            ext_psb = externalb["ps"]
-            t_extb, y_extb = ext_psb["t"], ext_psb["y"]
-            y_extb_f128 = y_extb.astype(np.float128)
-            rel_drift_extb = ea.energy_drift_pure(*ea.extract_v(y_extb_f128))
-            extb_data = (t_extb, rel_drift_extb, PS_order_extb)
+        # ext_data / extb_data already loaded above (so the simple ke_error
+        # plot can use them too). They're reused here unchanged.
 
         # --- Recompute PS at various orders ---
         # Skip any order that matches the main run's PS order — otherwise
@@ -414,7 +429,7 @@ def main(cfg_path, replot=False):
         _ps_orders = [n for n in (4, 5, 6, 7, 10) if n != _main_order]
         ps_drifts = []
         for order in _ps_orders:
-            sol, _ = cp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, Bfield, qoverm, tol)
+            sol, _ = cp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, Bfield, charge_sign, tol)
             drift = ea.energy_drift(*ea.extract_v(sol))
             ps_drifts.append((order, drift,
                               fplt.COLORS[f"ps{order}"],
@@ -438,34 +453,48 @@ def main(cfg_path, replot=False):
     # === Trajectory error vs analytical ==============================
     # =================================================================
     if USE_ANALYTICAL:
+        # Each method has its own time grid (steps_per_gyro can differ between
+        # PS, RK4, and any external h5). Re-evaluate the analytical closed form
+        # on each grid so trajectory differences are sampled at matching times.
         x_ana = solution_analytical[0]
         y_ana = solution_analytical[1]
         rel_traj_err_ps = ea.trajectory_error_xy(solution_ps, x_ana, y_ana, gyro_radius_si)
 
         rel_traj_err_rk4 = None
         if USE_RK4:
-            rel_traj_err_rk4 = ea.trajectory_error_xy(solution_rk4, x_ana, y_ana, gyro_radius_si)
+            sol_ana_rk4 = cp.analytical(t_eval_rk4, initial_pos_vel, charge_sign)
+            rel_traj_err_rk4 = ea.trajectory_error_xy(
+                solution_rk4, sol_ana_rk4[0], sol_ana_rk4[1], gyro_radius_si)
 
         rel_traj_err_rk45 = None
         if USE_RK45:
+            # rk45 uses the PS grid (t_eval_rk45 = t_eval_ps), so x_ana works
             rel_traj_err_rk45 = ea.trajectory_error_xy(solution_rk45.y, x_ana, y_ana, gyro_radius_si)
 
         # External h5 trajectory error
         t_ext_traj = None
         rel_traj_err_ext = None
+        ps_order_ext_label = PS_order_ext
         if USE_EXTERNAL_H5:
             external = wr.load_results_h5_constb(external_h5)
             ext_ps = external["ps"]
             t_ext_traj = ext_ps["t"]
             y_ext = ext_ps["y"]
-            rel_traj_err_ext = ea.trajectory_error_xy(y_ext, x_ana, y_ana, gyro_radius_si)
+            sol_ana_ext = cp.analytical(t_ext_traj, initial_pos_vel, charge_sign)
+            rel_traj_err_ext = ea.trajectory_error_xy(
+                y_ext, sol_ana_ext[0], sol_ana_ext[1], gyro_radius_si)
+            if ps_order_ext_label is None:
+                # h5's saved attr > computed max from orders array
+                ps_order_ext_label = ext_ps.get("max_ps")
+                if ps_order_ext_label is None and "orders" in ext_ps:
+                    ps_order_ext_label = int(np.max(ext_ps["orders"]))
 
         fplt.trajectory_error(
             f"{_base}_TrajError.png",
             t_eval_ps=t_eval_ps, rel_traj_err_ps=rel_traj_err_ps, orders_used=orders_used,
             t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_traj_err_rk4=rel_traj_err_rk4,
             t_eval_rk45=t_eval_rk45 if USE_RK45 else None, rel_traj_err_rk45=rel_traj_err_rk45,
-            t_ext=t_ext_traj, rel_traj_err_ext=rel_traj_err_ext, ps_order_ext=PS_order_ext,
+            t_ext=t_ext_traj, rel_traj_err_ext=rel_traj_err_ext, ps_order_ext=ps_order_ext_label,
             use_rk4=USE_RK4, use_rk45=USE_RK45, use_external_h5=USE_EXTERNAL_H5,
             use_full_plot=USE_FULL_PLOT,
             field_label="a Constant Magnetic Field", **{k: v for k, v in _plot_kw.items() if k != "field_label"},

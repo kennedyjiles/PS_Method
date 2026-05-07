@@ -194,7 +194,15 @@ def apply_manual_h5_overrides(cfg, manual_h5_path, field):
     cfg["energy_eV"] = float(p["KE_particle"])
     cfg["pitch_deg"] = float(p["pitch_deg"])
     cfg["phi_deg"]   = float(p["phi_deg"])
-    cfg["particle"]  = "electron" if float(p["qoverm"]) < 0 else "proton"
+    # Legacy h5 files stored this as "qoverm"; the renamed key is "charge_sign".
+    _sign = p.get("charge_sign", p.get("qoverm"))
+    cfg["particle"]  = "electron" if float(_sign) < 0 else "proton"
+
+    # Recover the precision the run was saved at. Older h5 files don't
+    # have this field — leave use_float128 as-is so the user can still
+    # set it manually for legacy files.
+    if "dtype" in p:
+        cfg["use_float128"] = (str(p["dtype"]) == "float128")
 
     if field == "constb":
         cfg["x_initial"] = float(p["x_initial"])

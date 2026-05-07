@@ -137,12 +137,17 @@ def ke_error(
     t_eval_rk4=None, rel_drift_rk4=None,
     t_eval_rk45=None, rel_drift_rk45=None,
     use_rk4=False, use_rk45=False,
+    ext_data=None, extb_data=None,
     particle_type="", field_label="", use_plot_titles=True,
     time_factor=None,
 ):
-    """Relative kinetic energy error over time (log-log)."""
+    """Relative kinetic energy error over time (log-log).
+
+    Optional external h5 overlays via ``ext_data`` / ``extb_data``, each a
+    ``(t, rel_drift, ps_order_label)`` tuple or None.
+    """
     if time_factor is None:
-        time_factor = 1.0 / (2.0 * np.pi)   
+        time_factor = 1.0 / (2.0 * np.pi)
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -158,6 +163,17 @@ def ke_error(
     lines["ps"], = ax.semilogy(
         ul.f64(t_eval_ps) * time_factor, np.abs(ul.f64(rel_drift_ps)),
         color=COLORS["ps"], linestyle=LINESTYLES["ps"])
+
+    if ext_data is not None:
+        t_ext, drift_ext, _ = ext_data
+        lines["ext"], = ax.semilogy(
+            ul.f64(t_ext) * time_factor, np.abs(ul.f64(drift_ext)),
+            linestyle="-.", linewidth=1.2, color=COLORS["ext"])
+    if extb_data is not None:
+        t_extb, drift_extb, _ = extb_data
+        lines["extb"], = ax.semilogy(
+            ul.f64(t_extb) * time_factor, np.abs(ul.f64(drift_extb)),
+            linestyle="-", linewidth=1.2, color=COLORS["extb"])
 
     ul.setup_log_axes(ax)
     ax.set_xlabel(r"$\tau/T$")
@@ -175,6 +191,14 @@ def ke_error(
         endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lines["rk4"].get_color()))
     endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]),
                        f"PS{orders_used.max()}", lines["ps"].get_color()))
+    if ext_data is not None:
+        t_ext, drift_ext, ps_order_ext = ext_data
+        endpoints.append((t_ext[-1], np.abs(drift_ext[-1]),
+                          f"PS{ps_order_ext}*", lines["ext"].get_color()))
+    if extb_data is not None:
+        t_extb, drift_extb, ps_order_extb = extb_data
+        endpoints.append((t_extb[-1], np.abs(drift_extb[-1]),
+                          f"PS{ps_order_extb}*", lines["extb"].get_color()))
 
     ul.place_endpoint_labels(fig, ax, endpoints)
 
@@ -385,7 +409,7 @@ def trajectory_error(
     time_factor=None,
 ):
     """
-    Position error (gyro-radius normalized) vs analytical solution.
+    Position error (gyroradius normalized) vs analytical solution.
 
     Only applicable for constb where an exact solution exists.
     """
@@ -420,7 +444,7 @@ def trajectory_error(
 
     ax.set_ylabel(r"$\Delta \mathbf{r}_\perp/\rho_L$")
     if use_plot_titles:
-        ax.set_title(f"{particle_type} Gyro-Radius Error in {field_label}")
+        ax.set_title(f"{particle_type} Gyroradius Error in {field_label}")
 
     fig.subplots_adjust(right=0.9)
     fig.canvas.draw()

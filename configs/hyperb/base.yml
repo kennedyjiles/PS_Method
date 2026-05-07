@@ -92,17 +92,17 @@ step_overrides:
 round_decimals: 3           # decimal places for step size rounding
 
 # --- External H5 files (for energy comparison across PS orders) ---
-# Schema has two slots (a, b) each with its own ps_order — used to compare
-# PS runs at different orders. (Dipoleb uses a different schema — keyed
-# by solver — because it compares solvers, not orders.)
+# Schema has two slots (a, b). Used to overlay PS runs at different orders
+# on the multi-PS-order plot. (Dipoleb uses a different schema — keyed by
+# solver — because it compares solvers, not orders.)
 # Set root once; file paths are joined with root unless already absolute.
+# The PS order shown in the legend is auto-read from the h5's
+# ps.attrs["max_ps"] — no need to specify here.
 external_h5:
   root: null
   a:
     enabled: false
     file: null
-    ps_order: null
   b:
     enabled: false
     file: null
-    ps_order: null
