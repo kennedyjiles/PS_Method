@@ -33,8 +33,8 @@ COLORS = {
     "ps5":        "#0072B2",   # blue
     "ps6":        "#56B4E9",   # sky blue
     "ps7":        "#D55E00",   # vermillion
-    "ps10":       "#000000",   # black
-    "ps15":       "#999999",   # gray
+    "ps10":       "#555555",   # dark gray (distinct from "ext" which is black)
+    "ps15":       "#999999",   # light gray
     "ext":        "black",
     "extb":       "#6A3D9A",   # purple
 }

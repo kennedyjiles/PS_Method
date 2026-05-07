@@ -28,7 +28,7 @@ solvers:
 
 plotting:
   titles: false
-  full_plot: false
+  full_plot: true
   slice_mode: last
   slice_ylim_top: 0.7
   energy_xlim_left: 0.1

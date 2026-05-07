@@ -1,10 +1,8 @@
 # ===================================================================
 # Paper 3 — 100 keV proton, -15° pitch, delta=200 km, B0=10 nT
 # ===================================================================
-# Step size: steps_per_gyro = 100, round_decimals = 3
-#   → round(2π/100, 3) = 0.063 ✓
-# ===================================================================
-
+ps_order: 15
+use_float128: true
 particle: proton
 energy_eV: 100.0e3
 pitch_deg: -15.0
@@ -23,7 +21,7 @@ solvers:
 
 plotting:
   titles: false
-  full_plot: false
+  full_plot: true
   slice_mode: last
   skip_rk4_slice: true
 

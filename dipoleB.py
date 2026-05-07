@@ -129,7 +129,7 @@ def main(cfg_path, replot=False):
     USE_RKG         = params["USE_RKG"]
     USE_PS          = params["USE_PS"]
     USE_ADAPTIVE    = params["USE_ADAPTIVE"]
-    PS_decimate     = params["PS_decimate"]
+    ps_decimate     = params["ps_decimate"]
     y_initial       = params["y_initial"]
     z_initial       = params["z_initial"]
     USE_PLOT_TITLES = params["USE_PLOT_TITLES"]
@@ -139,7 +139,7 @@ def main(cfg_path, replot=False):
     output_folder   = params["output_folder"]
     run_storage     = params["run_storage"]
     window_time     = params["window_time"]
-    N_GYRO          = params["N_GYRO"]
+    n_gyro          = params["n_gyro"]
 
     USE_EXTERNAL_H5_ps   = params["USE_EXTERNAL_H5_ps"]
     USE_EXTERNAL_H5_rk4  = params["USE_EXTERNAL_H5_rk4"]
@@ -154,7 +154,7 @@ def main(cfg_path, replot=False):
     pitch_deg    = params.get("pitch_deg",    None)
     phi_deg      = params.get("phi_deg",      None)
     x_initial    = params.get("x_initial",    None)
-    KE_particle  = params.get("KE_particle",  None)
+    ke_particle  = params.get("ke_particle",  None)
     mass_si      = params.get("mass_si",      None)
     T_gyro       = params.get("T_gyro",       None)
     gyroperiods  = params.get("gyroperiods",  None)
@@ -164,21 +164,21 @@ def main(cfg_path, replot=False):
     ps_step              = params.get("ps_step",  None)
     rk4_step             = params.get("rk4_step", None)
     rkg_step             = params.get("rkg_step", None)
-    N_STEPS_PER_GYRO_ps  = params.get("N_STEPS_PER_GYRO_ps",  None)
-    N_STEPS_PER_GYRO_rk4 = params.get("N_STEPS_PER_GYRO_rk4", None)
-    N_STEPS_PER_GYRO_rkg = params.get("N_STEPS_PER_GYRO_rkg", None)
+    n_steps_per_gyro_ps  = params.get("n_steps_per_gyro_ps",  None)
+    n_steps_per_gyro_rk4 = params.get("n_steps_per_gyro_rk4", None)
+    n_steps_per_gyro_rkg = params.get("n_steps_per_gyro_rkg", None)
 
     # --- Optional overrides (only some modes set these) ---
     # compute_derived always populates these keys with its own defaults,
     # so no module-level fallback is needed.
-    PS_order        = params["PS_order"]
-    PS_chunk_steps  = params["PS_chunk_steps"]
+    ps_order        = params["ps_order"]
+    ps_chunk_steps  = params["ps_chunk_steps"]
     rtol_rk45       = params["rtol_rk45"]
     atol_rk45       = params["atol_rk45"]
     user_min_phase  = params["user_min_phase"]
-    MAX_PLOT_POINTS_local = params.get("MAX_PLOT_POINTS", 1_000_000)  # not in base.yml
-    CACHE_VELOCITY_RTOL   = params["CACHE_VELOCITY_RTOL"]
-    PLOT_BOUNDARY_PAD     = params["PLOT_BOUNDARY_PAD"]
+    max_plot_points_local = params.get("max_plot_points", 1_000_000)  # not in base.yml
+    cache_velocity_rtol   = params["cache_velocity_rtol"]
+    plot_boundary_pad     = params["plot_boundary_pad"]
     # manual_h5_path already set at top of main() (used to resolve npfloat); reassign
     # here from params for consistency — value is the same.
     manual_h5_path  = params["manual_h5_path"]
@@ -256,7 +256,7 @@ def main(cfg_path, replot=False):
                 stem = meta["stem"]
                 mass_si = summary["meta"]["mass_si"]
                 particle_type = meta["particle"]
-                KE_particle = meta["energy_eV"]
+                ke_particle = meta["energy_eV"]
                 pitch_deg = meta["pitch_deg"]
                 phi_deg = meta["phi_deg"]
                 x_initial = meta["x0"]
@@ -289,11 +289,11 @@ def main(cfg_path, replot=False):
                 PS_CHUNKING = ps_cfg["streaming"]
                 ps_step = ps_cfg["dt"]
                 steps_ps = ps_cfg["steps"]
-                PS_decimate = ps_cfg["decimate"]
-                PS_chunk_steps = ps_cfg["chunksize"]
-                N_STEPS_PER_GYRO_ps = ps_cfg["numberstepspergyro"]
+                ps_decimate = ps_cfg["decimate"]
+                ps_chunk_steps = ps_cfg["chunksize"]
+                n_steps_per_gyro_ps = ps_cfg["numberstepspergyro"]
                 max_ps_value = ps_cfg["max_ps"]
-                E0_ps = ps_cfg["E0"]
+                e0_ps = ps_cfg["E0"]
                 mu0_ps = ps_cfg["mu0"]
 
                 # ---- RK4 config ----
@@ -301,7 +301,7 @@ def main(cfg_path, replot=False):
                 USE_RK4 = rk4_cfg["enabled"]
                 rk4_step = rk4_cfg["dt"]
                 steps_rk4 = rk4_cfg["steps"]
-                N_STEPS_PER_GYRO_rk4 = rk4_cfg["numberstepspergyro"]
+                n_steps_per_gyro_rk4 = rk4_cfg["numberstepspergyro"]
 
 
                 # ---- RK45 config ----
@@ -315,7 +315,7 @@ def main(cfg_path, replot=False):
                 USE_RKG = rkg_cfg["enabled"]
                 rkg_step = rkg_cfg["dt"]
                 steps_rkg = rkg_cfg["steps"]
-                N_STEPS_PER_GYRO_rkg = rkg_cfg["numberstepspergyro"]
+                n_steps_per_gyro_rkg = rkg_cfg["numberstepspergyro"]
 
 
                 # ---- Load solver data ------
@@ -363,7 +363,7 @@ def main(cfg_path, replot=False):
                     # Defense in depth: catches accidental truncation even when the
                     # file isn't a trim_h5 product (no trim_end attr).
                     n_store_actual = cached["ps"]["y"].shape[1]
-                    ps_store_stride = PS_decimate if PS_decimate > 1 else 1
+                    ps_store_stride = ps_decimate if ps_decimate > 1 else 1
                     steps_ps_actual = n_store_actual * ps_store_stride
                     if steps_ps_actual < steps_ps:
                         steps_ps = steps_ps_actual
@@ -408,8 +408,8 @@ def main(cfg_path, replot=False):
     charge_sign = npfloat(-1) if mass_si == m_e else npfloat(1)
 
     # === Misc Conversions  ===
-    KE_joules = KE_particle * evtoj                     # converting KE from eV to Joules
-    gamma = 1.0 + KE_joules / (mass_si * spdlight**2)   # Lorentz factor
+    ke_joules = ke_particle * evtoj                     # converting KE from eV to Joules
+    gamma = 1.0 + ke_joules / (mass_si * spdlight**2)   # Lorentz factor
     mass = gamma * mass_si                              # Relativistic mass used for magnetic moment calculations
 
     v_si = spdlight * np.sqrt(1.0 - 1.0 / gamma**2)     # m/s
@@ -452,7 +452,7 @@ def main(cfg_path, replot=False):
     directly from the h5 file, this just establishes the E0 and mu0 values for those calculations
     """
     vx0, vy0, vz0 = initial_pos_vel[3:6]
-    E0_ps = npfloat(0.5) * (vx0*vx0 + vy0*vy0 + vz0*vz0)
+    e0_ps = npfloat(0.5) * (vx0*vx0 + vy0*vy0 + vz0*vz0)
     y0_ps = np.zeros((17, 1), dtype=npfloat)
     y0_ps[0:6, 0] = initial_pos_vel
     x0, y0, z0 = initial_pos_vel[0:3]
@@ -461,7 +461,7 @@ def main(cfg_path, replot=False):
     y0_ps[14, 0] = -3 * x0 * z0 * r5inv
     y0_ps[15, 0] = -3 * y0 * z0 * r5inv
     y0_ps[16, 0] = -(3*z0*z0 - r2) * r5inv
-    mu0_ps = mp.compute_mu_ps(y0_ps, mass)[0]
+    mu0_ps = mp.compute_mu_ps(y0_ps)[0]
 
 
     # === Build parameter tracer & check cache ===
@@ -472,12 +472,12 @@ def main(cfg_path, replot=False):
     Beware that these files can be GB size for dipole.
     """
     if not USE_MANUAL_FILE:
-        run_params = wr.get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, PS_decimate, PS_CHUNKING,   # parameters it is scanning
+        run_params = wr.get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, ps_decimate, PS_CHUNKING,   # parameters it is scanning
                         mass_si, q_e, B_0, gamma, user_min_phase,
                         x_initial, y_initial, z_initial,
                         pitch_deg, phi_deg,
                         norm_time, ps_step, rk4_step, rkg_step,
-                        PS_order, tol_local, charge_sign, rtol_rk45, atol_rk45)
+                        ps_order, tol_local, charge_sign, rtol_rk45, atol_rk45)
         cache_path = wr.h5_path_for(run_params, run_storage)
         if os.path.exists(cache_path) and READ_DATA:
             print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
@@ -499,7 +499,7 @@ def main(cfg_path, replot=False):
 
                 stem = meta["stem"]
                 particle_type = meta["particle"]
-                KE_particle = meta["energy_eV"]
+                ke_particle = meta["energy_eV"]
                 pitch_deg = meta["pitch_deg"]
                 phi_deg = meta["phi_deg"]
                 x_initial = meta["x0"]
@@ -530,11 +530,11 @@ def main(cfg_path, replot=False):
                 PS_CHUNKING = ps_cfg["streaming"]
                 ps_step = ps_cfg["dt"]
                 steps_ps = ps_cfg["steps"]
-                PS_decimate = ps_cfg["decimate"]
-                PS_chunk_steps = ps_cfg["chunksize"]
-                N_STEPS_PER_GYRO_ps = ps_cfg["numberstepspergyro"]
+                ps_decimate = ps_cfg["decimate"]
+                ps_chunk_steps = ps_cfg["chunksize"]
+                n_steps_per_gyro_ps = ps_cfg["numberstepspergyro"]
                 max_ps_value = ps_cfg["max_ps"]
-                E0_ps = ps_cfg["E0"]
+                e0_ps = ps_cfg["E0"]
                 mu0_ps = ps_cfg["mu0"]
 
                 # ---- RK4 config ----
@@ -542,7 +542,7 @@ def main(cfg_path, replot=False):
                 USE_RK4 = rk4_cfg["enabled"]
                 rk4_step = rk4_cfg["dt"]
                 steps_rk4 = rk4_cfg["steps"]
-                N_STEPS_PER_GYRO_rk4 = rk4_cfg["numberstepspergyro"]
+                n_steps_per_gyro_rk4 = rk4_cfg["numberstepspergyro"]
 
 
                 # ---- RK45 config ----
@@ -556,7 +556,7 @@ def main(cfg_path, replot=False):
                 USE_RKG = rkg_cfg["enabled"]
                 rkg_step = rkg_cfg["dt"]
                 steps_rkg = rkg_cfg["steps"]
-                N_STEPS_PER_GYRO_rkg = rkg_cfg["numberstepspergyro"]
+                n_steps_per_gyro_rkg = rkg_cfg["numberstepspergyro"]
 
 
                 # ---- Load solver data ------
@@ -597,7 +597,7 @@ def main(cfg_path, replot=False):
                 if USE_PS and "ps" in cached:
                     # Defense in depth for accidental truncation (no trim_end attr).
                     n_store_actual = cached["ps"]["y"].shape[1]
-                    ps_store_stride = PS_decimate if PS_decimate > 1 else 1
+                    ps_store_stride = ps_decimate if ps_decimate > 1 else 1
                     steps_ps_actual = n_store_actual * ps_store_stride
                     if steps_ps_actual < steps_ps:
                         steps_ps = steps_ps_actual
@@ -657,16 +657,16 @@ def main(cfg_path, replot=False):
                     initial_pos_vel_ps=initial_pos_vel,
                     steps_ps=steps_ps,
                     ps_step=ps_step,
-                    PS_order=PS_order,
+                    ps_order=ps_order,
                     tol=tol_local,
                     charge_sign=charge_sign,
-                    E0_ps=E0_ps,
+                    e0_ps=e0_ps,
                     mu0_ps=mu0_ps,
                     cache_path=cache_path,
                     write_data=True,
-                    chunk_steps=PS_chunk_steps,
-                    decimate=PS_decimate,
-                    N_STEPS_PER_GYRO_ps=N_STEPS_PER_GYRO_ps,
+                    chunk_steps=ps_chunk_steps,
+                    decimate=ps_decimate,
+                    n_steps_per_gyro_ps=n_steps_per_gyro_ps,
                     user_min_phase=user_min_phase,
                     dragt_monitor=dragt_mon,
                     r_atmosphere=r_atmosphere,
@@ -757,7 +757,7 @@ def main(cfg_path, replot=False):
                     "particle": particle_type,
                     "mass_si": mass_si,
                     "q_e": q_e,
-                    "energy_eV": npfloat(KE_particle),
+                    "energy_eV": npfloat(ke_particle),
                     "pitch_deg": npfloat(pitch_deg),
                     "phi_deg": npfloat(phi_deg),
                     "x0": npfloat(x_initial),
@@ -780,17 +780,17 @@ def main(cfg_path, replot=False):
                 results["ps"].update({
                     "y": None,
                     "orders": None,
-                    "ordercap": PS_order,
+                    "ordercap": ps_order,
                     "max_ps": max_ps_value,
-                    "numberstepspergyro": N_STEPS_PER_GYRO_ps,
+                    "numberstepspergyro": n_steps_per_gyro_ps,
                     "dt": ps_step,
                     "steps": steps_ps,
                     "streaming": True,
-                    "chunksize": PS_chunk_steps,
-                    "decimate": PS_decimate,
+                    "chunksize": ps_chunk_steps,
+                    "decimate": ps_decimate,
                     "tol": tol_local,
                     "minphase" : user_min_phase,
-                    "E0": float(E0_ps),
+                    "E0": float(e0_ps),
                     "mu0": float(mu0_ps),
                     "t0": 0.0,
                 })
@@ -800,7 +800,7 @@ def main(cfg_path, replot=False):
             if USE_RK4:
                 results["rk4"].update({
                     "y": solution_rk4,
-                    "numberstepspergyro": N_STEPS_PER_GYRO_rk4,
+                    "numberstepspergyro": n_steps_per_gyro_rk4,
                     "dt": npfloat(rk4_step),
                     "steps": int(steps_rk4),
                     "t0": 0.0,
@@ -821,7 +821,7 @@ def main(cfg_path, replot=False):
             if USE_RKG:
                 results["rkg"].update({
                     "y": solution_rkg,
-                    "numberstepspergyro": N_STEPS_PER_GYRO_rkg,
+                    "numberstepspergyro": n_steps_per_gyro_rkg,
                     "dt": npfloat(rkg_step),
                     "steps": int(steps_rkg),
                     "t0": 0.0
@@ -841,7 +841,7 @@ def main(cfg_path, replot=False):
                         "particle": particle_type,
                         "mass_si": mass_si,
                         "q_e": q_e,
-                        "energy_eV": float(KE_particle),
+                        "energy_eV": float(ke_particle),
                         "pitch_deg": float(pitch_deg),
                         "phi_deg": float(phi_deg),
                         "x0": float(x_initial),
@@ -863,12 +863,12 @@ def main(cfg_path, replot=False):
                         "dt": ps_step if USE_PS else None,
                         "steps": steps_ps if USE_PS else None,
                         "streaming": True if USE_PS else None,
-                        "ordercap": PS_order if USE_PS else None,
+                        "ordercap": ps_order if USE_PS else None,
                         "max_ps": max_ps_value,
-                        "chunksize": PS_chunk_steps if USE_PS else None,
-                        "decimate": PS_decimate if USE_PS else None,
-                        "numberstepspergyro": N_STEPS_PER_GYRO_ps if USE_PS else None,
-                        "E0": float(E0_ps) if USE_PS else None,
+                        "chunksize": ps_chunk_steps if USE_PS else None,
+                        "decimate": ps_decimate if USE_PS else None,
+                        "numberstepspergyro": n_steps_per_gyro_ps if USE_PS else None,
+                        "E0": float(e0_ps) if USE_PS else None,
                         "mu0": float(mu0_ps) if USE_PS else None,
                         "minphase": user_min_phase if USE_PS else None,
                         "tol": float(tol_local)
@@ -877,7 +877,7 @@ def main(cfg_path, replot=False):
                         "enabled": USE_RK4,
                         "dt": float(rk4_step) if USE_RK4 else None,
                         "steps": int(steps_rk4) if USE_RK4 else None,
-                        "numberstepspergyro": N_STEPS_PER_GYRO_rk4 if USE_RK4 else None,
+                        "numberstepspergyro": n_steps_per_gyro_rk4 if USE_RK4 else None,
                     },
                     "rk45": {
                         "enabled": USE_RK45,
@@ -888,7 +888,7 @@ def main(cfg_path, replot=False):
                         "enabled": USE_RKG,
                         "dt": float(rkg_step) if USE_RKG else None,
                         "steps": int(steps_rkg) if USE_RKG else None,
-                        "numberstepspergyro": N_STEPS_PER_GYRO_rkg if USE_RKG else None,
+                        "numberstepspergyro": n_steps_per_gyro_rkg if USE_RKG else None,
                     },
                 }
 
@@ -929,9 +929,9 @@ def main(cfg_path, replot=False):
     summary["plot"] = {
         "trajwindow_s": window_time,
         "slicemode": slice_mode,
-        "NGYRO" : N_GYRO,
+        "NGYRO" : n_gyro,
         "gyroslice": gyro_window,
-        "maxplotpoints": MAX_PLOT_POINTS_local,
+        "maxplotpoints": max_plot_points_local,
         "externalps": external_h5_ps if USE_EXTERNAL_H5_ps else None,
         "externalrk4": external_h5_rk4 if USE_EXTERNAL_H5_rk4 else None,
         "externalrk45": external_h5_rk45 if USE_EXTERNAL_H5_rk45 else None,
@@ -963,7 +963,7 @@ def main(cfg_path, replot=False):
     if USE_PS:
         with h5py.File(cache_path, "r") as ps_h5:
             ps_grp = ps_h5["ps"]
-            stride = max(1, steps_ps // MAX_PLOT_POINTS_local)
+            stride = max(1, steps_ps // max_plot_points_local)
             ps_order_label = int(ps_grp.attrs["max_ps"])
 
             if USE_FULL_PLOT:
@@ -982,7 +982,7 @@ def main(cfg_path, replot=False):
     print(f"  Run Statistics")
     print(f"{'='*60}")
     # === Timing Summary ===
-    print(f"Particle        : {KE_particle:.1e} eV {particle_type}")
+    print(f"Particle        : {ke_particle:.1e} eV {particle_type}")
     if USE_RK45 and "rk45" in timing:
         print(f"Run Time RK45   : {timing['rk45']:.2f} s")
     if USE_RK4 and "rk4" in timing:
@@ -1025,7 +1025,7 @@ def main(cfg_path, replot=False):
     # =====================================================
     # ============== Full Trajectory Plots ================
     # =====================================================
-    plotbounds = x_initial + PLOT_BOUNDARY_PAD
+    plotbounds = x_initial + plot_boundary_pad
 
     if USE_FULL_PLOT:
         _traj_common = dict(
@@ -1050,8 +1050,8 @@ def main(cfg_path, replot=False):
     _sw = ul.prepare_slice_dipoleb(
         slice_mode, window_duration, norm_time,
         USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
-        steps_ps=steps_ps, PS_decimate=PS_decimate,
-        MAX_PLOT_POINTS=MAX_PLOT_POINTS_local,
+        steps_ps=steps_ps, ps_decimate=ps_decimate,
+        max_plot_points=max_plot_points_local,
         USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
         USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
         USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
@@ -1114,9 +1114,9 @@ def main(cfg_path, replot=False):
     if DEBUG: tracemalloc.start()
 
     _ke = ea.compute_ke_errors(
-        T_gyro, n_ps=steps_ps, MAX_PLOT_POINTS=MAX_PLOT_POINTS_local,
+        T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
         USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
-        PS_decimate=PS_decimate, E0_ps=E0_ps,
+        ps_decimate=ps_decimate, e0_ps=e0_ps,
         USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
         rk4_y_initial=rk4_y_initial,
         USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
@@ -1172,7 +1172,7 @@ def main(cfg_path, replot=False):
         charge_sign, gamma,
         USE_PS=USE_PS, cache_path=cache_path,
         ps_step=ps_step, time_factor=time_factor,
-        CACHE_VELOCITY_RTOL=CACHE_VELOCITY_RTOL,
+        cache_velocity_rtol=cache_velocity_rtol,
         fig_folder=fig_folder, stem=stem,
         poincare_func=dplt.poincare,
         gyrophase_mu_func=dplt.gyrophase_mu,
@@ -1201,26 +1201,26 @@ def main(cfg_path, replot=False):
     if USE_RK4:
         mu_rk4_result = mp.compute_mu_deviation_rk(
             solution_rk4, steps_rk4, rk4_step,
-            N_GYRO, N_STEPS_PER_GYRO_rk4, mass, gyro_window, time_factor,
+            n_gyro, n_steps_per_gyro_rk4, gyro_window, time_factor,
             solver_type="rk4", y_initial=rk4_y_initial)
 
     if USE_RKG:
         mu_rkg_result = mp.compute_mu_deviation_rk(
             solution_rkg, steps_rkg, rkg_step,
-            N_GYRO, N_STEPS_PER_GYRO_rkg, mass, gyro_window, time_factor,
+            n_gyro, n_steps_per_gyro_rkg, gyro_window, time_factor,
             solver_type="rkg", y_initial=rkg_y_initial)
 
     if USE_RK45:
         mu_rk45_result = mp.compute_mu_deviation_rk(
             y_rk45_common, steps_ps, ps_step,
-            N_GYRO, N_STEPS_PER_GYRO_ps, mass, gyro_window, time_factor,
+            n_gyro, n_steps_per_gyro_ps, gyro_window, time_factor,
             solver_type="rk45", y_initial=rk45_y_initial)
 
     if USE_PS:
         mu_ps_result = mp.compute_mu_deviation_ps(
-            cache_path, steps_ps, ps_step, PS_decimate,
-            N_GYRO, N_STEPS_PER_GYRO_ps, mass, mu0_ps,
-            gyro_window, time_factor, max_plot_points=MAX_PLOT_POINTS_local)
+            cache_path, steps_ps, ps_step, ps_decimate,
+            n_gyro, n_steps_per_gyro_ps, mu0_ps,
+            gyro_window, time_factor, max_plot_points=max_plot_points_local)
         ps_order_label = mu_ps_result["ps_order_label"]
 
     # --- Unpack mu0 values needed by the summary writer ---
@@ -1270,15 +1270,15 @@ def main(cfg_path, replot=False):
         bounce_state = bd.init_bounce_stream_state()
         drift_state  = bd.init_drift_stream_state()
 
-        ps_store_stride = PS_decimate if PS_decimate > 1 else 1
+        ps_store_stride = ps_decimate if ps_decimate > 1 else 1
         dt_store = ps_step * ps_store_stride
 
         with h5py.File(cache_path, "r") as ps_h5:
             ps_y = ps_h5["ps"]["y"]
             n_store = ps_y.shape[1]
 
-            for j0_chunk in range(0, n_store, PS_chunk_steps):
-                j1 = min(j0_chunk + PS_chunk_steps, n_store)
+            for j0_chunk in range(0, n_store, ps_chunk_steps):
+                j1 = min(j0_chunk + ps_chunk_steps, n_store)
 
                 y_chunk = wr.expand_h5_to_full(ps_y[:, j0_chunk:j1])
                 t_chunk = dt_store * np.arange(j0_chunk, j1, dtype=npfloat)
@@ -1357,7 +1357,7 @@ def main(cfg_path, replot=False):
         dragt_log=dragt_log, bounce_results=bounce_results, drift_results=drift_results,
         gyroperiods=gyroperiods, norm_time=norm_time, mass=mass, cache_path=cache_path,
         USE_PS=USE_PS, USE_RK4=USE_RK4, USE_RK45=USE_RK45, USE_RKG=USE_RKG,
-        PS_decimate=PS_decimate,
+        ps_decimate=ps_decimate,
         ps_step=ps_step,
         rk4_step=rk4_step if USE_RK4 else None,
         rkg_step=rkg_step if USE_RKG else None,
@@ -1395,7 +1395,7 @@ def main(cfg_path, replot=False):
 
     wr.master_csv(
         output_folder=output_folder, stem=stem, particle_type=particle_type,
-        KE_particle=KE_particle, x_initial=x_initial, y_initial=y_initial,
+        ke_particle=ke_particle, x_initial=x_initial, y_initial=y_initial,
         z_initial=z_initial, pitch_deg=pitch_deg, phi_deg=phi_deg,
         gyroperiods=gyroperiods,
         dragt_log=dragt_log,

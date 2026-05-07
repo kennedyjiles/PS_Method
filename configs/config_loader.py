@@ -576,7 +576,7 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         "USE_RKG":         solvers["rkg"],
         "USE_PS":          solvers["ps"],
         "USE_ADAPTIVE":    solvers["adaptive"],
-        "PS_decimate":     cfg["ps_decimate"],
+        "ps_decimate":     cfg["ps_decimate"],
 
         # Initial position
         "y_initial": y_initial,
@@ -606,7 +606,7 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         "pitch_deg":   pitch_deg,
         "phi_deg":     phi_deg,
         "x_initial":   x_initial,
-        "KE_particle": KE_particle,
+        "ke_particle": KE_particle,
         "mass_si":     mass_si,
         "T_gyro":      T_gyro,
         "gyroperiods": gyroperiods,
@@ -616,24 +616,24 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         "ps_step":              ps_step,
         "rk4_step":             rk4_step,
         "rkg_step":             rkg_step,
-        "N_STEPS_PER_GYRO_ps":  spg["ps"],
-        "N_STEPS_PER_GYRO_rk4": spg["rk4"],
-        "N_STEPS_PER_GYRO_rkg": spg["rkg"],
+        "n_steps_per_gyro_ps":  spg["ps"],
+        "n_steps_per_gyro_rk4": spg["rk4"],
+        "n_steps_per_gyro_rkg": spg["rkg"],
 
         # Plotting windows
         "window_time": npfloat(cfg["window_time"]),
-        "N_GYRO":      plot_cfg["n_gyro"],
+        "n_gyro":      plot_cfg["n_gyro"],
 
         # Optional overrides
-        "PS_order":        cfg["ps_order"],
-        "PS_chunk_steps":  int(cfg["ps_chunk_steps"]),
+        "ps_order":        cfg["ps_order"],
+        "ps_chunk_steps":  int(cfg["ps_chunk_steps"]),
         "rtol_rk45":       cfg["rtol_rk45"],
         "atol_rk45":       cfg["atol_rk45"],
         "user_min_phase":  cfg["user_min_phase"],
-        "MAX_PLOT_POINTS": cfg.get("max_plot_points", 1_000_000),  # not in base.yml
+        "max_plot_points": cfg.get("max_plot_points", 1_000_000),  # not in base.yml
         "USE_FLOAT128":    cfg["use_float128"],
-        "CACHE_VELOCITY_RTOL": cfg["cache_velocity_rtol"],
-        "PLOT_BOUNDARY_PAD":   cfg["plot_boundary_pad"],
+        "cache_velocity_rtol": cfg["cache_velocity_rtol"],
+        "plot_boundary_pad":   cfg["plot_boundary_pad"],
 
         # Special modes
         "legacy_h5_path": cfg.get("legacy_h5_path"),  # not in base.yml

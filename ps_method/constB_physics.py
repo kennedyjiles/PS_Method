@@ -88,10 +88,9 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, charge_si
     return state_history, orders_used
 
 
-@ul.maybe_njit
 def analytical(tau, d, charge_sign):
     """Exact closed-form trajectory in a uniform magnetic field.
-    In normalized coordinates (ω_c = |qB/m| = 1) 
+    In normalized coordinates (ω_c = |qB/m| = 1)
 
     Parameters
     ----------

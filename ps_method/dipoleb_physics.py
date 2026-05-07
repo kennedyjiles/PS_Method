@@ -50,7 +50,7 @@ def lorentz_force(t, d, charge_sign):
     return np.array([vx, vy, vz, ax, ay, az], dtype=ul.npfloat)
 
 @ul.maybe_njit
-def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelta):
+def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelta):
     n_total = 17
     state_history = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
 
@@ -87,7 +87,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
     state_history[By_aux, 0] = -ul.npfloat(3.0) * a0 * c0
     state_history[Bx_aux, 0] = -ul.npfloat(3.0) * a0 * d0
 
-    oip1 = one / (one + np.arange(PS_order, dtype=ul.npfloat))
+    oip1 = one / (one + np.arange(ps_order, dtype=ul.npfloat))
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
 
     # these worked better inline
@@ -106,9 +106,9 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
             out[i] = acc / b[0]
 
 
-    c = np.zeros((n_total, PS_order + 1), dtype=ul.npfloat) 
+    c = np.zeros((n_total, ps_order + 1), dtype=ul.npfloat) 
     sum_terms = np.zeros(n_total, dtype=ul.npfloat)
-    zeta = np.zeros(PS_order + 1, dtype=ul.npfloat)
+    zeta = np.zeros(ps_order + 1, dtype=ul.npfloat)
 
     # initialize base terms outside the loop 
     c[r2_aux, 0] = state_history[x, 0]**two + state_history[y, 0]**two + state_history[z, 0]**two
@@ -123,7 +123,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
         max_contrib = tol + one
         i = 0
 
-        while max_contrib > tol and i < PS_order:
+        while max_contrib > tol and i < ps_order:
             c[x, i+1]  = c[vx, i] * oip1[i]
             c[y, i+1]  = c[vy, i] * oip1[i]
             c[z, i+1]  = c[vz, i] * oip1[i]
@@ -360,16 +360,16 @@ def run_ps_streaming_with_decimation(
     initial_pos_vel_ps,
     steps_ps,
     ps_step,
-    PS_order,
+    ps_order,
     tol,
     charge_sign,
-    E0_ps,
+    e0_ps,
     mu0_ps,
     cache_path,
     write_data,
     chunk_steps,
     decimate,
-    N_STEPS_PER_GYRO_ps,
+    n_steps_per_gyro_ps,
     user_min_phase,
     dragt_monitor=None,
     r_atmosphere=1.0,
@@ -388,8 +388,8 @@ def run_ps_streaming_with_decimation(
     if write_data:
         f = h5py.File(cache_path, "w")
         ps_grp = f.create_group("ps")
-        ps_grp.attrs["ordercap"] = PS_order
-        ps_grp.attrs["numberstepspergyro"] = int(N_STEPS_PER_GYRO_ps)
+        ps_grp.attrs["ordercap"] = ps_order
+        ps_grp.attrs["numberstepspergyro"] = int(n_steps_per_gyro_ps)
         ps_grp.attrs["dt"]        = ul.npfloat(ps_step)
         ps_grp.attrs["steps"]    = int(steps_ps)
         ps_grp.attrs["streaming"] = True
@@ -397,7 +397,7 @@ def run_ps_streaming_with_decimation(
         ps_grp.attrs["decimate"] = int(decimate)
         ps_grp.attrs["tol"] = ul.npfloat(tol)
         ps_grp.attrs["minphase"] = ul.npfloat(user_min_phase)
-        ps_grp.attrs["E0"]       = float(E0_ps)
+        ps_grp.attrs["E0"]       = float(e0_ps)
         ps_grp.attrs["mu0"]      = float(mu0_ps)
         ps_grp.attrs["t0"]       = 0.0
         # Row layout: [x,y,z, vx,vy,vz, Bx,By,Bz]
@@ -433,7 +433,7 @@ def run_ps_streaming_with_decimation(
             this_chunk = min(chunk_steps, remaining)
 
             sol_chunk, orders_chunk = ps_integrate(
-                PS_order, this_chunk, cur_state, tol, charge_sign, ps_step
+                ps_order, this_chunk, cur_state, tol, charge_sign, ps_step
             )
 
             idx_chunk = np.arange(global_index, global_index + this_chunk + 1)

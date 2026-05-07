@@ -18,10 +18,16 @@ from . import dipoleb_physics as dp
 
 
 @ul.maybe_njit
-def compute_mu_ps(solution_ps, mass):
+def compute_mu_ps(solution_ps):
     # Uses the identity |v_perp|² = |v|² − (v·B)²/B² to avoid per-step
     # 3-vector allocations. Numerically equivalent to the v_par/v_perp
     # decomposition; saves N small allocations on long runs.
+    #
+    # Returns μ in NORMALIZED units: v_perp² / (2|B|), with v and B
+    # already normalized by the dipoleb non-dimensionalization. The mass
+    # factor that would convert this to SI J/T is left out — every
+    # consumer uses μ as a baseline-relative drift, so the constant
+    # cancels in (μ - μ₀)/μ₀.
     x = solution_ps[0]
     vx, vy, vz = solution_ps[3], solution_ps[4], solution_ps[5]
     Bx, By, Bz = solution_ps[14], solution_ps[15], solution_ps[16]
@@ -35,14 +41,15 @@ def compute_mu_ps(solution_ps, mass):
         v_dot_B = vx[i]*Bx[i] + vy[i]*By[i] + vz[i]*Bz[i]
         v2      = vx[i]*vx[i] + vy[i]*vy[i] + vz[i]*vz[i]
         v_perp2 = v2 - v_dot_B*v_dot_B / B2
-        mu[i] = mass * v_perp2 / (2.0 * np.sqrt(B2))
+        mu[i] = v_perp2 / (2.0 * np.sqrt(B2))
     return mu
 
 @ul.maybe_njit
-def compute_mu_rk(solution_rk, mass):
+def compute_mu_rk(solution_rk):
     # Same scalar identity as compute_mu_ps; B is recomputed from position
     # (RK state doesn't carry it). Sign convention matches the simulator
-    # (downward dipole moment, upward B at equator).
+    # (downward dipole moment, upward B at equator). μ is in normalized
+    # units (see compute_mu_ps note).
     mu = np.zeros(len(solution_rk))
     for i in range(len(solution_rk)):
         x, y, z = solution_rk[i, 0:3]
@@ -61,7 +68,7 @@ def compute_mu_rk(solution_rk, mass):
         v_dot_B = vx*Bx + vy*By + vz*Bz
         v2      = vx*vx + vy*vy + vz*vz
         v_perp2 = v2 - v_dot_B*v_dot_B / B2
-        mu[i] = mass * v_perp2 / (2.0 * np.sqrt(B2))
+        mu[i] = v_perp2 / (2.0 * np.sqrt(B2))
 
     return mu
 
@@ -89,8 +96,8 @@ def _gyro_window_indices(gyro_window, total_steps, window_steps):
 # ============ Mu deviation — RK solvers (in-memory) ================
 # ===================================================================
 def compute_mu_deviation_rk(
-    solution, steps, dt, N_GYRO, N_STEPS_PER_GYRO,
-    mass, gyro_window, time_factor,
+    solution, steps, dt, n_gyro, n_steps_per_gyro,
+    gyro_window, time_factor,
     solver_type="rk4",
     y_initial=None,
 ):
@@ -106,12 +113,10 @@ def compute_mu_deviation_rk(
         Total number of integration steps.
     dt : float
         Step size (normalized time).
-    N_GYRO : int
+    n_gyro : int
         Number of gyroperiods in the analysis window.
-    N_STEPS_PER_GYRO : float
+    n_steps_per_gyro : float
         Steps per gyroperiod for this solver.
-    mass : float
-        Relativistic mass (gamma * m_si).
     gyro_window : str
         "first", "last", or "all".
     time_factor : float
@@ -124,9 +129,10 @@ def compute_mu_deviation_rk(
     dict with keys:
         "t"       : 1D time array in gyroperiods
         "mudrift" : 1D relative mu deviation array
-        "mu0"     : float, initial magnetic moment
+        "mu0"     : float, initial magnetic moment (normalized units —
+                    see compute_mu_rk doc).
     """
-    window_steps = int(round(N_GYRO * N_STEPS_PER_GYRO))
+    window_steps = int(round(n_gyro * n_steps_per_gyro))
     i0, i1 = _gyro_window_indices(gyro_window, steps, window_steps)
 
     if solver_type == "rkg":
@@ -142,7 +148,7 @@ def compute_mu_deviation_rk(
         A0 = dp.vector_potential(r0)
         v0 = p0 - A0
         state0 = np.hstack((r0, v0))[None, :]
-        mu0 = compute_mu_rk(state0, mass)[0]
+        mu0 = compute_mu_rk(state0)[0]
 
         r_win = solution[i0:i1, 0:3]
         p_win = solution[i0:i1, 3:6]
@@ -151,7 +157,7 @@ def compute_mu_deviation_rk(
             A_win[i] = dp.vector_potential(r_win[i])
         v_win = p_win - A_win
         state_win = np.hstack((r_win, v_win))
-        mu_win = compute_mu_rk(state_win, mass)
+        mu_win = compute_mu_rk(state_win)
     else:
         # RK4 and RK45: shape (6, N) — columns are time steps.
         # See y_initial note above (rkg branch).
@@ -159,8 +165,8 @@ def compute_mu_deviation_rk(
             state0_src = y_initial.reshape(1, 6)
         else:
             state0_src = solution[:, 0:1].T
-        mu0 = compute_mu_rk(state0_src, mass)[0]
-        mu_win = compute_mu_rk(solution[:, i0:i1].T, mass)
+        mu0 = compute_mu_rk(state0_src)[0]
+        mu_win = compute_mu_rk(solution[:, i0:i1].T)
 
     mudrift = np.abs(mu_win - mu0) / mu0
     t = (i0 + np.arange(mudrift.size, dtype=ul.npfloat)) * dt * time_factor
@@ -172,8 +178,8 @@ def compute_mu_deviation_rk(
 # ============ Mu deviation — PS (chunked h5) =======================
 # ===================================================================
 def compute_mu_deviation_ps(
-    cache_path, steps_ps, ps_step, PS_decimate,
-    N_GYRO, N_STEPS_PER_GYRO, mass, mu0_ps,
+    cache_path, steps_ps, ps_step, ps_decimate,
+    n_gyro, n_steps_per_gyro, mu0_ps,
     gyro_window, time_factor,
     max_plot_points=1_000_000,
 ):
@@ -188,16 +194,15 @@ def compute_mu_deviation_ps(
         Total PS step count (may be the trimmed value when reading a trimmed cache).
     ps_step : float
         PS step size (normalized time).
-    PS_decimate : int
+    ps_decimate : int
         Decimation factor used during streaming.
-    N_GYRO : int
+    n_gyro : int
         Number of gyroperiods in the analysis window.
-    N_STEPS_PER_GYRO : float
+    n_steps_per_gyro : float
         Steps per gyroperiod (on the PS grid).
-    mass : float
-        Relativistic mass.
     mu0_ps : float
-        Initial magnetic moment (PS).
+        Initial magnetic moment (PS, in normalized units —
+        see compute_mu_ps doc).
     gyro_window : str
         "first", "last", or "all".
     time_factor : float
@@ -213,10 +218,10 @@ def compute_mu_deviation_ps(
         "mudrift_plot"   : 1D decimated mu deviation for plotting
         "ps_order_label" : int, max PS order from h5 attrs
     """
-    window_steps = N_GYRO * N_STEPS_PER_GYRO
+    window_steps = n_gyro * n_steps_per_gyro
     i0_phys, i1_phys = _gyro_window_indices(gyro_window, steps_ps, window_steps)
 
-    ps_store_stride = PS_decimate if (PS_decimate > 1) else 1
+    ps_store_stride = ps_decimate if (ps_decimate > 1) else 1
     j0 = int(np.floor(i0_phys / ps_store_stride))
     j1 = int(np.ceil(i1_phys / ps_store_stride))
 
@@ -234,7 +239,7 @@ def compute_mu_deviation_ps(
 
         y_ps_win = wr.expand_h5_to_full(ps_y[:, j0:j1])
 
-    mu_ps = compute_mu_ps(y_ps_win, mass)
+    mu_ps = compute_mu_ps(y_ps_win)
     mudrift = np.abs(mu_ps - mu0_ps) / mu0_ps
 
     dt_ps_store = ps_step * ps_store_stride

@@ -2,7 +2,6 @@
 # Demo run — quick test with default physics at 10 gyroperiods
 # ===================================================================
 
-use_float128: true
 particle: electron
 energy_eV: 100
 pitch_deg: 45.0

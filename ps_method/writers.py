@@ -122,8 +122,14 @@ def get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUN
                           x_initial, y_initial, z_initial,
                           pitch_deg, phi_deg,
                           norm_time, ps_step, rk4_step, rkg_step,
-                          PS_order, tol, charge_sign, rtol_rk45, atol_rk45):
-    """Collect all knobs that define a unique dipoleb run."""
+                          ps_order, tol, charge_sign, rtol_rk45, atol_rk45):
+    """Collect all knobs that define a unique dipoleb run.
+
+    NOTE: dict KEYS like ``"PS_order"`` are kept in their historical
+    UPPERCASE spelling so the params_json hash (cache filename) stays
+    backward-compatible with existing dipoleb h5 files. Function PARAMETER
+    names follow the lowercase project convention.
+    """
     return {
         # toggles
         "USE_RK45": bool(USE_RK45),
@@ -153,8 +159,8 @@ def get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUN
         "rk4_step": _to_serializable(rk4_step),
         "rkg_step": _to_serializable(rkg_step),
 
-        # PS & solver knobs
-        "PS_order": int(PS_order),
+        # PS & solver knobs (key kept uppercase for cache-hash stability)
+        "PS_order": int(ps_order),
         "tol": _to_serializable(tol),
         "rtol_rk45": _to_serializable(rtol_rk45),
         "atol_rk45": _to_serializable(atol_rk45),
@@ -475,7 +481,7 @@ def summary_txt_dipoleb(
     summary, run_folder, stem, dragt_log, bounce_results, drift_results,
     gyroperiods, norm_time, mass, cache_path,
     # Solver flags
-    USE_PS, USE_RK4, USE_RK45, USE_RKG, PS_decimate,
+    USE_PS, USE_RK4, USE_RK45, USE_RKG, ps_decimate,
     # Step sizes
     ps_step, rk4_step=None, rkg_step=None,
     # Energy drift arrays (already computed)
@@ -543,14 +549,14 @@ def summary_txt_dipoleb(
 
         if USE_RK45:
             y_tail = y_rk45_common[:, j0_rk45:]
-            mu_tail = compute_mu_rk(y_tail.T, mass)
+            mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
             del y_tail, mu_tail
             gc.collect()
 
         if USE_RK4:
             y_tail = solution_rk4[:, j0_rk4:]
-            mu_tail = compute_mu_rk(y_tail.T, mass)
+            mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
             del y_tail, mu_tail
             gc.collect()
@@ -566,7 +572,7 @@ def summary_txt_dipoleb(
             v_tail = p_tail - A_tail
             state_tail = np.hstack((r_tail, v_tail))
 
-            mu_tail = compute_mu_rk(state_tail, mass)
+            mu_tail = compute_mu_rk(state_tail)
             summarize_to_file("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
             del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
             gc.collect()
@@ -586,7 +592,7 @@ def summary_txt_dipoleb(
 
                 y_tail = expand_h5_to_full(ps_y[:, j0:])
 
-            mu_tail = compute_mu_ps(y_tail, mass)
+            mu_tail = compute_mu_ps(y_tail)
             summarize_to_file("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
             del y_tail, mu_tail
             gc.collect()
@@ -819,7 +825,7 @@ def _tail_start_index(n_points, step_size, tail_start, max_tail_steps):
 
 def master_csv(
     output_folder, stem, particle_type,
-    KE_particle, x_initial, y_initial, z_initial, pitch_deg, phi_deg,
+    ke_particle, x_initial, y_initial, z_initial, pitch_deg, phi_deg,
     gyroperiods,
     dragt_log,
     method_records,
@@ -833,7 +839,7 @@ def master_csv(
         records.append({
             "run_id": stem,
             "particle": particle_type,
-            "energy_eV": KE_particle,
+            "energy_eV": ke_particle,
             "gyroperiods": gyroperiods,
             "x": x_initial,
             "y": y_initial,

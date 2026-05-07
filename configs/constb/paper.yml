@@ -29,10 +29,10 @@ write_data: true
 
 # --- External H5 (for multi-precision comparison) ---
 external_h5:
-  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
+  root: "data/constb/paper/_rawdata/"
   a:
     enabled: false
-    file: "run_29620be4f429e0cf.h5"
+    file: "fc57b0.h5"
   b:
     enabled: false
-    file: "run_344c6be65eafa517.h5"
+    file: "40b099.h5"

@@ -593,7 +593,7 @@ def run_section(
     charge_sign, gamma,
     # PS cache info
     USE_PS, cache_path, ps_step, time_factor,
-    CACHE_VELOCITY_RTOL,
+    cache_velocity_rtol,
     # Output
     fig_folder, stem,
     # Plot functions (passed in to avoid circular imports)
@@ -687,7 +687,7 @@ def run_section(
     _v_mag_ps0     = float(np.sqrt(_y0[3]**2 + _y0[4]**2 + _y0[5]**2))
     _v_tau_expected = float(v_tau)
     _v_rel_err     = abs(_v_mag_ps0 - _v_tau_expected) / _v_tau_expected
-    if _v_rel_err > CACHE_VELOCITY_RTOL:
+    if _v_rel_err > cache_velocity_rtol:
         print(f"\n  *** CACHE MISMATCH WARNING ***")
         print(f"  PS trajectory v_mag = {_v_mag_ps0:.6f}  (from cached run)")
         print(f"  Current v_tau       = {_v_tau_expected:.6f}  (from current KE_particle/mass_si)")

@@ -1,9 +1,6 @@
 # ===================================================================
 # Paper 1 — 10 keV electron, 75° pitch, delta=500 km, B0=10 nT
 # ===================================================================
-# Step size: steps_per_gyro = 100, round_decimals = 3
-#   → round(2π/100, 3) = 0.063 ✓
-# ===================================================================
 
 particle: electron
 energy_eV: 10.0e3
@@ -31,10 +28,10 @@ read_data: true
 write_data: true
 
 external_h5:
-  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
+  root: "data/hyperb/paper1/_rawdata/"
   a:
     enabled: false
-    file: "run_8d05c562f1137db2.h5"
+    file: "03c987.h5"
   b:
     enabled: false
-    file: "run_2e64db24ec88cb7e.h5"
+    file: "ab359b.h5"

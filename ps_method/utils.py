@@ -289,7 +289,7 @@ def prepare_slice_dipoleb(
     slice_mode, window_duration, norm_time,
     # PS-specific
     USE_PS=False, cache_path=None, ps_step=None, steps_ps=None,
-    PS_decimate=1, MAX_PLOT_POINTS=1_000_000,
+    ps_decimate=1, max_plot_points=1_000_000,
     # RK4
     USE_RK4=False, solution_rk4=None, rk4_step=None,
     # RKG
@@ -333,7 +333,7 @@ def prepare_slice_dipoleb(
         if i1_phys < i0_phys:
             raise RuntimeError("Empty PS slice window")
 
-        ps_store_stride = PS_decimate if PS_decimate > 1 else 1
+        ps_store_stride = ps_decimate if ps_decimate > 1 else 1
         j0 = int(np.ceil(i0_phys / ps_store_stride))
         j1 = int(np.floor(i1_phys / ps_store_stride))
         if j1 < j0:
@@ -350,7 +350,7 @@ def prepare_slice_dipoleb(
             y_win = ps_y[:, j0:j1+1]
             result["ps_order_label"] = int(ps_grp.attrs["max_ps"])
 
-        plot_stride = max(1, y_win.shape[1] // MAX_PLOT_POINTS)
+        plot_stride = max(1, y_win.shape[1] // max_plot_points)
         result["ps_x_slice"] = y_win[0, ::plot_stride]
         result["ps_y_slice"] = y_win[1, ::plot_stride]
         result["ps_z_slice"] = y_win[2, ::plot_stride]

@@ -13,7 +13,7 @@ from . import utils as ul
 
 def _compute_energy_ps_chunked(
     ps_y_h5,
-    E0_ps,
+    e0_ps,
     dt_ps_store,
     chunk_cols=200000,
     stride=1,
@@ -46,7 +46,7 @@ def _compute_energy_ps_chunked(
         v = ps_y_h5[3:6, j0:j1].astype(dtype, copy=False)
 
         E = 0.5 * np.sum(v * v, axis=0)
-        rel = np.abs(E - E0_ps) / E0_ps
+        rel = np.abs(E - e0_ps) / e0_ps
 
         # Vectorized stride decimation: pick global indices in [j0, j1) that are
         # multiples of stride. Equivalent to the per-step `j_global % stride == 0`
@@ -156,9 +156,9 @@ def compute_pphi_error_chunked(
 # ------------------------------------------------------------------
 def compute_ke_errors(
     T_gyro, n_ps=None,
-    MAX_PLOT_POINTS=1_000_000,
+    max_plot_points=1_000_000,
     # PS
-    USE_PS=False, cache_path=None, ps_step=None, PS_decimate=1, E0_ps=None,
+    USE_PS=False, cache_path=None, ps_step=None, ps_decimate=1, e0_ps=None,
     # RK4
     USE_RK4=False, solution_rk4=None, rk4_step=None, rk4_y_initial=None,
     # RKG
@@ -190,7 +190,7 @@ def compute_ke_errors(
 
     energy_stride = 1
     if USE_PS and n_ps is not None:
-        energy_stride = max(1, n_ps // MAX_PLOT_POINTS)
+        energy_stride = max(1, n_ps // max_plot_points)
 
     # --- External H5 overlays ---
     ke_ext_ps = ke_ext_rk4 = ke_ext_rk45 = ke_ext_rkg = None
@@ -203,7 +203,7 @@ def compute_ke_errors(
             ps_step_ext = ext_ps.attrs["dt"]
             ps_decimate_ext = ext_ps.attrs.get("decimate", 1)
             dt_store_ext = ps_step_ext * ps_decimate_ext
-            energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS)
+            energy_stride_ext = max(1, n_store // max_plot_points)
             idx = np.arange(0, n_store, energy_stride_ext)
             t_eval_ps_ext = idx * dt_store_ext
             vxe = y_ext[3, ::energy_stride_ext].astype(np.float64)
@@ -211,8 +211,8 @@ def compute_ke_errors(
             vze = y_ext[5, ::energy_stride_ext].astype(np.float64)
             E_ext = 0.5 * (vxe*vxe + vye*vye + vze*vze)
             rel_drift_ps_ext = (E_ext - E_ext[0]) / E_ext[0]
-            PS_order_ext = ext_ps.attrs.get("max_ps", None)
-        ke_ext_ps = (t_eval_ps_ext, rel_drift_ps_ext, PS_order_ext)
+            ps_order_ext = ext_ps.attrs.get("max_ps", None)
+        ke_ext_ps = (t_eval_ps_ext, rel_drift_ps_ext, ps_order_ext)
 
     if USE_EXTERNAL_H5_rk4:
         external_rk4 = load_results_h5_func(external_h5_rk4)
@@ -247,7 +247,7 @@ def compute_ke_errors(
             ps_decimate_ext = ext_rk45.get("decimate", 1)
             dt_store_ext = ps_step_ext * ps_decimate_ext
             t_ext = dt_store_ext * np.arange(n_store, dtype=ul.npfloat)
-        energy_stride_ext = max(1, n_store // MAX_PLOT_POINTS)
+        energy_stride_ext = max(1, n_store // max_plot_points)
         idx = np.arange(0, n_store, energy_stride_ext)
         t_eval_rk45_ext = t_ext[idx]
         v = y_rk45_ext[3:6, idx].astype(np.float64)
@@ -261,7 +261,7 @@ def compute_ke_errors(
             y_dataset = ext_rkg["y"]
             is_transposed = (y_dataset.shape[0] == 6)
             n_steps = y_dataset.shape[1] if is_transposed else y_dataset.shape[0]
-            rkg_stride = max(1, n_steps // MAX_PLOT_POINTS)
+            rkg_stride = max(1, n_steps // max_plot_points)
             if "t" in ext_rkg:
                 t_ext_rkg = ext_rkg["t"][::rkg_stride]
             else:
@@ -298,9 +298,9 @@ def compute_ke_errors(
             ps_y_h5 = ps_h5["ps"]["y"]
             t_ps_plot, rel_drift_ps = _compute_energy_ps_chunked(
                 ps_y_h5=ps_y_h5,
-                E0_ps=E0_ps,
-                dt_ps_store=ps_step * (PS_decimate if PS_decimate > 1 else 1),
-                chunk_cols=MAX_PLOT_POINTS,
+                e0_ps=e0_ps,
+                dt_ps_store=ps_step * (ps_decimate if ps_decimate > 1 else 1),
+                chunk_cols=max_plot_points,
                 stride=energy_stride,
             )
 

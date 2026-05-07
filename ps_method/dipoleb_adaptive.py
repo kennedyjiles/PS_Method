@@ -111,7 +111,7 @@ def _use_fast_path(state, ps_step, min_N):
 
 
 def _ps_adaptive_chunk(
-    PS_order, n_output, cur_state, tol, charge_sign, ps_step,
+    ps_order, n_output, cur_state, tol, charge_sign, ps_step,
     dt_internal, dt_min, dt_max,
     order_low, order_high, grow_factor, shrink_factor, max_retries,
     t_internal,
@@ -169,7 +169,7 @@ def _ps_adaptive_chunk(
 
             # ---- ONE Numba call ----
             sol_batch, orders_batch = dp.ps_integrate(
-                PS_order, n_sub, cur_state[:6].copy(),
+                ps_order, n_sub, cur_state[:6].copy(),
                 tol, charge_sign, dt_actual,
             )
 
@@ -178,7 +178,7 @@ def _ps_adaptive_chunk(
             batch_orders = orders_batch[1:n_sub + 1]
             first_bad = -1                          # -1 means all good
             for kk in range(n_sub):
-                if (batch_orders[kk] >= PS_order or
+                if (batch_orders[kk] >= ps_order or
                         batch_orders[kk] > order_high or
                         not np.all(np.isfinite(sol_batch[:6, kk + 1]))):
                     first_bad = kk
@@ -299,16 +299,16 @@ def run_ps_streaming_adaptive(
     initial_pos_vel_ps,
     steps_ps,
     ps_step,
-    PS_order,
+    ps_order,
     tol,
     charge_sign,
-    E0_ps,
+    e0_ps,
     mu0_ps,
     cache_path,
     write_data,
     chunk_steps,
     decimate,
-    N_STEPS_PER_GYRO_ps,
+    n_steps_per_gyro_ps,
     user_min_phase,
     dragt_monitor=None,
     r_atmosphere=1.0,
@@ -360,8 +360,8 @@ def run_ps_streaming_adaptive(
     if write_data:
         f = h5py.File(cache_path, "w")
         ps_grp = f.create_group("ps")
-        ps_grp.attrs["ordercap"]          = PS_order
-        ps_grp.attrs["numberstepspergyro"]= int(N_STEPS_PER_GYRO_ps)
+        ps_grp.attrs["ordercap"]          = ps_order
+        ps_grp.attrs["numberstepspergyro"]= int(n_steps_per_gyro_ps)
         ps_grp.attrs["dt"]               = ul.npfloat(ps_step)
         ps_grp.attrs["steps"]            = int(steps_ps)
         ps_grp.attrs["streaming"]        = True
@@ -369,7 +369,7 @@ def run_ps_streaming_adaptive(
         ps_grp.attrs["decimate"]         = int(decimate)
         ps_grp.attrs["tol"]              = ul.npfloat(tol)
         ps_grp.attrs["minphase"]         = ul.npfloat(user_min_phase)
-        ps_grp.attrs["E0"]              = float(E0_ps)
+        ps_grp.attrs["E0"]              = float(e0_ps)
         ps_grp.attrs["mu0"]             = float(mu0_ps)
         ps_grp.attrs["t0"]              = 0.0
         ps_grp.attrs["adaptive"]         = True
@@ -414,7 +414,7 @@ def run_ps_streaming_adaptive(
                 #  (ps_step is small enough for the local field)
                 # =============================================
                 sol_chunk, orders_chunk = dp.ps_integrate(
-                    PS_order, this_chunk, cur_state[:6].copy(),
+                    ps_order, this_chunk, cur_state[:6].copy(),
                     tol, charge_sign, ps_step,
                 )
 
@@ -422,7 +422,7 @@ def run_ps_streaming_adaptive(
 
                 # check if any step hit the cap, was too hard, or produced NaN
                 has_nan = not np.all(np.isfinite(sol_chunk[:6, -1]))
-                if chunk_max >= PS_order or chunk_max > order_high or has_nan:
+                if chunk_max >= ps_order or chunk_max > order_high or has_nan:
                     # REDO this chunk in adaptive mode
                     force_adaptive = True
                     dt_internal = _local_dt_from_B(
@@ -464,7 +464,7 @@ def run_ps_streaming_adaptive(
                  t_internal, chunk_max_ps, chunk_substeps, chunk_rejections,
                  halted
                 ) = _ps_adaptive_chunk(
-                    PS_order, this_chunk, cur_state, tol, charge_sign, ps_step,
+                    ps_order, this_chunk, cur_state, tol, charge_sign, ps_step,
                     dt_internal, dt_min, dt_max,
                     order_low, order_high, grow_factor, shrink_factor, max_retries,
                     t_internal,
