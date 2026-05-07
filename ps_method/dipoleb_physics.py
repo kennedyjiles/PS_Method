@@ -30,15 +30,16 @@ five = ul.npfloat(5.0)
 twopointfive = ul.npfloat(2.5)
 
 @ul.maybe_njit
-def lorentz_force(t, y, qoverm):
-    # Unpack position and velocity
-    x, y_, z, vx, vy, vz = y
-    r2 = x**two + y_**two + z**two
+def lorentz_force(t, d, qoverm):
+    # t is required by the solver's RHS call signature (solve_ivp /
+    # rk4_fixed_step); unused here.
+    x, y, z, vx, vy, vz = d
+    r2 = x**two + y**two + z**two
     r5inv = r2**(-twopointfive) if r2 != 0 else 0.0
 
     # Magnetic field components
     Bx = -three * x * z * r5inv
-    By = -three * y_ * z * r5inv
+    By = -three * y * z * r5inv
     Bz = -(three * z**two - r2) * r5inv
 
     # Lorentz force
@@ -66,7 +67,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
     # set up initial aux variables
     r2_0 = x0**two + y0**two + z0**two
     a0 = r2_0**(-twopointfive)
-    b0 = two * z0**2 - x0**2 - y0**2
+    b0 = two * z0**two - x0**two - y0**two
     c0 = y0 * z0
     d0 = x0 * z0
     e0 = -(b0 * vy0 - three * c0 * vz0)
@@ -178,18 +179,20 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, tol, qoverm, timedelta):
         c_now = y_now * z_now
         d_now = x_now * z_now
 
-        e_now = (b_now * vy_now - three * c_now * vz_now)
-        f_now = (three * d_now * vz_now - b_now * vx_now)
-        g_now = (three * c_now * vx_now - three * d_now * vy_now)
+        # Minus baked in to match the initial-condition convention at the top
+        # of the function (e0/f0/g0): the auxiliaries store -(b*vy - 3c*vz) etc.
+        e_now = -(b_now * vy_now - three * c_now * vz_now)
+        f_now = -(three * d_now * vz_now - b_now * vx_now)
+        g_now = -(three * c_now * vx_now - three * d_now * vy_now)
 
         state_history[r2_aux, j] = r2_now
         state_history[a_aux, j] = a_now
         state_history[b_aux, j] = b_now
         state_history[c_aux, j] = c_now
         state_history[d_aux, j] = d_now
-        state_history[e_aux, j] = -e_now
-        state_history[f_aux, j] = -f_now
-        state_history[g_aux, j] = -g_now
+        state_history[e_aux, j] = e_now
+        state_history[f_aux, j] = f_now
+        state_history[g_aux, j] = g_now
         state_history[Bx_aux, j] = -ul.npfloat(3.0) * a_now * d_now
         state_history[By_aux, j] = -ul.npfloat(3.0) * a_now * c_now
         state_history[Bz_aux, j] = -a_now * b_now
@@ -209,7 +212,7 @@ def vector_potential(r):
     r3 = r2 * np.sqrt(r2)
 
     if r3 == 0:
-        return np.zeros(3)
+        return np.zeros(3, dtype=ul.npfloat)
 
     Ax = y / r3
     Ay = - x / r3
@@ -218,11 +221,13 @@ def vector_potential(r):
     return np.array([Ax, Ay, Az], dtype=ul.npfloat)
 
 @ul.maybe_njit
-def hamiltonian_rhs(t, y, qoverm):
-    x, y_, z = y[0], y[1], y[2]
-    px, py, pz = y[3], y[4], y[5]
+def hamiltonian_rhs(t, d, qoverm):
+    # t is required by the solver's RHS call signature (solve_ivp /
+    # rkgl4_hamiltonian_step); unused here.
+    x, y, z = d[0], d[1], d[2]
+    px, py, pz = d[3], d[4], d[5]
 
-    r2 = x*x + y_*y_ + z*z
+    r2 = x*x + y*y + z*z
     r = np.sqrt(r2)
     r3 = r2 * r
     r5 = r2 * r3
@@ -231,7 +236,7 @@ def hamiltonian_rhs(t, y, qoverm):
         return np.zeros(6, dtype=ul.npfloat)
 
     # Vector potential
-    Ax = y_ / r3
+    Ax = y / r3
     Ay = -x / r3
     Az = 0.0
 
@@ -247,16 +252,16 @@ def hamiltonian_rhs(t, y, qoverm):
 
     # dp/dt (hardcoded)
     dpxdt = qoverm * (
-        -3 * x * y_ / r5 * Pix
+        -3 * x * y / r5 * Pix
         - (1.0 / r3 - 3 * x * x / r5) * Piy
     )
 
     dpydt = qoverm * (
-        (1.0 / r3 - 3 * y_ * y_ / r5) * Pix
-        + 3 * x * y_ / r5 * Piy
+        (1.0 / r3 - 3 * y * y / r5) * Pix
+        + 3 * x * y / r5 * Piy
     )
 
-    dpzdt = qoverm * 3 * z / r5 * (-y_ * Pix + x * Piy)
+    dpzdt = qoverm * 3 * z / r5 * (-y * Pix + x * Piy)
 
     return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=ul.npfloat)
 
@@ -370,9 +375,6 @@ def run_ps_streaming_with_decimation(
     r_atmosphere=1.0,
 ):
     start_time_ps = time.time()
-
-    n_state = 17
-    # wr.SAVE_ROWS and wr.n_save come from writers
 
     cur_state = initial_pos_vel_ps.copy()
     remaining = steps_ps

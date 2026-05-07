@@ -125,9 +125,11 @@ def analytical(tau, d, qoverm):
 def lorentz_force(t, d, Bfield, qoverm):
     """Right-hand side for the Lorentz equation of motion in a uniform B field.
 
-    Returns d/dt [x, y, z, vx, vy, vz] 
+    Returns d/dt [x, y, z, vx, vy, vz]
     Used as the RHS call for scipy.integrate.solve_ivp (RK45) and rk4_fixed_step.
     """
+    # t is required by the solver's RHS call signature (solve_ivp /
+    # rk4_fixed_step); unused here.
     x, y, z, vx, vy, vz = d
     dvx = qoverm * (vy * Bfield[2] - vz * Bfield[1])
     dvy = qoverm * (vz * Bfield[0] - vx * Bfield[2])

@@ -1,7 +1,7 @@
 """
 Kinetic energy and P_phi conservation diagnostics for dipole trajectories.
 
-    compute_energy_ps_chunked    — KE error from h5 in chunks
+    _compute_energy_ps_chunked    — KE error from h5 in chunks
     compute_ke_errors            — KE errors for all enabled solvers
     compute_pphi_error_chunked   — P_phi error from h5 in chunks
 """
@@ -11,7 +11,7 @@ import h5py
 from . import utils as ul
 
 
-def compute_energy_ps_chunked(
+def _compute_energy_ps_chunked(
     ps_y_h5,
     E0_ps,
     dt_ps_store,
@@ -296,7 +296,7 @@ def compute_ke_errors(
     if USE_PS:
         with h5py.File(cache_path, "r") as ps_h5:
             ps_y_h5 = ps_h5["ps"]["y"]
-            t_ps_plot, rel_drift_ps = compute_energy_ps_chunked(
+            t_ps_plot, rel_drift_ps = _compute_energy_ps_chunked(
                 ps_y_h5=ps_y_h5,
                 E0_ps=E0_ps,
                 dt_ps_store=ps_step * (PS_decimate if PS_decimate > 1 else 1),

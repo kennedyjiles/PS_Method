@@ -149,6 +149,8 @@ def lorentz_force(t, d, gamma, qoverm):
     Returns d/dt [x, y, z, vx, vy, vz].
     Used as the RHS callback for scipy.integrate.solve_ivp (RK45) and rk4_fixed_step.
     """
+    # t is required by the solver's RHS call signature (solve_ivp /
+    # rk4_fixed_step); unused here.
     d = d.astype(ul.npfloat)
     gamma = ul.npfloat(gamma)
 

@@ -66,14 +66,33 @@ def redirect_logger(logger, new_path):
 def check_time_grids(norm_time, ps_step=None, steps_ps=None,
                      rk4_step=None, steps_rk4=None,
                      rkg_step=None, steps_rkg=None,
-                     rk45_t=None):
+                     rk45_t=None, rtol=1e-12):
+    """Report each enabled method's time grid and flag drift from norm_time.
 
+    For each enabled method the function reports step / steps / final_time
+    alongside norm_time, and tags the line ``[OK]`` if the method's final
+    time matches norm_time within ``rtol * |norm_time|``, or
+    ``[DRIFT: Δ=...]`` with the signed difference if it doesn't.
+
+    PS always matches by construction (the driver forces
+    ``norm_time = steps_ps * ps_step``). RK4 / RKG with a step size that
+    doesn't divide norm_time evenly will land slightly short or long —
+    that's the kind of drift this check is meant to surface.
+    """
     lines = []
+    threshold = rtol * abs(norm_time)
+
+    def _flag(final_t):
+        diff = float(final_t) - float(norm_time)
+        if abs(diff) <= threshold:
+            return "[OK]"
+        return f"[DRIFT: Δ={diff:+.3e}]"
 
     def _report(label, step, steps):
         final_t = step * steps
         lines.append(
-            f"{label}: step={step:.3e}, steps={steps}, final_time={final_t:.3e}"
+            f"{label}: step={step:.3e}, steps={steps}, "
+            f"final_time={final_t:.3e}, norm_time={norm_time:.3e} {_flag(final_t)}"
         )
 
     if ps_step is not None and steps_ps is not None:
@@ -83,6 +102,10 @@ def check_time_grids(norm_time, ps_step=None, steps_ps=None,
     if rkg_step is not None and steps_rkg is not None:
         _report("RKG", rkg_step, steps_rkg)
     if rk45_t is not None:
-        lines.append(f"RK45: final time = {rk45_t[-1]:.3e}")
+        final_t = rk45_t[-1]
+        lines.append(
+            f"RK45: final_time={final_t:.3e}, "
+            f"norm_time={norm_time:.3e} {_flag(final_t)}"
+        )
 
     return "\n".join(lines)
