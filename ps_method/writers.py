@@ -867,6 +867,7 @@ def master_csv(
         is_ps = (method == "PS")
 
         records.append({
+            # --- run identity / setup (all rows) ---
             "run_id": stem,
             "particle": particle_type,
             "energy_eV": ke_particle,
@@ -876,11 +877,23 @@ def master_csv(
             "z": z_initial,
             "pitch_deg": pitch_deg,
             "phi_deg": phi_deg,
+            # --- IC-derived dragt (all rows) ---
             "L_eff": dragt_log["L_eff"],
             "W0_sq": dragt_log["W0_sq"],
             "boundary": dragt_log["boundary"],
             "mu_sq": dragt_log["mu_sq"],
             "orbit_character": dragt_log["orbit_character"],
+            # --- per-method run params + errors ---
+            "steps": steps,
+            "dt": dt,
+            "method": method,
+            "energy_mean_err": e["mean"],
+            "energy_max_err": e["max"],
+            "energy_rms_err": e["rms"],
+            "mu_mean_err": mu["mean"],
+            "mu_max_err": mu["max"],
+            "mu_rms_err": mu["rms"],
+            # --- PS-only trajectory diagnostics (blank on non-PS rows) ---
             "eps_initial":        dragt_log["eps_initial"]    if is_ps else None,
             "eps_mean":           dragt_log["eps_mean"]       if is_ps else None,
             "eps_max":            dragt_log["eps_max"]        if is_ps else None,
@@ -891,15 +904,6 @@ def master_csv(
             "bounce_freq_hz":     _b.get("frequency_hz")      if is_ps else None,
             "drift_period_s":     _d.get("period_s")          if is_ps else None,
             "drift_direction":    _d.get("direction")         if is_ps else None,
-            "steps": steps,
-            "dt": dt,
-            "method": method,
-            "energy_mean_err": e["mean"],
-            "energy_max_err": e["max"],
-            "energy_rms_err": e["rms"],
-            "mu_mean_err": mu["mean"],
-            "mu_max_err": mu["max"],
-            "mu_rms_err": mu["rms"],
         })
 
     df_new = pd.DataFrame(records)
@@ -907,7 +911,16 @@ def master_csv(
     dup_keys = ["energy_eV", "L_eff", "phi_deg", "pitch_deg", "particle", "method", "steps"]
 
     if os.path.exists(csv_path):
-        df_existing = pd.read_csv(csv_path)
+        # Force string dtype on identifier columns so pandas doesn't auto-cast
+        # values like "1e10" or "e25abc" (hex hashes) to scientific-notation floats.
+        _str_cols = {
+            "run_id":          str,
+            "particle":        str,
+            "boundary":        str,
+            "orbit_character": str,
+            "method":          str,
+        }
+        df_existing = pd.read_csv(csv_path, dtype=_str_cols)
         for _, row in df_new.iterrows():
             mask = True
             for k in dup_keys:

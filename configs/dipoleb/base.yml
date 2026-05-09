@@ -37,7 +37,7 @@ solvers:
   ps: true
   rk4: false
   rk45: false
-  rkg: true
+  rkg: false
   adaptive: false         # true = adaptive PS stepping
 
 # --- Plotting ---
@@ -80,7 +80,7 @@ cache_velocity_rtol: 0.005   # relative tolerance for cache velocity mismatch wa
 plot_boundary_pad: 1.1       # padding multiplier for trajectory plot boundaries
 
 # --- Drift Detection ---
-user_min_phase: 0.1       # minimum radians to extrapolate drift from
+user_min_phase: 0.001       # minimum radians to extrapolate drift from
 
 # --- Steps per gyroperiod (used to compute step sizes from T_gyro) ---
 # Set to null to use defaults (65 for all). Override individually as needed.

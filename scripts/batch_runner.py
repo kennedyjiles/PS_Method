@@ -29,6 +29,7 @@ Usage:
 
 import os
 import sys
+import copy
 import json
 import argparse
 import subprocess
@@ -47,54 +48,130 @@ BATCH_TMP_DIR = os.path.join(SCRIPT_DIR, "batch_tmp")
 BASE_YML = os.path.join(PROJECT_ROOT, "configs", "dipoleb", "base.yml")
 
 
-ENERGIES_EV = {
-    1: [5e8],
-    2: [7e8, 1e9, 3e9, 5e9, 7e9, 1e10],
-    3: [1e8],
+# ─── Phase grid for thesis Table A.5 (electron bounce / drift) ───────────────
+# Each phase = one footnote tier from the table. Run cheapest (Phase 1) first
+# to validate the pipeline; the heaviest cells (Phase 4) are 2×10⁷ gyroperiods.
+# Run all four phases under the same group to get one consolidated CSV.
+#
+# Cells per tier are explicit (energy_eV, L) pair lists — they don't form a
+# clean Cartesian product, so no ENERGIES × L_SHELLS structure.
+
+# Phase 1 — default tier (no marker in the table): 10⁵ gyroperiods, 65 steps/gyro
+_PHASE_1_CELLS = (
+    [(1e4, L) for L in [5, 6, 8]]
+    + [(1e5, L) for L in [4, 5, 6, 8]]
+    + [(1e6, L) for L in [2, 3, 4, 5, 6, 8]]
+    + [(1e7, L) for L in [1, 2, 3, 4, 5, 6, 8]]
+    + [(1e8, L) for L in [1, 2, 3, 4, 5, 6, 8]]
+)
+
+# Phase 2 — * tier: 10⁶ gyroperiods, 65 steps/gyro
+_PHASE_2_CELLS = (
+    [(1e2, L) for L in [6, 8]]
+    + [(1e3, L) for L in [2, 3, 4, 5, 6, 8]]
+    + [(1e4, L) for L in [1, 2, 3, 4]]
+    + [(1e5, L) for L in [1, 2, 3]]
+    + [(1e6, 1)]
+)
+
+# Phase 3 — † tier: 10⁷ gyroperiods, 15 steps/gyro
+_PHASE_3_CELLS = (
+    [(1e1, L) for L in [2, 3, 4, 5, 6, 8]]
+    + [(1e2, L) for L in [2, 3, 4, 5]]
+    + [(1e3, 1)]
+)
+
+# Phase 4 — ‡ tier: 2×10⁷ gyroperiods, 15 steps/gyro
+_PHASE_4_CELLS = [(1e1, 1), (1e2, 1)]
+
+CELLS = {
+    1: _PHASE_1_CELLS,
+    2: _PHASE_2_CELLS,
+    3: _PHASE_3_CELLS,
+    4: _PHASE_4_CELLS,
 }
 
-# L-shells (equatorial launch distance in R_E)
-# L_FINE   = list(np.arange(1.0, 4.1, 0.5))
-L_FINE  = list(np.arange(3.51, 3.6, 0.01))
-L_INNER   = [4.5, 5.0]
-
-L_SHELLS = {
-    1: L_FINE,
-    2: L_FINE,
-    3: L_INNER,
-}
-
-# Pitch angles (degrees)
-PITCH_ANGLES = [89.0]
-
-# Simulation duration: number of characteristic gyroperiods
 GYROPERIODS = {
     1: 1e5,
-    2: 1e5,
-    3: 1e5,
+    2: 1e6,
+    3: 1e7,
+    4: 2e7,
 }
 
-# Default batch group names per phase
-DEFAULT_GROUPS = {
-    1: "flux_map",
-    2: "flux_map",
-    3: "flux_map",
+STEPS_PER_GYRO_PS = {
+    1: 20,
+    2: 20,
+    3: 15,
+    4: 15,
 }
+
+# Pitch angle (degrees) — same for all Table A.5 cells
+PITCH_ANGLES = [85.0]
+
+# Particle per phase
+PARTICLE = {
+    1: "electron",
+    2: "electron",
+    3: "electron",
+    4: "electron",
+}
+
+# Default batch group names per phase — all four phases share one group so
+# the consolidated CSV holds the full table.
+DEFAULT_GROUPS = {
+    1: "walt",
+    2: "walt",
+    3: "walt",
+    4: "walt",
+}
+
+# Per-phase overrides applied on top of base.yml. Sweep params (energy, L,
+# pitch, gyroperiods, particle, read_data, solvers.adaptive, plus phi_deg
+# when the run dict carries it, plus steps_per_gyro.ps) are applied AFTER
+# these and win on conflict — so use OVERRIDES for the constants you want
+# to vary between tables (user_min_phase, phi_deg, ps_chunk_steps, plotting
+# toggles, etc.), not for sweep axes. Nested dicts are deep-merged.
+OVERRIDES = {
+    1: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.0001},
+    2: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.00001},
+    3: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.000001},
+    4: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.000001},
+}
+
+
+def _deep_merge(base, override):
+    """In-place deep merge of override into base; override wins on conflict.
+    Mirrors configs.config_loader._deep_merge so batch_runner stays
+    standalone (no cross-package import)."""
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
 
 
 def build_run_list(phase):
-    """Generate list of run dicts for a given phase."""
+    """Generate list of run dicts for a given phase.
+
+    Each phase carries an explicit list of (energy_eV, L) cells in CELLS,
+    and uniform GYROPERIODS / STEPS_PER_GYRO_PS for the whole tier. Pitch
+    is taken from the global PITCH_ANGLES.
+    """
     runs = []
-    for energy in ENERGIES_EV[phase]:
-        for L in L_SHELLS[phase]:
-            for pitch in PITCH_ANGLES:
-                runs.append({
-                    "energy_eV": energy,
-                    "x_initial": round(L, 2),
-                    "pitch_deg": pitch,
-                    "gyroperiods": GYROPERIODS[phase],
-                    "phase": phase,
-                })
+    gyros          = GYROPERIODS[phase]
+    steps_per_gyro = STEPS_PER_GYRO_PS.get(phase)        # None = use base.yml default
+    for energy, L in CELLS[phase]:
+        for pitch in PITCH_ANGLES:
+            run = {
+                "energy_eV":  energy,
+                "x_initial":  round(L, 2),
+                "pitch_deg":  pitch,
+                "gyroperiods": gyros,
+                "phase":      phase,
+            }
+            if steps_per_gyro is not None:
+                run["steps_per_gyro_ps"] = steps_per_gyro
+            runs.append(run)
     return runs
 
 
@@ -167,21 +244,34 @@ def write_config(run, config_path, group):
 
     The YAML contains only the parameters that differ from base.yml, plus a
     base_config key so load_config() can find and merge with the base defaults.
+    Phase-keyed OVERRIDES are deep-merged in first; sweep params win on
+    conflict so the table axes (energy/L/pitch/phi/gyroperiods) are never
+    masked by an OVERRIDES entry.
     """
-    cfg = {
+    # Start from a deep copy of the phase's overrides (could be empty)
+    cfg = copy.deepcopy(OVERRIDES.get(run["phase"], {}))
+
+    sweep = {
         "base_config": os.path.abspath(BASE_YML),
         "batch_group": group,
         "energy_eV":   float(run["energy_eV"]),
         "x_initial":   float(run["x_initial"]),
         "pitch_deg":   float(run["pitch_deg"]),
-        "phi_deg":     float(run.get("phi_deg", 0.0)),
         "gyroperiods": float(run["gyroperiods"]),
-        "particle":    "proton",
+        "particle":    PARTICLE.get(run["phase"], "proton"),
         "read_data":   False,
         "solvers": {
             "adaptive": run.get("use_adaptive", False),
         },
     }
+    # Only include phi_deg in sweep if it's actually a per-run value;
+    # otherwise let OVERRIDES (or base.yml) decide.
+    if "phi_deg" in run:
+        sweep["phi_deg"] = float(run["phi_deg"])
+    # Phase 4 sets per-cell steps_per_gyro_ps; otherwise base.yml default applies.
+    if run.get("steps_per_gyro_ps") is not None:
+        sweep["steps_per_gyro"] = {"ps": int(run["steps_per_gyro_ps"])}
+    _deep_merge(cfg, sweep)
 
     with open(config_path, "w") as f:
         f.write(f"# Auto-generated batch config -- merged with base.yml at load time\n")
@@ -189,7 +279,7 @@ def write_config(run, config_path, group):
 
 
 # Module-level variable set by main() so execute_single_run can access it
-_batch_group = "flux_map"
+_batch_group = "walt"
 
 
 def execute_single_run(run):
@@ -363,8 +453,13 @@ Examples:
   %(prog)s --single E1e+07_L2.00_P89.0                Run one specific case
   %(prog)s --phase 1 --group my_sweep --workers 10    Custom group name
         """)
-    parser.add_argument("--phase", type=int, default=1, choices=[1, 2, 3],
-                        help="Which phase to run (default: 1)")
+    parser.add_argument("--phase", type=int, default=1, choices=[1, 2, 3, 4],
+                        help="Which Table A.5 tier to run (default: 1, cheapest). "
+                             "Phase 1=default tier (10⁵ gyro, 65 spg), "
+                             "Phase 2=* tier (10⁶ gyro, 65 spg), "
+                             "Phase 3=† tier (10⁷ gyro, 15 spg), "
+                             "Phase 4=‡ tier (2×10⁷ gyro, 15 spg). "
+                             "All four share group 'table_a5' so the CSV consolidates.")
     parser.add_argument("--group", type=str, default=None,
                         help="Batch group name for output directory "
                              "(default: flux_map). All runs land in "
@@ -431,7 +526,7 @@ Examples:
     print(f"{'='*65}")
     print(f"  {mode_label}  [{stepping_label}]  group: {group}")
     print(f"  Runs: {len(runs)}   Workers: {args.workers}")
-    print(f"  Energies: {sorted(set(r['energy_eV']/1e6 for r in runs))} MeV")
+    print(f"  Energies (eV): {[f'{e:.0e}' for e in sorted(set(r['energy_eV'] for r in runs))]}")
     print(f"  L-shells: {sorted(set(r['x_initial'] for r in runs))}")
     print(f"  Pitch angles: {sorted(set(r['pitch_deg'] for r in runs))}")
     print(f"{'='*65}")

@@ -960,12 +960,16 @@ def main(cfg_path, replot=False):
     if DEBUG: tracemalloc.start()
 
     ps_order_label = None # for plotting later
+    ps_order_mean  = None
 
     if USE_PS:
         with h5py.File(cache_path, "r") as ps_h5:
             ps_grp = ps_h5["ps"]
             stride = max(1, steps_ps // max_plot_points_local)
             ps_order_label = int(ps_grp.attrs["max_ps"])
+            # mean_ps absent on h5 files written before mean tracking landed
+            if "mean_ps" in ps_grp.attrs:
+                ps_order_mean = float(ps_grp.attrs["mean_ps"])
 
             if USE_FULL_PLOT:
                 ps_y_h5 = ps_grp["y"]
@@ -995,7 +999,10 @@ def main(cfg_path, replot=False):
 
     print(f"Norm Time       : {norm_time:.2e}")
     print(f"Physical Time   : {physical_time:.2e} s")
-    print(f"PS Orders       : max={ps_order_label}")
+    if ps_order_mean is not None:
+        print(f"PS Orders       : max={ps_order_label}, mean={ps_order_mean:.1f}")
+    else:
+        print(f"PS Orders       : max={ps_order_label}")
     print(f"% of c          : {100*v_si/spdlight:.8f}")
 
     if DEBUG:

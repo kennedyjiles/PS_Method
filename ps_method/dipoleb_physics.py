@@ -379,6 +379,8 @@ def run_ps_streaming_with_decimation(
     remaining = steps_ps
     global_index = 0
     max_ps = 0
+    sum_orders = 0      # for mean over kept (output-grid) orders
+    count_orders = 0
     hit_atmosphere = False
     hit_atm_step   = -1
     hit_atm_r      = 0.0
@@ -456,6 +458,8 @@ def run_ps_streaming_with_decimation(
 
             if sol_keep.shape[1] > 0:
                 max_ps = max(max_ps, int(orders_keep.max()))
+                sum_orders   += int(orders_keep.sum())
+                count_orders += orders_keep.size
 
                 if write_data:
                     old_len = dset_y.shape[1]
@@ -487,6 +491,7 @@ def run_ps_streaming_with_decimation(
 
         if write_data:
             ps_grp.attrs["max_ps"] = max_ps
+            ps_grp.attrs["mean_ps"] = (sum_orders / count_orders) if count_orders > 0 else 0.0
             ps_grp.attrs["hit_atmosphere"] = hit_atmosphere
             ps_grp.attrs["hit_atm_step"]   = hit_atm_step
             ps_grp.attrs["hit_atm_r"]      = hit_atm_r

@@ -327,6 +327,8 @@ def run_ps_streaming_adaptive(
     remaining    = steps_ps
     global_index = 0
     max_ps_global = 0
+    sum_orders   = 0     # for mean over kept (output-grid) orders
+    count_orders = 0
 
     # --- adaptive bookkeeping ---
     dt_internal     = ul.npfloat(ps_step)
@@ -497,6 +499,8 @@ def run_ps_streaming_adaptive(
 
             if sol_keep.shape[1] > 0:
                 max_ps_global = max(max_ps_global, int(orders_keep.max()))
+                sum_orders   += int(orders_keep.sum())
+                count_orders += orders_keep.size
 
                 if write_data:
                     old_len = dset_y.shape[1]
@@ -522,8 +526,10 @@ def run_ps_streaming_adaptive(
                 break
 
         # --- finalise ---
+        mean_ps = (sum_orders / count_orders) if count_orders > 0 else 0.0
         if write_data:
             ps_grp.attrs["max_ps"]           = max_ps_global
+            ps_grp.attrs["mean_ps"]          = mean_ps
             ps_grp.attrs["total_substeps"]   = total_substeps
             ps_grp.attrs["total_rejections"] = total_rejections
             ps_grp.attrs["hit_atmosphere"]   = hit_atmosphere
@@ -540,6 +546,7 @@ def run_ps_streaming_adaptive(
               f"\n    substeps        = {total_substeps:,}"
               f"  ({total_rejections:,} rejected)"
               f"\n    max order       = {max_ps_global}"
+              f"\n    mean order      = {mean_ps:.1f}"
               f"\n    final dt        = {float(dt_internal):.4f}"
               f"  (nominal = {float(ps_step):.4f})"
               f"\n    wall time       = {elapsed_ps:.1f} s")
