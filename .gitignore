@@ -9,7 +9,6 @@ outputs/
 data/
 
 # Runtime/temp files
-*.log
 scripts/batch_flux_progress.json
 
 # Images (generated)

@@ -1400,6 +1400,8 @@ def main(cfg_path, replot=False):
         gyroperiods=gyroperiods,
         dragt_log=dragt_log,
         method_records=_method_records,
+        bounce_results=bounce_results,
+        drift_results=drift_results,
     )
 
     print(f"\nRun Complete → {run_folder}")

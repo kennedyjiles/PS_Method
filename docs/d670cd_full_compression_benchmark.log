@@ -1,0 +1,30 @@
+Memo for Record: The data below drove the decision to use gzip=1 + shuffle for the code's compressed data files. 
+The "size %" column was the most important factor, since the goal was to reduce file size as much as possible 
+while keeping read/write times reasonable. gzip=1 + shuffle provided a 40% reduction in size compared to the 
+uncompressed baseline, which was a significant improvement. The write time of 17.854 seconds and read time of 3.137 
+seconds were also acceptable for our use case, especially considering the large size of the original data (2155.30 MB). 
+Higher gzip levels (like gzip=9) did not provide much additional compression but significantly increased write times,
+making them less practical for our needs. 
+
+# Compression benchmark — 2026-05-09T08:03:43
+# Command: scripts/benchmark_compression.py data/dipoleb/paper1/_rawdata/d670cd_full.h5
+
+Source file: data/dipoleb/paper1/_rawdata/d670cd_full.h5
+Source size: 1293.59 MB
+
+Datasets: 6, Total elements: 290,000,029
+Raw (uncompressed) size: 2155.30 MB
+
+Config                Size MB   size %  Write s   Read s
+# size % is vs the 'none' (uncompressed) baseline
+---------------------------------------------------------
+none                  2155.31    +0.0%    0.302    0.355
+gzip=1                1686.61   -21.7%   29.399    7.736
+gzip=2                1685.53   -21.8%   30.420    7.610
+gzip=4                1677.73   -22.2%   34.519    7.468
+gzip=9                1676.69   -22.2%   70.546    7.381
+gzip=1 + shuffle      1292.72   -40.0%   17.854    3.137
+gzip=2 + shuffle      1289.07   -40.2%   17.949    3.116
+gzip=4 + shuffle      1279.81   -40.6%   19.483    3.540
+gzip=9 + shuffle      1272.27   -41.0%   27.561    3.454
+

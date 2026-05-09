@@ -12,6 +12,7 @@ import sys
 import os
 import time
 import tempfile
+import datetime
 import h5py
 import numpy as np
 
@@ -28,34 +29,6 @@ def collect_datasets(group, prefix=""):
     return datasets
 
 
-def benchmark_write(datasets, compression, shuffle, label):
-    """Write all datasets to a temp file with given settings and measure."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".h5", delete=False)
-    tmp.close()
-
-    t0 = time.perf_counter()
-    with h5py.File(tmp.name, "w") as f:
-        for name, data in datasets.items():
-            f.create_dataset(
-                name, data=data,
-                compression=compression,
-                compression_opts=compression if isinstance(compression, int) else None,
-                shuffle=shuffle,
-            )
-    elapsed = time.perf_counter() - t0
-    size_mb = os.path.getsize(tmp.name) / (1024 * 1024)
-
-    # Also measure read time
-    t0 = time.perf_counter()
-    with h5py.File(tmp.name, "r") as f:
-        for name in datasets:
-            _ = f[name][:]
-    read_time = time.perf_counter() - t0
-
-    os.unlink(tmp.name)
-    return size_mb, elapsed, read_time
-
-
 def main():
     if len(sys.argv) < 2:
         print("Usage: python benchmark_compression.py <path_to_h5_file>")
@@ -64,46 +37,67 @@ def main():
     src_path = sys.argv[1]
     src_size_mb = os.path.getsize(src_path) / (1024 * 1024)
 
-    print(f"Source file: {src_path}")
-    print(f"Source size: {src_size_mb:.2f} MB\n")
+    # --- Open a tee-style log next to the source h5 so the choice of
+    #     compression setting is auditable later. Reruns overwrite. ---
+    src_dir = os.path.dirname(os.path.abspath(src_path)) or "."
+    src_stem = os.path.splitext(os.path.basename(src_path))[0]
+    log_path = os.path.join(src_dir, f"{src_stem}_compression_benchmark.log")
+    log_file = open(log_path, "w")
+
+    def log_print(msg=""):
+        print(msg)
+        log_file.write(msg + "\n")
+        log_file.flush()
+
+    log_print(f"# Compression benchmark — {datetime.datetime.now().isoformat(timespec='seconds')}")
+    log_print(f"# Command: {' '.join(sys.argv)}")
+    log_print("")
+    log_print(f"Source file: {src_path}")
+    log_print(f"Source size: {src_size_mb:.2f} MB")
+    log_print("")
 
     with h5py.File(src_path, "r") as f:
         datasets = collect_datasets(f)
 
     total_elements = sum(d.size for d in datasets.values())
     raw_mb = sum(d.nbytes for d in datasets.values()) / (1024 * 1024)
-    print(f"Datasets: {len(datasets)}, Total elements: {total_elements:,}")
-    print(f"Raw (uncompressed) size: {raw_mb:.2f} MB\n")
+    log_print(f"Datasets: {len(datasets)}, Total elements: {total_elements:,}")
+    log_print(f"Raw (uncompressed) size: {raw_mb:.2f} MB")
+    log_print("")
 
     configs = [
         ("none",              None,  False),
-        ("gzip=1",            1,     False),
-        ("gzip=2 (current)",  2,     False),
-        ("gzip=4",            4,     False),
-        ("gzip=9",            9,     False),
-        ("gzip=1 + shuffle",  1,     True),
-        ("gzip=2 + shuffle",  2,     True),
-        ("gzip=4 + shuffle",  4,     True),
-        ("gzip=9 + shuffle",  9,     True),
+        ("gzip=1",                      1,     False),
+        ("gzip=2",                      2,     False),
+        ("gzip=4",                      4,     False),
+        ("gzip=9",                      9,     False),
+        ("gzip=1 + shuffle",   1,     True),
+        ("gzip=2 + shuffle",   2,     True),
+        ("gzip=4 + shuffle",   4,     True),
+        ("gzip=9 + shuffle",   9,     True),
     ]
 
-    print(f"{'Config':<22s} {'Size MB':>8s} {'Write s':>8s} {'Read s':>8s} {'vs current':>10s}")
-    print("-" * 60)
+    log_print(f"{'Config':<20s} {'Size MB':>8s} {'size %':>8s} {'Write s':>8s} {'Read s':>8s}")
+    log_print(f"# size % is vs the 'none' (uncompressed) baseline")
+    log_print("-" * 57)
 
     baseline_size = None
     for label, comp, shuf in configs:
         comp_arg = "gzip" if comp is not None else None
         size, wtime, rtime = benchmark_write(datasets, comp_arg, shuf, label)
-        if "current" in label:
+        if label == "none":
             baseline_size = size
 
-        vs = ""
+        size_vs = ""
         if baseline_size and baseline_size > 0:
-            pct = ((size - baseline_size) / baseline_size) * 100
-            vs = f"{pct:+.1f}%"
+            size_vs = f"{((size - baseline_size) / baseline_size) * 100:+.1f}%"
 
-        # Fix compression_opts passing
-        print(f"{label:<22s} {size:>8.2f} {wtime:>8.3f} {rtime:>8.3f} {vs:>10s}")
+        log_print(f"{label:<20s} {size:>8.2f} {size_vs:>8s} {wtime:>8.3f} {rtime:>8.3f}")
+
+    log_print("")
+    log_print(f"# Log saved to: {log_path}")
+    log_file.close()
+    print(f"\nLog saved to: {log_path}")
 
 
 def benchmark_write(datasets, compression, shuffle, label):

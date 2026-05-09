@@ -848,8 +848,15 @@ def master_csv(
     gyroperiods,
     dragt_log,
     method_records,
+    bounce_results=None,
+    drift_results=None,
 ):
     """Build records and append to master_simulation_log.csv with duplicate detection."""
+    # Bounce / drift are run-level (PS-only); duplicated across method rows
+    # for the same run. None when bounce/drift wasn't computed or detected.
+    _b = bounce_results or {}
+    _d = drift_results or {}
+
     records = []
     for method, steps, dt, e_drift, mu_drift in method_records:
         e = summarize(e_drift)
@@ -875,6 +882,11 @@ def master_csv(
             "orbit_character": dragt_log["orbit_character"],
             "hit_atmosphere": dragt_log["hit_atmosphere"],
             "hit_atm_r": dragt_log["hit_atm_r"],
+            "n_mirror_crossings": _b.get("n_crossings"),
+            "bounce_period_s":    _b.get("full_mean_s"),
+            "bounce_freq_hz":     _b.get("frequency_hz"),
+            "drift_period_s":     _d.get("period_s"),
+            "drift_direction":    _d.get("direction"),
             "steps": steps,
             "dt": dt,
             "method": method,
