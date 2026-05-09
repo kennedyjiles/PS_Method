@@ -217,11 +217,9 @@ def main(cfg_path, replot=False):
     # --- Safety defaults for variables assigned only inside conditional
     #     branches (cache-reload, solver-execution).  Ensures no
     #     UnboundLocalError regardless of which path is taken. ---
-    solution_ps   = None
     solution_rk4  = None
     solution_rk45 = None
     solution_rkg  = None
-    orders_used   = None
     y_rk45_common = None
     summary       = {}
     timing        = {}
@@ -690,8 +688,6 @@ def main(cfg_path, replot=False):
                 else:
                     max_ps, elapsed_ps = dp.run_ps_streaming_with_decimation(**_stream_args)
                 dragt_mon.summary()
-                solution_ps = None
-                orders_used = None
                 end_time_ps = time.time()
 
             # ====== Run RK45 ======
@@ -730,7 +726,6 @@ def main(cfg_path, replot=False):
                 A0 = dp.vector_potential(r0)
                 p0 = v_tau_vec + A0
                 y0 = np.concatenate((r0, p0))   # for Hamiltonian in RKG
-                # y0 = np.concatenate((r0, v_tau_vec))  # for Lorentz force in RKG, used as a sanity check
 
                 steps_rkg = int(norm_time / rkg_step)
                 steps_rkg = max(1, steps_rkg)
@@ -907,7 +902,7 @@ def main(cfg_path, replot=False):
                     print(f"Saved results → {os.path.basename(cache_path)}")
 
     if DEBUG:
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for load/write h5: {peak / 1024**2:.2f} MB\n")
         logger.debug(dbg.check_time_grids(
@@ -979,7 +974,7 @@ def main(cfg_path, replot=False):
                 z_ps_plot = ps_y_h5[2, ::stride]
 
     if DEBUG:
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.debug(f"Data access for plottings: {peak / 1024**2:.2f} MB\n")
 
@@ -1007,7 +1002,6 @@ def main(cfg_path, replot=False):
         logger.debug(f"Norm Time: {norm_time:.2e}")
         logger.debug(f"Physical Time   : {physical_time:.2e} s")
         logger.debug(f"ps_step: {ps_step}, norm_time: {norm_time}, steps_ps: {steps_ps}")
-        # logger.debug(f"t_common[0]: {t_common[0]}, t_common[-1]: {t_common[-1]}")
     print(f"{'='*60}")
 
 
@@ -1078,7 +1072,7 @@ def main(cfg_path, replot=False):
         ps_order_label = _sw["ps_order_label"]
 
     if DEBUG:
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for slice analysis: {peak / 1024**2:.2f} MB")
 
@@ -1155,7 +1149,7 @@ def main(cfg_path, replot=False):
     )
 
     if DEBUG:
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for KE analysis: {peak / 1024**2:.2f} MB")
         if USE_PS and rel_drift_ps is not None:
@@ -1172,7 +1166,7 @@ def main(cfg_path, replot=False):
     # ==================================================
     # ======== Dragt Analysis + Poincaré Plots =========
     # ==================================================
-    dragt_log, L_shell_dragt = df.run_section(
+    dragt_log, _ = df.run_section(
         x_initial, y_initial, z_initial,
         vx_initial, vy_initial, v_tau,
         charge_sign, gamma,
@@ -1245,7 +1239,7 @@ def main(cfg_path, replot=False):
 
 
     if DEBUG:
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for moment analysis: {peak / 1024**2:.2f} MB")
         for _lbl, _res in [("PS", mu_ps_result), ("RK4", mu_rk4_result),
@@ -1348,7 +1342,7 @@ def main(cfg_path, replot=False):
         }
 
     if DEBUG:
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for bounce/drift analysis: {peak / 1024**2:.2f} MB")
 
@@ -1413,7 +1407,7 @@ def main(cfg_path, replot=False):
 
 
     if DEBUG:
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         logger.info(f"Peak memory usage for summary write up: {peak / 1024**2:.2f} MB")
 

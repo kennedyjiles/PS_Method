@@ -32,7 +32,6 @@ from . import dipoleb_physics as dp
 from . import writers as wr
 from . import utils as ul
 
-_one    = ul.npfloat(1.0)
 _two    = ul.npfloat(2.0)
 _three  = ul.npfloat(3.0)
 _two5   = ul.npfloat(2.5)
@@ -115,7 +114,6 @@ def _ps_adaptive_chunk(
     dt_internal, dt_min, dt_max,
     order_low, order_high, grow_factor, shrink_factor, max_retries,
     t_internal,
-    halt_on_failure=True,
     steps_per_local_gyro=200,
     max_substeps=2000,
 ):
@@ -221,30 +219,20 @@ def _ps_adaptive_chunk(
                     retries    += 1
                     rejections += 1
                     if retries > max_retries:
-                        if halt_on_failure:
-                            warnings.warn(
-                                f"Adaptive PS: {max_retries} retries with "
-                                f"zero progress (order={int(batch_orders[0])}) "
-                                f"at t={float(t_internal + ps_step - t_remaining):.4f}, "
-                                f"dt={float(dt_actual):.6e}. HALTING.",
-                                RuntimeWarning, stacklevel=2,
-                            )
-                            for kk in range(jj, n_output + 1):
-                                sol_chunk[:, kk] = cur_state
-                                orders_chunk[kk] = -1
-                            t_internal += (ps_step - t_remaining)
-                            return (sol_chunk, orders_chunk, cur_state,
-                                    dt_use, t_internal, max_ps,
-                                    substeps, rejections, True)
-                        else:
-                            # force-accept the bad step
-                            cur_state[:] = sol_batch[:, 1]
-                            _tether_aux(cur_state)
-                            t_remaining -= float(dt_actual)
-                            substeps    += 1
-                            retries      = 0
-                            dt_override  = 0.0
-                            continue
+                        warnings.warn(
+                            f"Adaptive PS: {max_retries} retries with "
+                            f"zero progress (order={int(batch_orders[0])}) "
+                            f"at t={float(t_internal + ps_step - t_remaining):.4f}, "
+                            f"dt={float(dt_actual):.6e}. HALTING.",
+                            RuntimeWarning, stacklevel=2,
+                        )
+                        for kk in range(jj, n_output + 1):
+                            sol_chunk[:, kk] = cur_state
+                            orders_chunk[kk] = -1
+                        t_internal += (ps_step - t_remaining)
+                        return (sol_chunk, orders_chunk, cur_state,
+                                dt_use, t_internal, max_ps,
+                                substeps, rejections, True)
                     # shrink dt and retry at same position
                     dt_override = max(float(dt_actual) * shrink_factor, dt_min)
                     continue

@@ -5,7 +5,6 @@ Dragt (1965) diagnostic analysis for dipole trajectories.
     compute_adiabaticity  — epsilon = r_g |grad B| / B along a trajectory
     compute_params        — W0^2, P_phi, boundary status from initial conditions
     compute_boundary      — accessible boundary curve for Poincaré section
-    compute_z_crossings   — equatorial (z=0) crossing finder via interpolation
     compute_gyrophase_mu  — gyrophase and mu at equatorial crossings
     compute_w0_squared    — W0^2 from physical speed and L-shell
     analysis_chunked      — stream h5 file for adiabaticity, meridian, crossings
@@ -37,25 +36,20 @@ class conservation_monitor:
         mon.check(sol_chunk)          # checks last column of chunk
         # after run:
         mon.summary()                 # prints drift report
-        drift = mon.get_drift()       # returns dict with max drift info
     """
 
-    def __init__(self, L_shell, charge_sign=1, check_every=1,
-                 rtol=1e-6, halt_on_escape=False):
+    def __init__(self, L_shell, charge_sign=1, check_every=1, rtol=1e-6):
         """
         Parameters:
             L_shell       : L-shell used for Dragt normalization
             charge_sign   : +1 proton, -1 electron
             check_every   : check every N-th call to check() (1 = every call)
             rtol          : relative tolerance for warning
-            halt_on_escape: if True, raise RuntimeError when W0^2 crosses
-                            the trapping threshold
         """
         self.L = L_shell
         self.cs = charge_sign
         self.check_every = max(1, int(check_every))
         self.rtol = rtol
-        self.halt_on_escape = halt_on_escape
 
         # Reference values (set on first call)
         self.W0sq_0 = None
@@ -133,14 +127,6 @@ class conservation_monitor:
                 RuntimeWarning, stacklevel=2,
             )
 
-        # Check for escape past trapping threshold
-        if (self.halt_on_escape and self.W0_threshold is not None
-                and W0sq > self.W0_threshold):
-            msg = (f"conservation_monitor step {idx}: W0^2 = {W0sq:.6f} "
-                   f"EXCEEDED trapping threshold {self.W0_threshold:.6f}. "
-                   f"Particle has numerically escaped.")
-            raise RuntimeError(msg)
-
         return ok
 
     def summary(self):
@@ -172,24 +158,6 @@ class conservation_monitor:
             print(f"  Trap threshold: {self.W0_threshold:.8f}")
             print(f"  Margin remaining: {margin*100:.2f}%")
         print(f"{'='*60}\n")
-
-    def get_drift(self):
-        """Return a dict with drift statistics for programmatic use."""
-        if not self.history:
-            return {}
-        W0s   = np.array([h[1] for h in self.history])
-        Pphis = np.array([h[2] for h in self.history])
-        return {
-            "W0sq_initial": self.W0sq_0,
-            "W0sq_final":   float(W0s[-1]),
-            "W0sq_max":     float(W0s.max()),
-            "W0sq_min":     float(W0s.min()),
-            "Pphi_initial": self.Pphi_0,
-            "Pphi_final":   float(Pphis[-1]),
-            "W0_threshold": self.W0_threshold,
-            "history":      self.history,
-        }
-
 
 def compute_adiabaticity(x_arr, y_arr, z_arr, vx_arr, vy_arr, vz_arr):
     """
@@ -374,41 +342,6 @@ def compute_boundary(W0_sq, P_phi, charge_sign=1):
         return None, None
 
     return rho_bnd[valid], np.sqrt(W0_sq - 2.0 * V_eff[valid])
-
-
-def compute_z_crossings(x_ps, y_ps, z_ps, vx_ps, vy_ps, L_shell):
-    """
-    Finds equatorial (z=0) crossings in a PS trajectory via linear interpolation.
-
-    Parameters:
-        x_ps, y_ps, z_ps : position arrays (R_E, normalized)
-        vx_ps, vy_ps     : velocity arrays (v_tau, normalized)
-        L_shell          : L-shell for Dragt unit conversion
-
-    Returns:
-        (rho_dragt, rho_dot_dragt, x_cross, y_cross, vx_cross, vy_cross)
-        where rho_dragt/rho_dot_dragt are in Dragt units and positions/velocities
-        are in sim units (needed for downstream gyrophase/mu calculations).
-        Returns None if no crossings found.
-    """
-    mask = z_ps[1:] * z_ps[:-1] < 0
-    idx  = np.where(mask)[0]
-
-    if len(idx) == 0:
-        return None
-
-    t_frac   = (0.0 - z_ps[idx]) / (z_ps[idx+1] - z_ps[idx])
-    x_cross  = x_ps[idx]  + t_frac * (x_ps[idx+1]  - x_ps[idx])
-    y_cross  = y_ps[idx]  + t_frac * (y_ps[idx+1]  - y_ps[idx])
-    vx_cross = vx_ps[idx] + t_frac * (vx_ps[idx+1] - vx_ps[idx])
-    vy_cross = vy_ps[idx] + t_frac * (vy_ps[idx+1] - vy_ps[idx])
-
-    rho_sim       = np.sqrt(x_cross**2 + y_cross**2)
-    rho_dot_sim   = (x_cross * vx_cross + y_cross * vy_cross) / rho_sim
-    rho_dragt     = rho_sim / L_shell
-    rho_dot_dragt = rho_dot_sim * L_shell**2            # v_dragt = v_sim * L^2 (no gamma; see compute_params)
-
-    return rho_dragt, rho_dot_dragt, x_cross, y_cross, vx_cross, vy_cross
 
 
 def compute_gyrophase_mu(x_cross, y_cross, vx_cross, vy_cross):

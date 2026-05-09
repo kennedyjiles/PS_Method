@@ -326,8 +326,8 @@ def poincare(
     """
     Poincaré surface of section at z=0 in Dragt dimensionless units.
 
-    crossings: tuple (rho_dragt, rho_dot_dragt, ...) from compute_z_crossings,
-               or None if no equatorial crossings found.
+    crossings: tuple (rho_dragt, rho_dot_dragt, ...) collected by
+               analysis_chunked, or None if no equatorial crossings found.
     """
     fig, ax = plt.subplots(figsize=(10, 7))
 
@@ -492,10 +492,6 @@ def mu_deviation(
     ax.yaxis.set_minor_formatter(NullFormatter())
     ax.grid(True, which="major", linestyle="--", linewidth=0.7)
     ax.get_xaxis().get_major_formatter().set_useOffset(False)
-
-    # # for top slices of mu
-    # ax.set_ylim(5e-3, 2e-1)
-    # ax.set_yscale('linear')
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)

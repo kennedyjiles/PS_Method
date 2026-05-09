@@ -155,24 +155,17 @@ def record_drift_sample(
 # ===================================================================
 def bounce_summary(crossing_times_tau, time_scale_sec=None):
     c = np.asarray(crossing_times_tau, dtype=float)
-    half_tau = np.diff(c) if c.size >= 2 else np.array([], float)
     full_tau = (c[2:] - c[:-2]) if c.size >= 3 else np.array([], float)
 
     out = {
         "n_crossings": int(c.size),
-        "half_tau": half_tau,
-        "half_mean_tau": float(np.mean(half_tau)) if half_tau.size else None,
         "full_tau": full_tau,
         "full_mean_tau": float(np.mean(full_tau)) if full_tau.size else None,
-        "bounce_frequency_per_tau": (1.0/float(np.mean(full_tau))) if full_tau.size else None,
     }
 
     if time_scale_sec is not None:
-        half_s = half_tau * time_scale_sec
         full_s = full_tau * time_scale_sec
         out.update({
-            "half_s": half_s,
-            "half_mean_s": float(np.mean(half_s)) if half_s.size else None,
             "full_s": full_s,
             "full_mean_s": float(np.mean(full_s)) if full_s.size else None,
             "bounce_frequency_hz": (1.0/float(np.mean(full_s))) if full_s.size else None,
@@ -190,15 +183,13 @@ def finalize_drift_stream(
 
     if t.size < 2:
         return {
-            "period_tau_mean": None,
             "period_tau_fit": None,
-            "period_s_mean": None,
             "period_s_fit": None,
             "direction": +1,
         }
 
     # slope-based estimate
-    a, b = np.polyfit(t.astype(np.float64), phi.astype(np.float64), 1)
+    a, _ = np.polyfit(t.astype(np.float64), phi.astype(np.float64), 1)
     dphi_span = phi.max() - phi.min()
 
     period_tau_fit = None

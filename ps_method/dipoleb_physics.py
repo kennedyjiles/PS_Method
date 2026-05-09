@@ -235,10 +235,9 @@ def hamiltonian_rhs(t, d, charge_sign):
     if r5 == 0:
         return np.zeros(6, dtype=ul.npfloat)
 
-    # Vector potential
+    # Vector potential (Az = 0 for the dipole)
     Ax = y / r3
     Ay = -x / r3
-    Az = 0.0
 
     # Mechanical momentum
     Pix = px - charge_sign * Ax
