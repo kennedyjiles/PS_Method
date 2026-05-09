@@ -417,6 +417,8 @@ def main():
         # Place trimmed files in a trimmed/ subfolder next to the original
         src_dir = os.path.dirname(src)
         src_stem = os.path.splitext(os.path.basename(src))[0]
+        if src_stem.endswith("_full"):
+            src_stem = src_stem[:-len("_full")]
         trim_dir = os.path.join(src_dir, "trimmed")
 
         if do_first:
