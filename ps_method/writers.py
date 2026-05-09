@@ -71,9 +71,28 @@ def run_hash(params: dict) -> str:
     return hashlib.sha1(j.encode("utf-8")).hexdigest()[:6]
 
 
-def h5_path_for(params, output_folder):
-    """Return the HDF5 cache path for a given run-parameter dict."""
-    return os.path.join(output_folder, f"{run_hash(params)}.h5")
+def h5_path_for(hash_str, output_folder):
+    """Build the cache file path for a given physics hash.
+
+    Original (full-run) h5 files carry a `_full` suffix to visually
+    distinguish them from trimmed variants (`_first_<window>s.h5`,
+    `_last_<window>s.h5`). The hash itself does NOT include the suffix.
+    """
+    return os.path.join(output_folder, f"{hash_str}_full.h5")
+
+
+def stem_from_h5(h5_path):
+    """Get the run stem from an h5 path, stripping the trailing `_full`
+    suffix on original-run files so the run folder name is just the hash.
+
+    Trimmed files (`<hash>_first_60.0s.h5` etc.) don't have `_full` and
+    keep their full stem unchanged so the trim replot folder is named
+    distinctly from the original run folder.
+    """
+    s = os.path.splitext(os.path.basename(h5_path))[0]
+    if s.endswith("_full"):
+        s = s[:-len("_full")]
+    return s
 
 
 def build_filename(output_folder, stem, figure_tag, ext="png"):

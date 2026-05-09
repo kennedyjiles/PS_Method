@@ -33,6 +33,44 @@ from ps_method.constants import q_e, m_e, m_p, spdlight, RE, B_0 as B_0_dipole
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+# ---------------------------------------------------------------------------
+# Cache-hash spec: which yml fields define a unique run
+# ---------------------------------------------------------------------------
+# The merged yml IS the spec. We hash every top-level key in cfg EXCEPT
+# the ones below — display, runtime, post-processing, and internal markers
+# that don't affect the trajectory. Adding a new physics field to base.yml
+# automatically becomes hash-relevant; only display/runtime additions need
+# to be added to this set.
+_NON_HASH_KEYS = {
+    # display / plotting
+    "plotting", "window_time",
+    # external h5 overlays (just plot decorations — don't change trajectory)
+    "use_external_h5", "external_h5",
+    # output / IO / runtime
+    "output_root", "read_data", "write_data",
+    "manual_h5_path", "ps_chunk_steps",
+    # post-processing only — operates on the trajectory, doesn't change it
+    "user_min_phase", "bounce_drift", "r_atmosphere",
+    # warning thresholds — don't affect output values
+    "cache_velocity_rtol", "dragt_monitor_rtol", "plot_boundary_pad",
+    # internal / loader-injected
+    "base_config", "_config_name", "_config_log", "git_commit", "batch_group",
+}
+
+
+def physics_hash(cfg):
+    """Hash the physics-relevant subset of a merged yml cfg.
+
+    Hashes EVERY top-level key in cfg except those in _NON_HASH_KEYS
+    (display/runtime/post-processing/internal markers). This is what
+    determines the cache filename — same hash means same physics, so
+    the cached h5 can be reused.
+    """
+    from ps_method.writers import run_hash
+    physics = {k: v for k, v in cfg.items() if k not in _NON_HASH_KEYS}
+    return run_hash(physics)
+
+
 def _deep_merge(base, override):
     """In-place deep merge: override wins on conflicts (matches advisor pattern)."""
     for k, v in override.items():
@@ -123,7 +161,7 @@ def _apply_step_overrides(steps, overrides, npfloat=np.float64):
 
 
 def _resolve_output_paths(config_name, field_prefix="", output_root=None,
-                          batch_group=None):
+                          batch_group=None, manual_h5_path=None):
     """Auto-derive output_folder and run_storage from config name.
 
     Parameters
@@ -141,7 +179,26 @@ def _resolve_output_paths(config_name, field_prefix="", output_root=None,
                    Examples:
                        "flux_map" → data/dipoleb/flux_map/E1e+07_L2.00_P45.0/
                        "michel"   → data/dipoleb/michel/E1e+07_L1.50_P85.0_phi30.0/
+    manual_h5_path : str or None — when loading an existing h5 (manual or
+                   trimmed-replot), if the h5 lives under a `_rawdata/`
+                   directory we override the auto-derived path so replot
+                   outputs land next to the source run's outputs (i.e. the
+                   parent of `_rawdata/`) rather than in a new top-level
+                   folder named after the yml.
     """
+    # When the source h5 sits in a `_rawdata/` (or a subdir of it), mirror
+    # outputs back to that folder's parent. Catches both the standard case
+    # (data/<field>/<run>/_rawdata/<stem>.h5 → data/<field>/<run>/) and the
+    # trim case (data/<field>/<run>/_rawdata/trimmed/<stem>.h5 → same).
+    if manual_h5_path:
+        abs_h5 = os.path.normpath(os.path.abspath(manual_h5_path))
+        h5_parts = abs_h5.split(os.sep)
+        if "_rawdata" in h5_parts:
+            i = h5_parts.index("_rawdata")
+            output_folder = os.sep.join(h5_parts[:i])
+            run_storage = os.path.join(output_folder, "_rawdata")
+            return output_folder, run_storage
+
     parts = ["data"]
     if field_prefix:
         parts.append(field_prefix)
@@ -298,10 +355,41 @@ def copy_config_to_output(cfg_path, output_folder, cfg=None):
     # --- Write ---
     basename = os.path.basename(cfg_path)
     dest = os.path.join(output_folder, basename)
+    # Standard layout: this yml lives at <output_folder>/<stem>/<basename>,
+    # and the cached h5 lives at <output_folder>/_rawdata/<stem>_full.h5
+    # (the writer appends `_full` to distinguish from trimmed variants).
+    # From the yml's directory, that's `../_rawdata/<stem>_full.h5`.
+    stem = os.path.basename(output_folder)
+    relative_h5 = f"../_rawdata/{stem}_full.h5"
+
+    # Hoist the most-edited fields to the top so they're visible at first
+    # glance (base_config = self-contained marker, manual_h5_path = the
+    # replot toggle, output_root = where outputs land).
+    # git_commit is provenance — push it to the bottom.
+    _top = ("base_config", "manual_h5_path", "output_root")
+    _bottom = ("git_commit",)
+    ordered = {k: merged[k] for k in _top if k in merged}
+    for k, v in merged.items():
+        if k not in _top and k not in _bottom:
+            ordered[k] = v
+    for k in _bottom:
+        if k in merged:
+            ordered[k] = merged[k]
     with open(dest, "w") as f:
         f.write(f"# Fully merged config — generated from {os.path.basename(cfg_path)}\n")
-        f.write(f"# Re-run with: python run.py {dest}\n\n")
-        yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
+        f.write(f"# Re-run with: python run.py {dest}\n")
+        f.write(f"#\n")
+        f.write(f"# To REPLOT this run without re-running the solvers (e.g. to\n")
+        f.write(f"# drop a method from plots, tweak slice settings, etc.) load it\n")
+        f.write(f"# in manual mode:\n")
+        f.write(f"#   1. Edit the manual_h5_path field near the top of this yml,\n")
+        f.write(f"#      changing `null` to:\n")
+        f.write(f"#        manual_h5_path: {relative_h5}\n")
+        f.write(f"#   2. Edit any plotting / solvers fields you want to change.\n")
+        f.write(f"#      e.g. solvers.rk4: false suppresses RK4 from plots without\n")
+        f.write(f"#      triggering a fresh solver run.\n")
+        f.write(f"#   3. Re-run with the same command above.\n\n")
+        yaml.dump(ordered, f, default_flow_style=False, sort_keys=False)
 
     print(f"Config copied → {dest}")
     return dest
@@ -504,6 +592,7 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         config_name, field_prefix="dipoleb",
         output_root=cfg.get("output_root"),
         batch_group=cfg.get("batch_group"),
+        manual_h5_path=cfg.get("manual_h5_path"),
     )
 
     # --- Physics seeds ---
@@ -690,6 +779,7 @@ def compute_derived_constb(cfg, npfloat=None):
     output_folder, run_storage = _resolve_output_paths(
         config_name, field_prefix="constb",
         output_root=cfg.get("output_root"),
+        manual_h5_path=cfg.get("manual_h5_path"),
     )
 
     # --- Physics seeds ---
@@ -824,6 +914,7 @@ def compute_derived_hyperb(cfg, npfloat=None):
     output_folder, run_storage = _resolve_output_paths(
         config_name, field_prefix="hyperb",
         output_root=cfg.get("output_root"),
+        manual_h5_path=cfg.get("manual_h5_path"),
     )
 
     # --- Physics seeds ---

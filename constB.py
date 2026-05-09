@@ -22,7 +22,7 @@ import matplotlib as mpl
 
 from configs.config_loader import (
     load_config, compute_derived_constb, copy_config_to_output,
-    apply_manual_h5_overrides,
+    apply_manual_h5_overrides, physics_hash,
 )
 from ps_method.constants import q_e, evtoj
 
@@ -196,8 +196,11 @@ def main(cfg_path, replot=False):
     if USE_MANUAL_FILE:
         cache_path = manual_h5_path
     else:
-        cache_path = wr.h5_path_for(params, run_storage)
-    os.makedirs(run_storage, exist_ok=True)
+        cache_path = wr.h5_path_for(physics_hash(cfg), run_storage)
+    # In manual mode nothing new is written to run_storage — skip creating
+    # an empty stub folder.
+    if not USE_MANUAL_FILE:
+        os.makedirs(run_storage, exist_ok=True)
 
     if os.path.exists(cache_path) and READ_DATA:
         print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
@@ -216,7 +219,7 @@ def main(cfg_path, replot=False):
             t_eval_rk45 = cached["rk45"]["t"]
 
         timing = cached.get("meta", {}).get("timing", {})
-        stem = os.path.splitext(os.path.basename(cache_path))[0]
+        stem = wr.stem_from_h5(cache_path)
 
 
     else:
@@ -280,7 +283,7 @@ def main(cfg_path, replot=False):
         if WRITE_DATA:
             wr.save_results_h5_constb(cache_path, params, results)
             print(f"Saved results → {os.path.basename(cache_path)}")
-        stem = os.path.splitext(os.path.basename(cache_path))[0]
+        stem = wr.stem_from_h5(cache_path)
 
 
     # === Sanity Check ===

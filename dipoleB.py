@@ -38,7 +38,7 @@ import h5py
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from ps_method.constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
-from configs.config_loader import load_config, compute_derived_dipoleb as compute_derived, copy_config_to_output
+from configs.config_loader import load_config, compute_derived_dipoleb as compute_derived, copy_config_to_output, physics_hash
 
 
 def main(cfg_path, replot=False):
@@ -201,8 +201,12 @@ def main(cfg_path, replot=False):
     PS_CHUNKING = True     # PS data always streamed to disk in chunks (no in-memory option)
     WRITE_DATA  = True     # always write h5 (required by chunked streaming)
     ul.plt_config(scale=1)                        # config file for setting plot sizes and fonts (from Dr. W)
-    os.makedirs(run_storage, exist_ok=True)    # ensures file for the storagae for raw data exists
-    os.makedirs(output_folder, exist_ok=True)  # ensures file for the storagae for images and text file exists
+    # In manual mode the cache_path is the user-supplied h5 (not in run_storage),
+    # so no fresh data ever lands in _rawdata — skip creating it to avoid an
+    # empty stub folder in the trimmed-replot output tree.
+    if not (manual_h5_path and os.path.exists(manual_h5_path)):
+        os.makedirs(run_storage, exist_ok=True)    # raw data storage
+    os.makedirs(output_folder, exist_ok=True)  # ensures file for the storage for images and text file exists
     plt.ioff()                                 # turn off interactive mode for plots
     if USE_FLOAT128 and USE_RKG:
         print("  NOTE: RKG disabled because use_float128=True "
@@ -269,23 +273,27 @@ def main(cfg_path, replot=False):
 
                 T_gyro = meta.get("T_gyro", 2.0 * np.pi * (x_initial**3))  # fallback for older h5 files
 
-                # ---- Heads-up: yml asks for solvers the h5 doesn't carry ----
-                # Solver-enabled flags below come from the h5 (it's authoritative
-                # — you can't plot data that doesn't exist). Warn if the yml
-                # requested a method the h5 lacks, so the user isn't surprised
-                # when their plot is missing curves.
+                # ---- Combine yml preference with h5 availability ----
+                # The h5 dictates what data EXISTS (you can't plot what
+                # wasn't run). The yml's solvers block lets the user DROP
+                # methods from the plots without re-running. So
+                # USE_X = yml_wants AND h5_has, matching constb's behavior.
                 _yml_wants = {"ps": USE_PS, "rk4": USE_RK4,
                               "rk45": USE_RK45, "rkg": USE_RKG}
                 _missing = [m for m in _yml_wants
                             if _yml_wants[m] and not summary[m]["enabled"]]
                 if _missing:
                     print(f"  Note: yml requests {_missing} but the h5 has no "
-                          f"data for {'these' if len(_missing) > 1 else 'it'}. "
-                          f"Skipping silently.")
+                          f"data for {'these' if len(_missing) > 1 else 'it'}. Skipping.")
+                _dropped = [m for m in _yml_wants
+                            if not _yml_wants[m] and summary[m]["enabled"]]
+                if _dropped:
+                    print(f"  Note: yml drops {_dropped} from plots "
+                          f"(h5 has data, not plotted).")
 
                 # ---- PS config ----
                 ps_cfg = summary["ps"]
-                USE_PS = ps_cfg["enabled"]
+                USE_PS = USE_PS and ps_cfg["enabled"]
                 PS_CHUNKING = ps_cfg["streaming"]
                 ps_step = ps_cfg["dt"]
                 steps_ps = ps_cfg["steps"]
@@ -298,7 +306,7 @@ def main(cfg_path, replot=False):
 
                 # ---- RK4 config ----
                 rk4_cfg = summary["rk4"]
-                USE_RK4 = rk4_cfg["enabled"]
+                USE_RK4 = USE_RK4 and rk4_cfg["enabled"]
                 rk4_step = rk4_cfg["dt"]
                 steps_rk4 = rk4_cfg["steps"]
                 n_steps_per_gyro_rk4 = rk4_cfg["numberstepspergyro"]
@@ -306,13 +314,13 @@ def main(cfg_path, replot=False):
 
                 # ---- RK45 config ----
                 rk45_cfg = summary["rk45"]
-                USE_RK45 = rk45_cfg["enabled"]
+                USE_RK45 = USE_RK45 and rk45_cfg["enabled"]
                 rtol_rk45 = rk45_cfg["rtol"]
                 atol_rk45 = rk45_cfg["atol"]
 
                 # ---- RKG config ----
                 rkg_cfg = summary["rkg"]
-                USE_RKG = rkg_cfg["enabled"]
+                USE_RKG = USE_RKG and rkg_cfg["enabled"]
                 rkg_step = rkg_cfg["dt"]
                 steps_rkg = rkg_cfg["steps"]
                 n_steps_per_gyro_rkg = rkg_cfg["numberstepspergyro"]
@@ -472,13 +480,7 @@ def main(cfg_path, replot=False):
     Beware that these files can be GB size for dipole.
     """
     if not USE_MANUAL_FILE:
-        run_params = wr.get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, ps_decimate, PS_CHUNKING,   # parameters it is scanning
-                        mass_si, q_e, B_0, gamma, user_min_phase,
-                        x_initial, y_initial, z_initial,
-                        pitch_deg, phi_deg,
-                        norm_time, ps_step, rk4_step, rkg_step,
-                        ps_order, tol_local, charge_sign, rtol_rk45, atol_rk45)
-        cache_path = wr.h5_path_for(run_params, run_storage)
+        cache_path = wr.h5_path_for(physics_hash(cfg), run_storage)
         if os.path.exists(cache_path) and READ_DATA:
             print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
 
@@ -510,23 +512,27 @@ def main(cfg_path, replot=False):
                 norm_time = meta["norm_time"]
                 # npfloat already resolved at the top of main() from this file's saved dtype.
 
-                # ---- Heads-up: yml asks for solvers the h5 doesn't carry ----
-                # Solver-enabled flags below come from the h5 (it's authoritative
-                # — you can't plot data that doesn't exist). Warn if the yml
-                # requested a method the h5 lacks, so the user isn't surprised
-                # when their plot is missing curves.
+                # ---- Combine yml preference with h5 availability ----
+                # The h5 dictates what data EXISTS (you can't plot what
+                # wasn't run). The yml's solvers block lets the user DROP
+                # methods from the plots without re-running. So
+                # USE_X = yml_wants AND h5_has, matching constb's behavior.
                 _yml_wants = {"ps": USE_PS, "rk4": USE_RK4,
                               "rk45": USE_RK45, "rkg": USE_RKG}
                 _missing = [m for m in _yml_wants
                             if _yml_wants[m] and not summary[m]["enabled"]]
                 if _missing:
                     print(f"  Note: yml requests {_missing} but the h5 has no "
-                          f"data for {'these' if len(_missing) > 1 else 'it'}. "
-                          f"Skipping silently.")
+                          f"data for {'these' if len(_missing) > 1 else 'it'}. Skipping.")
+                _dropped = [m for m in _yml_wants
+                            if not _yml_wants[m] and summary[m]["enabled"]]
+                if _dropped:
+                    print(f"  Note: yml drops {_dropped} from plots "
+                          f"(h5 has data, not plotted).")
 
                 # ---- PS config ----
                 ps_cfg = summary["ps"]
-                USE_PS = ps_cfg["enabled"]
+                USE_PS = USE_PS and ps_cfg["enabled"]
                 PS_CHUNKING = ps_cfg["streaming"]
                 ps_step = ps_cfg["dt"]
                 steps_ps = ps_cfg["steps"]
@@ -539,7 +545,7 @@ def main(cfg_path, replot=False):
 
                 # ---- RK4 config ----
                 rk4_cfg = summary["rk4"]
-                USE_RK4 = rk4_cfg["enabled"]
+                USE_RK4 = USE_RK4 and rk4_cfg["enabled"]
                 rk4_step = rk4_cfg["dt"]
                 steps_rk4 = rk4_cfg["steps"]
                 n_steps_per_gyro_rk4 = rk4_cfg["numberstepspergyro"]
@@ -547,13 +553,13 @@ def main(cfg_path, replot=False):
 
                 # ---- RK45 config ----
                 rk45_cfg = summary["rk45"]
-                USE_RK45 = rk45_cfg["enabled"]
+                USE_RK45 = USE_RK45 and rk45_cfg["enabled"]
                 rtol_rk45 = rk45_cfg["rtol"]
                 atol_rk45 = rk45_cfg["atol"]
 
                 # ---- RKG config ----
                 rkg_cfg = summary["rkg"]
-                USE_RKG = rkg_cfg["enabled"]
+                USE_RKG = USE_RKG and rkg_cfg["enabled"]
                 rkg_step = rkg_cfg["dt"]
                 steps_rkg = rkg_cfg["steps"]
                 n_steps_per_gyro_rkg = rkg_cfg["numberstepspergyro"]
@@ -831,7 +837,7 @@ def main(cfg_path, replot=False):
             # =========================
             # ====== Save Results =====
             # =========================
-            stem = os.path.splitext(os.path.basename(cache_path))[0]
+            stem = wr.stem_from_h5(cache_path)
             timing = results["meta"]["timing"]
             results["meta"]["stem"]=stem
             if WRITE_DATA:

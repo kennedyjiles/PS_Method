@@ -37,7 +37,7 @@ solvers:
   ps: true
   rk4: false
   rk45: false
-  rkg: false
+  rkg: true
   adaptive: false         # true = adaptive PS stepping
 
 # --- Plotting ---
@@ -46,9 +46,9 @@ plotting:
   full_plot: true         # true = all diagnostic plots, false = paper plots only
   slice_mode: last        # "first" or "last" — which gyro window to slice
   gyro_window: last       # "first" or "last" — which gyro window for detailed view
-  n_gyro: 75              # number of gyroperiods in slice window
+  n_gyro: 150              # number of gyroperiods in slice window
 
-window_time: 11.6         # time window for slice plots (normalized units)
+window_time: 300.0         # time window for slice plots (normalized units)
 
 # --- Output ---
 # By default, output goes to data/dipoleb/<config-name>/.
