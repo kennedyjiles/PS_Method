@@ -852,8 +852,11 @@ def master_csv(
     drift_results=None,
 ):
     """Build records and append to master_simulation_log.csv with duplicate detection."""
-    # Bounce / drift are run-level (PS-only); duplicated across method rows
-    # for the same run. None when bounce/drift wasn't computed or detected.
+    # Trajectory-derived diagnostics (eps_*, hit_atm_*, bounce/drift) come
+    # from the PS h5 only — they're meaningless for RK4/RK45/RKG rows. Blank
+    # those on non-PS rows. IC-derived dragt fields (L_eff, W0_sq, boundary,
+    # mu_sq, orbit_character) are properties of the run setup, not the
+    # integrator, so they stay populated on every row.
     _b = bounce_results or {}
     _d = drift_results or {}
 
@@ -861,6 +864,7 @@ def master_csv(
     for method, steps, dt, e_drift, mu_drift in method_records:
         e = summarize(e_drift)
         mu = summarize(mu_drift)
+        is_ps = (method == "PS")
 
         records.append({
             "run_id": stem,
@@ -873,20 +877,20 @@ def master_csv(
             "pitch_deg": pitch_deg,
             "phi_deg": phi_deg,
             "L_eff": dragt_log["L_eff"],
-            "eps_initial": dragt_log["eps_initial"],
-            "eps_mean": dragt_log["eps_mean"],
-            "eps_max": dragt_log["eps_max"],
             "W0_sq": dragt_log["W0_sq"],
             "boundary": dragt_log["boundary"],
             "mu_sq": dragt_log["mu_sq"],
             "orbit_character": dragt_log["orbit_character"],
-            "hit_atmosphere": dragt_log["hit_atmosphere"],
-            "hit_atm_r": dragt_log["hit_atm_r"],
-            "n_mirror_crossings": _b.get("n_crossings"),
-            "bounce_period_s":    _b.get("full_mean_s"),
-            "bounce_freq_hz":     _b.get("frequency_hz"),
-            "drift_period_s":     _d.get("period_s"),
-            "drift_direction":    _d.get("direction"),
+            "eps_initial":        dragt_log["eps_initial"]    if is_ps else None,
+            "eps_mean":           dragt_log["eps_mean"]       if is_ps else None,
+            "eps_max":            dragt_log["eps_max"]        if is_ps else None,
+            "hit_atmosphere":     dragt_log["hit_atmosphere"] if is_ps else None,
+            "hit_atm_r":          dragt_log["hit_atm_r"]      if is_ps else None,
+            "n_mirror_crossings": _b.get("n_crossings")       if is_ps else None,
+            "bounce_period_s":    _b.get("full_mean_s")       if is_ps else None,
+            "bounce_freq_hz":     _b.get("frequency_hz")      if is_ps else None,
+            "drift_period_s":     _d.get("period_s")          if is_ps else None,
+            "drift_direction":    _d.get("direction")         if is_ps else None,
             "steps": steps,
             "dt": dt,
             "method": method,

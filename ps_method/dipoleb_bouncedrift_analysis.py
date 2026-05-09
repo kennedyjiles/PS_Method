@@ -17,11 +17,14 @@ Streaming API (consumed by dipoleb.py):
     bounce_summary                   — formatted bounce period statistics
     finalize_drift_stream            — compute drift period from collected samples
 
-Internal helpers:
-    record_drift_sample              — interpolate (x,y) → φ → unwrap → store
+Internal:
+    _process_chunk_kernel            — JIT'd inner loop: scans chunk for
+                                        sign changes and emits crossings +
+                                        drift samples (no Python in hot path)
 """
 
 import numpy as np
+from . import utils as ul
 
 # Default row indices for the 17-row PS coefficient matrix
 named_indices = {"vx": 3, "vy": 4, "vz": 5, "Bx": 14, "By": 15, "Bz": 16}
@@ -51,6 +54,79 @@ def init_drift_stream_state():
 # ===================================================================
 # === Per-chunk update ==============================================
 # ===================================================================
+@ul.maybe_njit
+def _process_chunk_kernel(
+    y_chunk, t_chunk,
+    last_s, last_t, last_y, last_cross_t, last_phi,
+    has_prev, has_phi_prev,
+    min_gap_tau, s_eps,
+    idx_vx, idx_vy, idx_vz, idx_Bx, idx_By, idx_Bz,
+):
+    """JIT'd inner loop: scan one chunk for v·B sign changes, emit
+    interpolated crossing times + corresponding drift φ samples.
+
+    Returns (state scalars + counts + worst-case-sized output buffers).
+    The Python wrapper trims the buffers to the populated prefix.
+    """
+    n = y_chunk.shape[1]
+    cross_times = np.zeros(n, dtype=ul.npfloat)
+    sample_ts   = np.zeros(n, dtype=ul.npfloat)
+    sample_phis = np.zeros(n, dtype=ul.npfloat)
+    n_cross   = 0
+    n_samples = 0
+
+    for i in range(n):
+        ti = t_chunk[i]
+        si = (y_chunk[idx_vx, i] * y_chunk[idx_Bx, i]
+              + y_chunk[idx_vy, i] * y_chunk[idx_By, i]
+              + y_chunk[idx_vz, i] * y_chunk[idx_Bz, i])
+
+        if has_prev:
+            # require both samples to be "significant" to avoid micro-jitter
+            if abs(last_s) >= s_eps and abs(si) >= s_eps:
+                if last_s * si < 0.0 and (ti - last_cross_t) >= min_gap_tau:
+                    # --- interpolate mirror time ---
+                    denom = si - last_s
+                    if denom == 0.0:
+                        tc = ti
+                    else:
+                        tc = last_t + (ti - last_t) * (-last_s) / denom
+
+                    cross_times[n_cross] = tc
+                    n_cross += 1
+                    last_cross_t = tc
+
+                    # --- inline record_drift_sample ---
+                    w = 0.0 if ti == last_t else (tc - last_t) / (ti - last_t)
+                    phi0 = np.arctan2(last_y[1], last_y[0])
+                    phi1 = np.arctan2(y_chunk[1, i], y_chunk[0, i])
+                    # LOCAL unwrap between adjacent samples
+                    d = phi1 - phi0
+                    if abs(d) > np.pi:
+                        phi1 -= 2.0 * np.pi * np.round(d / (2.0 * np.pi))
+                    phi_tc = (1.0 - w) * phi0 + w * phi1
+                    # GLOBAL unwrap relative to last stored sample
+                    if has_phi_prev:
+                        d2 = phi_tc - last_phi
+                        if abs(d2) > np.pi:
+                            phi_tc -= 2.0 * np.pi * np.round(d2 / (2.0 * np.pi))
+                    last_phi = phi_tc
+                    has_phi_prev = True
+
+                    sample_ts[n_samples] = tc
+                    sample_phis[n_samples] = phi_tc
+                    n_samples += 1
+
+        last_s = si
+        last_t = ti
+        last_y = y_chunk[:, i].copy()
+        has_prev = True
+
+    return (last_s, last_t, last_y, last_cross_t, last_phi,
+            has_phi_prev,
+            n_cross, cross_times, n_samples, sample_ts, sample_phis)
+
+
 def process_bounce_and_drift_chunk(
     y_chunk,
     t_chunk,
@@ -61,93 +137,48 @@ def process_bounce_and_drift_chunk(
     idx_map=None,
     interp=True,
 ):
+    """Public entry point. Marshals dict-state into the JIT'd kernel and
+    appends emitted crossings / drift samples back into the dict state.
+
+    The ``interp`` parameter is accepted for API compatibility but is
+    always treated as True (the False branch was already unreachable).
+    """
     idx = named_indices if idx_map is None else idx_map
 
-    vx = y_chunk[idx["vx"], :]
-    vy = y_chunk[idx["vy"], :]
-    vz = y_chunk[idx["vz"], :]
-    Bx = y_chunk[idx["Bx"], :]
-    By = y_chunk[idx["By"], :]
-    Bz = y_chunk[idx["Bz"], :]
+    has_prev = bounce_state["last_s"] is not None
+    last_s = ul.npfloat(bounce_state["last_s"]) if has_prev else ul.npfloat(0.0)
+    last_t = ul.npfloat(bounce_state["last_t"]) if has_prev else ul.npfloat(0.0)
+    last_y = (bounce_state["last_y"]
+              if has_prev else np.zeros(y_chunk.shape[0], dtype=y_chunk.dtype))
+    last_cross_t = ul.npfloat(bounce_state["last_cross_t"])
 
-    s = vx*Bx + vy*By + vz*Bz   # proxy for v_parallel * |B|
+    has_phi_prev = drift_state["last_phi"] is not None
+    last_phi = ul.npfloat(drift_state["last_phi"]) if has_phi_prev else ul.npfloat(0.0)
 
-    for i in range(len(s)):
-        si = s[i]
-        ti = t_chunk[i]
+    (last_s, last_t, last_y, last_cross_t, last_phi,
+     has_phi_prev,
+     n_cross, cross_times,
+     n_samples, sample_ts, sample_phis) = _process_chunk_kernel(
+        y_chunk, t_chunk,
+        last_s, last_t, last_y, last_cross_t, last_phi,
+        has_prev, has_phi_prev,
+        ul.npfloat(min_gap_tau), ul.npfloat(s_eps),
+        idx["vx"], idx["vy"], idx["vz"],
+        idx["Bx"], idx["By"], idx["Bz"],
+    )
 
-        if bounce_state["last_s"] is not None:
-            s0, s1 = bounce_state["last_s"], si
+    bounce_state["last_s"] = last_s
+    bounce_state["last_t"] = last_t
+    bounce_state["last_y"] = last_y
+    bounce_state["last_cross_t"] = last_cross_t
+    if n_cross > 0:
+        bounce_state["crossing_times"].extend(cross_times[:n_cross].tolist())
 
-            # require both samples to be "significant" to avoid micro-jitter
-            if abs(s0) >= s_eps and abs(s1) >= s_eps:
-                if s0 * s1 < 0.0 and (ti - bounce_state["last_cross_t"]) >= min_gap_tau:
-
-                    # --- interpolate mirror time ---
-                    if interp:
-                        denom = (s1 - s0)
-                        if denom == 0.0:
-                            tc = ti
-                        else:
-                            tc = bounce_state["last_t"] + (ti - bounce_state["last_t"]) * (-s0) / denom
-                    else:
-                        tc = ti
-
-                    bounce_state["crossing_times"].append(tc)
-                    bounce_state["last_cross_t"] = tc
-
-                    # --- record drift sample at this mirror ---
-                    record_drift_sample(
-                        y_prev=bounce_state["last_y"],
-                        y_curr=y_chunk[:, i],
-                        t_prev=bounce_state["last_t"],
-                        t_curr=ti,
-                        tc=tc,
-                        state=drift_state,
-                    )
-
-        bounce_state["last_s"] = si
-        bounce_state["last_t"] = ti
-        bounce_state["last_y"] = y_chunk[:, i]
-
-
-# ===================================================================
-# === Internal helper: record one drift sample ======================
-# ===================================================================
-def record_drift_sample(
-    y_prev, y_curr,
-    t_prev, t_curr, tc,
-    state,
-):
-    """
-    Linearly interpolate (x, y) at mirror time tc, compute φ = atan2(y, x),
-    then unwrap multi-2π jumps locally (between endpoints) and globally
-    (relative to the last stored sample).
-    """
-    # interpolation weight
-    w = 0.0 if t_curr == t_prev else (tc - t_prev) / (t_curr - t_prev)
-
-    # raw phi at endpoints
-    phi0 = np.arctan2(y_prev[1], y_prev[0])
-    phi1 = np.arctan2(y_curr[1], y_curr[0])
-
-    # --- LOCAL unwrap: allow multi-2π jumps between adjacent samples ---
-    d = phi1 - phi0
-    if abs(d) > np.pi:
-        phi1 -= 2.0 * np.pi * np.round(d / (2.0 * np.pi))
-
-    # interpolate phi (NOT x,y)
-    phi_tc = (1.0 - w) * phi0 + w * phi1
-
-    # --- GLOBAL unwrap: allow multi-2π jumps relative to last stored sample ---
-    if state.get("last_phi", None) is not None:
-        d2 = phi_tc - state["last_phi"]
-        if abs(d2) > np.pi:
-            phi_tc -= 2.0 * np.pi * np.round(d2 / (2.0 * np.pi))
-
-    state["last_phi"] = phi_tc
-    state["t_samples"].append(tc)
-    state["phi_samples"].append(phi_tc)
+    if has_phi_prev:
+        drift_state["last_phi"] = last_phi
+    if n_samples > 0:
+        drift_state["t_samples"].extend(sample_ts[:n_samples].tolist())
+        drift_state["phi_samples"].extend(sample_phis[:n_samples].tolist())
 
 
 # ===================================================================
