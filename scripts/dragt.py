@@ -1,14 +1,36 @@
 import numpy as np
+import argparse
 
-                # no real guidance on what was used here, used for scaling
-particle = 'proton'      # electron or proton
+# -----paper inputs (overridable via CLI; defaults preserved below)------
+# Examples:
+#   python scripts/dragt.py
+#   python scripts/dragt.py --L-shell 4 --rho 1.07
+#   python scripts/dragt.py --particle electron --wo-squared 0.01
+_p = argparse.ArgumentParser(description="Dragt paper input calculator")
+_p.add_argument("--particle",   type=str,   default="proton",
+                choices=["proton", "electron"],
+                help="particle species (default: proton)")
+_p.add_argument("--L-shell",    type=float, default=6.0,
+                dest="L_shell",
+                help="L shell in R_E to center on (default: 6.0)")
+#.005 and .01 are the W0^2 values used in the paper, corresponding to 100 keV and 200 keV protons at L=6. We use the same W0^2 for both L_shells to isolate the effect of changing rho.
+_p.add_argument("--wo-squared", type=float, default=0.05862295,
+                dest="wo_squared",
+                help="W0^2 in Dragt units (default: 0.05862295; paper uses .005 and .01)")
+ # 1.07 and 1.11494632 are the two rho values used in the paper, corresponding to L_shells of 6.0 and 4.0 respectively. The paper's W0^2 values of .005 and .01 correspond to 100 keV and 200 keV protons at L=6, so we use the same W0^2 for both L_shells to isolate the effect of changing rho.
+_p.add_argument("--rho-dot",    type=float, default=0.0,
+                dest="rho_dot",
+                help="rho_dot in Dragt units (default: 0.0)")
+_p.add_argument("--rho",        type=float, default=1.0,
+                help="rho in Dragt units (default: 1.0; paper uses 1.07 and 1.11494632)")
+_args = _p.parse_args()
 
-# -----paper inputs (ONLY MESS WITH THIS)------
-L_shell = 6  # L shell in RE that you want stuff centered on. Code will output starting positions
-wo_squared =  0.05862295    #.005 and .01
-rho_dot = 0.0
-rho =     1.0   # 1.07 and 1.11494632
-x_initial = rho * L_shell  
+particle    = _args.particle
+L_shell     = _args.L_shell
+wo_squared  = _args.wo_squared
+rho_dot     = _args.rho_dot
+rho         = _args.rho
+x_initial   = rho * L_shell
 
 ##################################################################################
 """STOP! NOTHING DOWN HERE SHOULD BE CHANGED UNLESS YOU KNOW WHAT YOU'RE DOING."""

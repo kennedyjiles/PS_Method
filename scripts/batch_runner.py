@@ -56,7 +56,7 @@ BASE_YML = os.path.join(PROJECT_ROOT, "configs", "dipoleb", "base.yml")
 # Cells per tier are explicit (energy_eV, L) pair lists — they don't form a
 # clean Cartesian product, so no ENERGIES × L_SHELLS structure.
 
-# Phase 1 — default tier (no marker in the table): 10⁵ gyroperiods, 65 steps/gyro
+# Phase 1 — 10⁵ gyroperiods, 20 steps/gyro
 _PHASE_1_CELLS = (
     [(1e4, L) for L in [5, 6, 8]]
     + [(1e5, L) for L in [4, 5, 6, 8]]
@@ -65,7 +65,7 @@ _PHASE_1_CELLS = (
     + [(1e8, L) for L in [1, 2, 3, 4, 5, 6, 8]]
 )
 
-# Phase 2 — * tier: 10⁶ gyroperiods, 65 steps/gyro
+# Phase 2 - 10⁶ gyroperiods, 20 steps/gyro
 _PHASE_2_CELLS = (
     [(1e2, L) for L in [6, 8]]
     + [(1e3, L) for L in [2, 3, 4, 5, 6, 8]]
@@ -74,14 +74,14 @@ _PHASE_2_CELLS = (
     + [(1e6, 1)]
 )
 
-# Phase 3 — † tier: 10⁷ gyroperiods, 15 steps/gyro
+# Phase 3 — 10⁷ gyroperiods, 15 steps/gyro
 _PHASE_3_CELLS = (
     [(1e1, L) for L in [2, 3, 4, 5, 6, 8]]
     + [(1e2, L) for L in [2, 3, 4, 5]]
     + [(1e3, 1)]
 )
 
-# Phase 4 — ‡ tier: 2×10⁷ gyroperiods, 15 steps/gyro
+# Phase 4 — 2×10⁷ gyroperiods, 15 steps/gyro
 _PHASE_4_CELLS = [(1e1, 1), (1e2, 1)]
 
 CELLS = {
@@ -135,7 +135,7 @@ OVERRIDES = {
     1: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.0001},
     2: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.00001},
     3: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.000001},
-    4: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.000001},
+    4: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.0000001},
 }
 
 
