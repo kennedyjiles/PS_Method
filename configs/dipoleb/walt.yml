@@ -2,8 +2,6 @@
 # Walt — high-energy proton, near-equatorial, relativistic L_eff
 # ===================================================================
 
-particle: proton
-energy_eV: 1.0e8
 pitch_deg: 89.0
 phi_deg: 0.0
 x_initial: 5.7045989
@@ -11,7 +9,6 @@ gyroperiods: 1.0e4
 use_gyroradius_L_correction: true
 
 solvers:
-  ps: true
   adaptive: true
 
 ps_order: 1000
@@ -22,7 +19,6 @@ steps_per_gyro:
 
 plotting:
   titles: true
-  full_plot: true
   slice_mode: first
   n_gyro: 175
 

@@ -512,6 +512,7 @@ def main(cfg_path, replot=False):
     wr.summary_txt_constb(
         output_filename,
         stem=stem, WRITE_DATA=WRITE_DATA, READ_DATA=READ_DATA,
+        cache_path=cache_path,
         particle_type=particle_type, KE_particle=KE_particle, mass=mass,
         pitch_deg=pitch_deg, phi_deg=phi_deg,
         tau_time=tau_time, v_tau=v_tau, gyro_radius_si=gyro_radius_si,

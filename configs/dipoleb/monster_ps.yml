@@ -2,19 +2,13 @@
 # Monster PS — extended proton run at large L-shell
 # ===================================================================
 
-particle: proton
 energy_eV: 1.0e7
 pitch_deg: 85.0
-phi_deg: 90.0
 x_initial: 8.0
 gyroperiods: 1.0e4
 read_data: false
 
-solvers:
-  ps: true
-
 plotting:
   gyro_window: first
-  n_gyro: 150
 
 window_time: 6209.0

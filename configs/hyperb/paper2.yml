@@ -6,41 +6,30 @@
 # use step_overrides to force the exact value.
 # ===================================================================
 
-particle: electron
-energy_eV: 10.0e3
-pitch_deg: 75.0
 phi_deg: 10.0
 delta: 50
-B_0: 10.0e-9
-x_initial_si: 0.0
 y_initial_si: 5.0            # 0.1 * delta
-z_initial_si: 0.0
-gyroperiods: 1.0e5
 
 step_overrides:
   ps: 0.0315
   rk4: 0.0315
 
 solvers:
-  ps: true
   rk4: true
   rk45: true
 
 plotting:
   titles: false
   full_plot: true
-  slice_mode: last
   slice_ylim: [-5, 13]
   slice_equal_aspect: true
 
-read_data: true
-write_data: true
-
 external_h5:
-  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
+  root: "data/hyperb/paper2/_rawdata/"
   a:
     enabled: false
-    file: "run_6fc9daec43008056.h5"
+    file: 74e8c2_full.h5
+
   b:
     enabled: false
-    file: "run_73287ee231150e97.h5"
+    file: aa8248_full.h5

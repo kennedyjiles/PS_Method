@@ -3,14 +3,10 @@
 #           PS takes huge steps, RK4 takes tiny steps
 # ===================================================================
 
-particle: proton
 energy_eV: 100.0e3
 pitch_deg: 30.0
-phi_deg: 90.0
-x_initial: 5.0
 
 solvers:
-  ps: true
   rk4: true
 
 ps_order: 16
@@ -28,9 +24,5 @@ steps_per_gyro:
 # norm_time set explicitly (not from gyroperiods × T_gyro)
 # Original expression: 6206.0 * 4 / 0.00033464094804535314
 norm_time_override: 74180999.50110008
-
-plotting:
-  full_plot: true
-  n_gyro: 150
 
 window_time: 6209.0

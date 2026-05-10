@@ -1,17 +1,11 @@
 # ===================================================================
-# Demo run — quick test with paper2 physics at reduced gyroperiods
+# Demo run — paper2 physics at reduced gyroperiods for quick test
 # ===================================================================
-use_float128: false         # true = use np.float128 for extended precision
 
 particle: electron
-energy_eV: 100.0e6
-pitch_deg: 60.0
-phi_deg: 90.0
-x_initial: 5.0
 gyroperiods: 550
 
 solvers:
-  ps: true
   rk4: true
   rk45: true
 

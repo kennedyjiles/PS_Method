@@ -1,38 +1,22 @@
 # ===================================================================
 # Paper run — 100 eV electron, 100k gyroperiods
 # ===================================================================
-# Original step sizes: rk4_step = ps_step = 0.063
-# Reproduced via: steps_per_gyro = 100, round_decimals = 3
-#   → round(2π/100, 3) = round(0.062832, 3) = 0.063 ✓
+# Step sizes from base.yml: rk4_step = ps_step = 0.063
+#   round(2π/100, 3) = round(0.062832, 3) = 0.063 ✓
 # ===================================================================
 
 particle: electron
-energy_eV: 100
-pitch_deg: 45.0
-phi_deg: 45.0
-Bfield_si: [0, 0, 0.01]
 gyroperiods: 1.0e5
-
-solvers:
-  ps: true
-  rk4: true
-  rk45: true
-  analytical: true
 
 plotting:
   titles: false
-  full_plot: true
-  gyro_plot_slice: 1.5
-
-read_data: true
-write_data: true
 
 # --- External H5 (for multi-precision comparison) ---
 external_h5:
   root: "data/constb/paper/_rawdata/"
   a:
     enabled: false
-    file: "fc57b0.h5"
+    file: a3c87c_full.h5
   b:
     enabled: false
-    file: "40b099.h5"
+    file: 26f9a2_full.h5

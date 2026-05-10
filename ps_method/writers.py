@@ -659,6 +659,7 @@ def summary_txt_constb(
     output_filename, *,
     # Run identity
     stem=None, WRITE_DATA=False, READ_DATA=False,
+    cache_path=None,                # actual h5 path (preferred over stem for filename)
     # Particle / field
     particle_type, KE_particle, mass, pitch_deg, phi_deg,
     tau_time, v_tau, gyro_radius_si,
@@ -683,7 +684,10 @@ def summary_txt_constb(
 
     with open(output_filename, "w") as f:
         if WRITE_DATA or READ_DATA:
-            f.write(f"Run Data: {stem}.h5\n\n")
+            # Use the actual h5 filename (handles _full suffix and trimmed
+            # variants correctly); fall back to stem-based name if not given.
+            h5_name = os.path.basename(cache_path) if cache_path else f"{stem}.h5"
+            f.write(f"Run Data: {h5_name}\n\n")
 
         f.write("=== Simulation Summary ===\n")
         f.write("Initial Conditions:\n")
@@ -740,6 +744,7 @@ def summary_txt_hyperb(
     output_filename, *,
     # Run identity
     stem=None, WRITE_DATA=False, READ_DATA=False,
+    cache_path=None,                # actual h5 path (preferred over stem for filename)
     # Particle / field
     particle_type, KE_particle, mass_si, pitch_deg, phi_deg,
     tau_time, v_tau, gyro_radius_si,
@@ -763,7 +768,8 @@ def summary_txt_hyperb(
 
     with open(output_filename, "w") as f:
         if WRITE_DATA or READ_DATA:
-            f.write(f"Run Data: {stem}.h5\n\n")
+            h5_name = os.path.basename(cache_path) if cache_path else f"{stem}.h5"
+            f.write(f"Run Data: {h5_name}\n\n")
 
         f.write("=== Simulation Summary ===\n")
         f.write("Initial Conditions:\n")

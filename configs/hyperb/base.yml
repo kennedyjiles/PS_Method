@@ -28,7 +28,7 @@ y_initial_si: 125.0         # initial y position (km); paper1 default = 0.25 * d
 z_initial_si: 0.0           # initial z position (km)
 
 # --- Integration ---
-gyroperiods: 100            # number of gyroperiods to simulate
+gyroperiods: 1.0e5           # number of gyroperiods to simulate
 
 # --- Precision ---
 use_float128: false         # true = use np.float128 for extended precision
@@ -36,8 +36,8 @@ use_float128: false         # true = use np.float128 for extended precision
 # --- Solvers ---
 solvers:
   ps: true
-  rk4: true
-  rk45: true
+  rk4: false
+  rk45: false
 
 # --- Plotting ---
 plotting:

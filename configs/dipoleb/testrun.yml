@@ -1,28 +1,12 @@
 # ===================================================================
-# Paper 1 — 100 keV proton, 30° pitch, 5 R_E
+# Test run — paper1 physics, PS-only
 # ===================================================================
-use_float128: false         # true = use np.float128 for extended precision
 
-particle: proton
 energy_eV: 100.0e3
 pitch_deg: 30.0
-phi_deg: 90.0
-x_initial: 5.0
-
-solvers:
-  ps: true
-  rk4: false
-  rk45: false
-  rkg: false
 
 # Integration defined by total steps rather than gyroperiods.
-# 1e7 steps × ps_step gives norm_time; gyroperiods is derived.
-gyroperiods: null         # computed from total_steps below
-total_steps: 1.0e7        # total integration steps (norm_time = total_steps × ps_step)
-use_gyroradius_L_correction: False  # Shifts x_initial by the particle's gyroradius to get the
-
-
-plotting:
-  n_gyro: 150
+gyroperiods: null         # null suppresses base.yml's value so total_steps drives norm_time
+total_steps: 1.0e7
 
 window_time: 6209.0

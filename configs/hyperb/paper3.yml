@@ -5,33 +5,23 @@
 particle: proton
 energy_eV: 100.0e3
 pitch_deg: -15.0
-phi_deg: 45.0
 delta: 200
-B_0: 10.0e-9
-x_initial_si: 0.0
 y_initial_si: 2.0            # 0.01 * delta
-z_initial_si: 0.0
-gyroperiods: 1.0e5
 
 solvers:
-  ps: true
   rk4: true
   rk45: true
 
 plotting:
   titles: false
   full_plot: true
-  slice_mode: last
   skip_rk4_slice: true
 
-read_data: true
-write_data: true
-
 external_h5:
-  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
+  root: data/hyperb/paper3/_rawdata/ 
   a:
     enabled: false
-    file: "run_d72c9d579dd24595.h5"
+    file: null
   b:
     enabled: false
-    file: "run_bbb58e0c8a29e72f.h5"
+    file: 5a835a_full.h5

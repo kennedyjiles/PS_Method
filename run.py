@@ -10,8 +10,8 @@ Full run (solvers + post-processing):
     python run.py configs/dipoleb/demo.yml
 
 Post-processing only (replot from cached h5 data):
-    python run.py data/constb/demo/demo.yml            # auto-detected from data/ path
-    python run.py configs/dipoleb/manual.yml --replot   # explicit flag
+    python run.py data/constb/demo/demo.yml                     # auto-detected from data/ path
+    python run.py configs/dipoleb/manual_template.yml --replot  # explicit flag
 
 Shorthand (field type + config name):
     python run.py constb demo
@@ -25,30 +25,20 @@ import os
 import sys
 
 
-# Map field keywords → (config subdirectory, data subdirectory)
-_DRIVERS = {
-    "constb":  ("constb",  "constb"),
-    "hyperb":  ("hyperb",  "hyperb"),
-    "dipoleb": ("dipoleb", "dipoleb"),
-}
-
-# Map directory names → field keyword (for path-based inference)
-_DIR_TO_FIELD = {
-    "constb":  "constb",
-    "hyperb":  "hyperb",
-    "dipoleb": "dipoleb",
-}
+# Field keywords used both as the driver name and as the configs/ + data/
+# subdirectory name (they're identical after the lowercase rename).
+_FIELDS = {"constb", "hyperb", "dipoleb"}
 
 
 def _resolve(args):
     """Return (field_key, yaml_path, replot) from the command-line arguments.
 
     Supports these calling conventions:
-        run.py configs/dipoleb/demo.yml          → full run
+        run.py configs/dipoleb/demo.yml           → full run
         run.py configs/dipoleb/demo.yml --replot  → replot only
-        run.py data/dipoleb/demo/demo.yml        → replot only (auto-detected)
-        run.py dipoleb demo                      → full run (shorthand)
-        run.py dipoleb configs/dipoleb/demo.yml  → full run (explicit)
+        run.py data/dipoleb/demo/demo.yml         → replot only (auto-detected)
+        run.py dipoleb demo                       → full run (shorthand)
+        run.py dipoleb configs/dipoleb/demo.yml   → full run (explicit)
     """
     # Strip --replot flag from args before positional parsing
     force_replot = "--replot" in args
@@ -63,23 +53,19 @@ def _resolve(args):
             parts = path.replace(os.sep, "/").split("/")
             # parts: ["data", "<field>", "<config>", "config.yml"]
             if len(parts) >= 3:
-                data_dir = parts[1]
-                if data_dir.lower() in _DIR_TO_FIELD:
-                    field_key = _DIR_TO_FIELD[data_dir]
-                elif data_dir.lower() in [k for k in _DRIVERS]:
-                    field_key = data_dir.lower()
-                else:
+                data_dir = parts[1].lower()
+                if data_dir not in _FIELDS:
                     raise ValueError(
                         f"Cannot infer field type from data path: {path}\n"
-                        f"Expected data/<field>/... where field is constb, hyperb, or dipoleb"
+                        f"Expected data/<field>/... where field is one of {sorted(_FIELDS)}"
                     )
                 if not os.path.isfile(path):
                     raise FileNotFoundError(f"Config file not found: {path}")
-                return field_key, path, True  # replot = True
+                return data_dir, path, True  # replot = True
 
-        # --- Normal run: path contains configs/<subdir>/ ---
-        for dirname, field_key in _DIR_TO_FIELD.items():
-            if f"configs/{dirname}/" in path or f"configs{os.sep}{dirname}{os.sep}" in path:
+        # --- Normal run: path contains configs/<field>/ ---
+        for field_key in _FIELDS:
+            if f"configs/{field_key}/" in path or f"configs{os.sep}{field_key}{os.sep}" in path:
                 if not os.path.isfile(path):
                     raise FileNotFoundError(f"Config file not found: {path}")
                 return field_key, path, force_replot
@@ -92,13 +78,12 @@ def _resolve(args):
     elif len(args) == 2:
         field_raw, run_name = args
         field_key = field_raw.lower().rstrip("/")
-        if field_key not in _DRIVERS:
+        if field_key not in _FIELDS:
             raise ValueError(
                 f"Unknown field type: '{field_raw}'\n"
-                f"Expected one of: constb, hyperb, dipoleb"
+                f"Expected one of: {sorted(_FIELDS)}"
             )
-        config_subdir = _DRIVERS[field_key][0]
-        configs_dir = os.path.join(os.path.dirname(__file__), "configs", config_subdir)
+        configs_dir = os.path.join(os.path.dirname(__file__), "configs", field_key)
 
         # If run_name is already a full path
         if run_name.endswith((".yml", ".yaml")) and os.path.isfile(run_name):
