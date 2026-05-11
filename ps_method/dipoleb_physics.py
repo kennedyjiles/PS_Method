@@ -35,7 +35,7 @@ def lorentz_force(t, d, charge_sign):
     # rk4_fixed_step); unused here.
     x, y, z, vx, vy, vz = d
     r2 = x**two + y**two + z**two
-    r5inv = r2**(-twopointfive) if r2 != 0 else 0.0
+    r5inv = r2**(-twopointfive) if r2 != 0 else ul.npfloat(0.0)
 
     # Magnetic field components
     Bx = -three * x * z * r5inv
@@ -84,8 +84,8 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
     state_history[g_aux, 0] = g0
 
     state_history[Bz_aux, 0] = -a0 * b0
-    state_history[By_aux, 0] = -ul.npfloat(3.0) * a0 * c0
-    state_history[Bx_aux, 0] = -ul.npfloat(3.0) * a0 * d0
+    state_history[By_aux, 0] = -three * a0 * c0
+    state_history[Bx_aux, 0] = -three * a0 * d0
 
     oip1 = one / (one + np.arange(ps_order, dtype=ul.npfloat))
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
@@ -146,8 +146,8 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
             c[f_aux, i+1] = -(three * cauchy_sum_inline(c[d_aux], c[vz], i+1) - cauchy_sum_inline(c[b_aux], c[vx], i+1))
             c[g_aux, i+1] = -(three * (cauchy_sum_inline(c[c_aux], c[vx], i+1) - cauchy_sum_inline(c[d_aux], c[vy], i+1)))
 
-            c[Bx_aux, i+1] = -ul.npfloat(3.0) * cauchy_sum_inline(c[a_aux], c[d_aux], i+1)
-            c[By_aux, i+1] = -ul.npfloat(3.0) * cauchy_sum_inline(c[a_aux], c[c_aux], i+1)
+            c[Bx_aux, i+1] = -three * cauchy_sum_inline(c[a_aux], c[d_aux], i+1)
+            c[By_aux, i+1] = -three * cauchy_sum_inline(c[a_aux], c[c_aux], i+1)
             c[Bz_aux, i+1] =        -cauchy_sum_inline(c[a_aux], c[b_aux], i+1)
 
             new_term = c[:, i+1] * power
@@ -193,8 +193,8 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
         state_history[e_aux, j] = e_now
         state_history[f_aux, j] = f_now
         state_history[g_aux, j] = g_now
-        state_history[Bx_aux, j] = -ul.npfloat(3.0) * a_now * d_now
-        state_history[By_aux, j] = -ul.npfloat(3.0) * a_now * c_now
+        state_history[Bx_aux, j] = -three * a_now * d_now
+        state_history[By_aux, j] = -three * a_now * c_now
         state_history[Bz_aux, j] = -a_now * b_now
 
         orders_used[j] = i
@@ -251,16 +251,16 @@ def hamiltonian_rhs(t, d, charge_sign):
 
     # dp/dt (hardcoded)
     dpxdt = charge_sign * (
-        -3 * x * y / r5 * Pix
-        - (1.0 / r3 - 3 * x * x / r5) * Piy
+        -three * x * y / r5 * Pix
+        - (one / r3 - three * x * x / r5) * Piy
     )
 
     dpydt = charge_sign * (
-        (1.0 / r3 - 3 * y * y / r5) * Pix
-        + 3 * x * y / r5 * Piy
+        (one / r3 - three * y * y / r5) * Pix
+        + three * x * y / r5 * Piy
     )
 
-    dpzdt = charge_sign * 3 * z / r5 * (-y * Pix + x * Piy)
+    dpzdt = charge_sign * three * z / r5 * (-y * Pix + x * Piy)
 
     return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=ul.npfloat)
 
@@ -384,7 +384,7 @@ def run_ps_streaming_with_decimation(
     hit_atmosphere = False
     hit_atm_step   = -1
     hit_atm_r      = 0.0
-    R_ATMOSPHERE   = r_atmosphere   # in R_E; configurable via yaml (default 1.0 = surface)
+    # r_atmosphere is in R_E; configurable via yaml (default 1.0 = surface)
 
     if write_data:
         f = h5py.File(cache_path, "w")
@@ -473,7 +473,7 @@ def run_ps_streaming_with_decimation(
 
             # ---- atmospheric impact check (diagnostic only, does not halt) ----
             r_sq = sol_chunk[0]**2 + sol_chunk[1]**2 + sol_chunk[2]**2
-            below = np.where(r_sq < R_ATMOSPHERE**2)[0]
+            below = np.where(r_sq < r_atmosphere**2)[0]
             if len(below) > 0:
                 r_min_chunk = float(np.sqrt(r_sq[below].min()))
                 hit_atm_r = min(hit_atm_r, r_min_chunk) if hit_atmosphere else r_min_chunk
@@ -499,7 +499,7 @@ def run_ps_streaming_with_decimation(
         elapsed_ps = time.time() - start_time_ps
 
         if hit_atmosphere:
-            print(f"\n    *** ATMOSPHERE FLAG: particle crossed r < {R_ATMOSPHERE} R_E "
+            print(f"\n    *** ATMOSPHERE FLAG: particle crossed r < {r_atmosphere} R_E "
                   f"at step {hit_atm_step:,} (r_min = {hit_atm_r:.4f} R_E) ***\n")
 
         return max_ps, elapsed_ps

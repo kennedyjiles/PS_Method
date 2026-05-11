@@ -26,8 +26,12 @@ Internal:
 import numpy as np
 from . import utils as ul
 
-# Default row indices for the 17-row PS coefficient matrix
-named_indices = {"vx": 3, "vy": 4, "vz": 5, "Bx": 14, "By": 15, "Bz": 16}
+# Default row indices for the 17-row PS coefficient matrix.
+# Position rows (x, y) are needed by the drift-φ interpolation; velocity
+# and B rows are needed by the bounce sign-change detection.
+named_indices = {"x": 0, "y": 1, "z": 2,
+                 "vx": 3, "vy": 4, "vz": 5,
+                 "Bx": 14, "By": 15, "Bz": 16}
 
 
 # ===================================================================
@@ -60,6 +64,7 @@ def _process_chunk_kernel(
     last_s, last_t, last_y, last_cross_t, last_phi,
     has_prev, has_phi_prev,
     min_gap_tau, s_eps,
+    idx_x, idx_y,
     idx_vx, idx_vy, idx_vz, idx_Bx, idx_By, idx_Bz,
 ):
     """JIT'd inner loop: scan one chunk for v·B sign changes, emit
@@ -98,8 +103,8 @@ def _process_chunk_kernel(
 
                     # --- inline record_drift_sample ---
                     w = 0.0 if ti == last_t else (tc - last_t) / (ti - last_t)
-                    phi0 = np.arctan2(last_y[1], last_y[0])
-                    phi1 = np.arctan2(y_chunk[1, i], y_chunk[0, i])
+                    phi0 = np.arctan2(last_y[idx_y], last_y[idx_x])
+                    phi1 = np.arctan2(y_chunk[idx_y, i], y_chunk[idx_x, i])
                     # LOCAL unwrap between adjacent samples
                     d = phi1 - phi0
                     if abs(d) > np.pi:
@@ -134,16 +139,12 @@ def process_bounce_and_drift_chunk(
     drift_state,
     min_gap_tau,
     s_eps,
-    idx_map=None,
-    interp=True,
 ):
     """Public entry point. Marshals dict-state into the JIT'd kernel and
     appends emitted crossings / drift samples back into the dict state.
-
-    The ``interp`` parameter is accepted for API compatibility but is
-    always treated as True (the False branch was already unreachable).
+    Always uses linear interpolation for sub-step mirror times.
     """
-    idx = named_indices if idx_map is None else idx_map
+    idx = named_indices
 
     has_prev = bounce_state["last_s"] is not None
     last_s = ul.npfloat(bounce_state["last_s"]) if has_prev else ul.npfloat(0.0)
@@ -163,6 +164,7 @@ def process_bounce_and_drift_chunk(
         last_s, last_t, last_y, last_cross_t, last_phi,
         has_prev, has_phi_prev,
         ul.npfloat(min_gap_tau), ul.npfloat(s_eps),
+        idx["x"], idx["y"],
         idx["vx"], idx["vy"], idx["vz"],
         idx["Bx"], idx["By"], idx["Bz"],
     )
@@ -185,19 +187,20 @@ def process_bounce_and_drift_chunk(
 # === Finalisation ==================================================
 # ===================================================================
 def bounce_summary(crossing_times_tau, time_scale_sec=None):
+    """Final stats are returned as plain float64 (not npfloat) for CSV / JSON
+    serialization — the float128 setup convention only applies upstream of
+    here, in the integrator and per-step kernel."""
     c = np.asarray(crossing_times_tau, dtype=float)
     full_tau = (c[2:] - c[:-2]) if c.size >= 3 else np.array([], float)
 
     out = {
         "n_crossings": int(c.size),
-        "full_tau": full_tau,
         "full_mean_tau": float(np.mean(full_tau)) if full_tau.size else None,
     }
 
     if time_scale_sec is not None:
         full_s = full_tau * time_scale_sec
         out.update({
-            "full_s": full_s,
             "full_mean_s": float(np.mean(full_s)) if full_s.size else None,
             "bounce_frequency_hz": (1.0/float(np.mean(full_s))) if full_s.size else None,
         })

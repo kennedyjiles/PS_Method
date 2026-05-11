@@ -206,11 +206,11 @@ def compute_ke_errors(
             energy_stride_ext = max(1, n_store // max_plot_points)
             idx = np.arange(0, n_store, energy_stride_ext)
             t_eval_ps_ext = idx * dt_store_ext
-            vxe = y_ext[3, ::energy_stride_ext].astype(np.float64)
-            vye = y_ext[4, ::energy_stride_ext].astype(np.float64)
-            vze = y_ext[5, ::energy_stride_ext].astype(np.float64)
+            vxe = y_ext[3, ::energy_stride_ext].astype(ul.npfloat)
+            vye = y_ext[4, ::energy_stride_ext].astype(ul.npfloat)
+            vze = y_ext[5, ::energy_stride_ext].astype(ul.npfloat)
             E_ext = 0.5 * (vxe*vxe + vye*vye + vze*vze)
-            rel_drift_ps_ext = (E_ext - E_ext[0]) / E_ext[0]
+            rel_drift_ps_ext = np.abs(E_ext - E_ext[0]) / E_ext[0]
             ps_order_ext = ext_ps.attrs.get("max_ps", None)
         ke_ext_ps = (t_eval_ps_ext, rel_drift_ps_ext, ps_order_ext)
 
@@ -250,9 +250,9 @@ def compute_ke_errors(
         energy_stride_ext = max(1, n_store // max_plot_points)
         idx = np.arange(0, n_store, energy_stride_ext)
         t_eval_rk45_ext = t_ext[idx]
-        v = y_rk45_ext[3:6, idx].astype(np.float64)
+        v = y_rk45_ext[3:6, idx].astype(ul.npfloat)
         E = 0.5 * np.sum(v*v, axis=0)
-        rel_drift_rk45_ext = (E - E[0]) / E[0]
+        rel_drift_rk45_ext = np.abs(E - E[0]) / E[0]
         ke_ext_rk45 = (t_eval_rk45_ext, rel_drift_rk45_ext)
 
     if USE_EXTERNAL_H5_rkg:

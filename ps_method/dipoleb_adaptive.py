@@ -75,8 +75,8 @@ def _tether_aux(state):
     state[11] = -e
     state[12] = -f
     state[13] = -g
-    state[14] = -ul.npfloat(3.0) * a * d
-    state[15] = -ul.npfloat(3.0) * a * cv
+    state[14] = -_three * a * d
+    state[15] = -_three * a * cv
     state[16] = -a * b
 
 
@@ -111,7 +111,7 @@ def _use_fast_path(state, ps_step, min_N):
 
 def _ps_adaptive_chunk(
     ps_order, n_output, cur_state, tol, charge_sign, ps_step,
-    dt_internal, dt_min, dt_max,
+    dt_min, dt_max,
     order_low, order_high, grow_factor, shrink_factor, max_retries,
     t_internal,
     steps_per_local_gyro=200,
@@ -274,8 +274,7 @@ def _ps_adaptive_chunk(
         sol_chunk[:, jj] = cur_state
         orders_chunk[jj] = last_order
 
-    return (sol_chunk, orders_chunk, cur_state,
-            dt_B if n_output > 0 else dt_internal,
+    return (sol_chunk, orders_chunk, cur_state, dt_B,
             t_internal, max_ps, substeps, rejections,
             False)
 
@@ -341,7 +340,7 @@ def run_ps_streaming_adaptive(
     hit_atmosphere  = False
     hit_atm_step    = -1
     hit_atm_r       = 0.0
-    R_ATMOSPHERE    = r_atmosphere   # in R_E; configurable via yaml (default 1.0 = surface)
+    # r_atmosphere is in R_E; configurable via yaml (default 1.0 = surface)
 
     # --- internal time ---
     t_internal = ul.npfloat(0.0)
@@ -415,8 +414,6 @@ def run_ps_streaming_adaptive(
                 if chunk_max >= ps_order or chunk_max > order_high or has_nan:
                     # REDO this chunk in adaptive mode
                     force_adaptive = True
-                    dt_internal = _local_dt_from_B(
-                        cur_state, steps_per_local_gyro, dt_min, dt_max)
                     continue
 
                 # fast path accepted — count it and clear the flag
@@ -435,8 +432,6 @@ def run_ps_streaming_adaptive(
                     cur_state[:6] = sol_chunk[:6, 0].copy()
                     _tether_aux(cur_state)
                     force_adaptive = True
-                    dt_internal = _local_dt_from_B(
-                        cur_state, steps_per_local_gyro, dt_min, dt_max)
                     continue
 
                 t_internal += this_chunk * ps_step
@@ -447,15 +442,12 @@ def run_ps_streaming_adaptive(
                 #  ADAPTIVE PATH: local B says ps_step is too
                 #  large — subdivide with B-based dt
                 # =============================================
-                dt_internal = _local_dt_from_B(
-                    cur_state, steps_per_local_gyro, dt_min, dt_max)
-
                 (sol_chunk, orders_chunk, cur_state, dt_internal,
                  t_internal, chunk_max_ps, chunk_substeps, chunk_rejections,
                  halted
                 ) = _ps_adaptive_chunk(
                     ps_order, this_chunk, cur_state, tol, charge_sign, ps_step,
-                    dt_internal, dt_min, dt_max,
+                    dt_min, dt_max,
                     order_low, order_high, grow_factor, shrink_factor, max_retries,
                     t_internal,
                     steps_per_local_gyro=steps_per_local_gyro,
@@ -469,7 +461,7 @@ def run_ps_streaming_adaptive(
 
             # ---- atmospheric impact check (diagnostic only, does not halt) ----
             r_sq = sol_chunk[0]**2 + sol_chunk[1]**2 + sol_chunk[2]**2
-            below = np.where(r_sq < R_ATMOSPHERE**2)[0]
+            below = np.where(r_sq < r_atmosphere**2)[0]
             if len(below) > 0:
                 r_min_chunk = float(np.sqrt(r_sq[below].min()))
                 hit_atm_r = min(hit_atm_r, r_min_chunk) if hit_atmosphere else r_min_chunk
@@ -551,7 +543,7 @@ def run_ps_streaming_adaptive(
               f"  (nominal = {float(ps_step):.4f})"
               f"\n    wall time       = {elapsed_ps:.1f} s")
         if hit_atmosphere:
-            print(f"    *** ATMOSPHERE FLAG: particle crossed r < {R_ATMOSPHERE} R_E "
+            print(f"    *** ATMOSPHERE FLAG: particle crossed r < {r_atmosphere} R_E "
                   f"at step {hit_atm_step:,} (r_min = {hit_atm_r:.4f} R_E) ***")
         print()
 
