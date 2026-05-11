@@ -149,7 +149,9 @@ def main(cfg_path, replot=False):
     if abs(vy_initial) < tol: vy_initial = npfloat(0.0)
     if abs(vz_initial) < tol: vz_initial = npfloat(0.0)
 
-    gyro_radius_si = v_si * np.sin(pitch_rad) * mass / (abs(q_e) * B_0)
+    # |sin| because gyroradius is a magnitude — pitch sign only sets the
+    # rotation direction (via v_perp's sign in the IC), not the radius.
+    gyro_radius_si = v_si * np.abs(np.sin(pitch_rad)) * mass / (abs(q_e) * B_0)
 
     initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)
 

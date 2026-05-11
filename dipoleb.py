@@ -444,7 +444,9 @@ def main(cfg_path, replot=False):
     if abs(vy_initial) < (1.0 * np.finfo(npfloat).eps): vy_initial = npfloat(0.0)
     if abs(vz_initial) < (1.0 * np.finfo(npfloat).eps): vz_initial = npfloat(0.0)
 
-    gyro_radius_si = (gamma * mass_si * v_si * np.sin(pitch_rad) / (np.abs(q_e) * (B_0 / x_initial**3)))
+    # |sin| because gyroradius is a magnitude — pitch sign only sets the
+    # rotation direction (via v_perp's sign in the IC), not the radius.
+    gyro_radius_si = (gamma * mass_si * v_si * np.abs(np.sin(pitch_rad)) / (np.abs(q_e) * (B_0 / x_initial**3)))
     gyro_radius_RE=float(gyro_radius_si/RE)
     initial_pos_vel = np.array([x_initial, y_initial, z_initial, vx_initial, vy_initial, vz_initial], dtype=npfloat)
 
@@ -1137,6 +1139,7 @@ def main(cfg_path, replot=False):
         USE_EXTERNAL_H5_rk45=USE_EXTERNAL_H5_rk45, external_h5_rk45=external_h5_rk45,
         USE_EXTERNAL_H5_rkg=USE_EXTERNAL_H5_rkg,   external_h5_rkg=external_h5_rkg,
         vector_potential_func=dp.vector_potential,
+        charge_sign=charge_sign,
         load_results_h5_func=wr.load_results_h5_dipoleb,
     )
 
@@ -1217,7 +1220,8 @@ def main(cfg_path, replot=False):
         mu_rkg_result = mp.compute_mu_deviation_rk(
             solution_rkg, steps_rkg, rkg_step,
             n_gyro, n_steps_per_gyro_rkg, gyro_window, time_factor,
-            solver_type="rkg", y_initial=rkg_y_initial)
+            solver_type="rkg", y_initial=rkg_y_initial,
+            charge_sign=charge_sign)
 
     if USE_RK45:
         mu_rk45_result = mp.compute_mu_deviation_rk(

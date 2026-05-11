@@ -438,7 +438,11 @@ def _compute_relativistic_L_eff(KE_eV, mass_si, pitch_deg, phi_deg, x_initial):
     gamma     = 1.0 + (E_kinetic / E_rest)
     v_total   = spdlight * np.sqrt(1.0 - (1.0 / gamma ** 2))
     alpha_rad = np.radians(pitch_deg)
-    v_perp    = v_total * np.sin(alpha_rad)
+    # |sin| because r_g_RE is a magnitude — pitch sign only sets v_perp's
+    # direction in the IC, not the gyroradius. (sin(phi_rad) below DOES
+    # legitimately carry sign — it sets which side of x_initial the
+    # gyrocenter sits on.)
+    v_perp    = v_total * np.abs(np.sin(alpha_rad))
 
     B_at_launch = B_0_dipole / (x_initial ** 3)
     omega_init  = (abs(q_e) * B_at_launch) / (gamma * mass_si)

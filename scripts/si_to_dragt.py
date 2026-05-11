@@ -62,7 +62,11 @@ beta          = speed / speed_light
 pitch_rad     = np.radians(pitch_deg)
 phi_rad       = np.radians(phi_deg)
 
-v_perp_si = speed * np.sin(pitch_rad)
+# |sin| for v_perp_si because the only downstream use is gyroradius_RE,
+# which needs the velocity magnitude. v_perp_sim below stays signed —
+# it goes into the simulator IC where sign matters for the rotation
+# direction.
+v_perp_si = speed * np.abs(np.sin(pitch_rad))
 v_par_si  = speed * np.cos(pitch_rad)
 
 # ==========================

@@ -100,6 +100,7 @@ def compute_mu_deviation_rk(
     gyro_window, time_factor,
     solver_type="rk4",
     y_initial=None,
+    charge_sign=1,
 ):
     """
     Compute magnetic moment deviation for an in-memory RK solver solution.
@@ -146,7 +147,8 @@ def compute_mu_deviation_rk(
             r0 = solution[0, 0:3]
             p0 = solution[0, 3:6]
         A0 = dp.vector_potential(r0)
-        v0 = p0 - A0
+        # v = p - charge_sign * A (matches hamiltonian_rhs in dipoleb_physics)
+        v0 = p0 - charge_sign * A0
         state0 = np.hstack((r0, v0))[None, :]
         mu0 = compute_mu_rk(state0)[0]
 
@@ -155,7 +157,7 @@ def compute_mu_deviation_rk(
         A_win = np.empty_like(r_win)
         for i in range(len(r_win)):
             A_win[i] = dp.vector_potential(r_win[i])
-        v_win = p_win - A_win
+        v_win = p_win - charge_sign * A_win
         state_win = np.hstack((r_win, v_win))
         mu_win = compute_mu_rk(state_win)
     else:

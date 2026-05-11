@@ -170,8 +170,10 @@ def compute_ke_errors(
     USE_EXTERNAL_H5_rk4=False, external_h5_rk4=None,
     USE_EXTERNAL_H5_rk45=False, external_h5_rk45=None,
     USE_EXTERNAL_H5_rkg=False,  external_h5_rkg=None,
-    # Needed for RKG Hamiltonian energy
+    # Needed for RKG Hamiltonian energy (canonical p → v requires charge sign:
+    # v = p - charge_sign * A, matching hamiltonian_rhs)
     vector_potential_func=None,
+    charge_sign=1,
     # For loading external rk4/rk45 files
     load_results_h5_func=None,
 ):
@@ -286,7 +288,8 @@ def compute_ke_errors(
         A_rkg_ext = np.zeros_like(r_rkg_ext)
         for i in range(len(r_rkg_ext)):
             A_rkg_ext[i] = vector_potential_func(r_rkg_ext[i])
-        v_rkg_ext = p_rkg_ext - A_rkg_ext
+        # v = p - charge_sign * A (matches hamiltonian_rhs)
+        v_rkg_ext = p_rkg_ext - charge_sign * A_rkg_ext
         E_rkg_ext = ul.npfloat(0.5) * np.sum(v_rkg_ext**2, axis=1, dtype=ul.npfloat)
         rel_drift_ext_rkg = np.abs(E_rkg_ext - E_rkg_ext[0]) / E_rkg_ext[0]
         ke_ext_rkg = (t_ext_rkg, rel_drift_ext_rkg)
@@ -314,10 +317,11 @@ def compute_ke_errors(
         A_rkg = np.zeros_like(r_rkg)
         for i in range(len(r_rkg)):
             A_rkg[i] = vector_potential_func(r_rkg[i])
-        v_rkg = p_rkg - A_rkg
+        # v = p - charge_sign * A (matches hamiltonian_rhs)
+        v_rkg = p_rkg - charge_sign * A_rkg
         E_rkg = ul.npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=ul.npfloat)
         if rkg_y_initial is not None:
-            v0 = rkg_y_initial[3:6] - vector_potential_func(rkg_y_initial[0:3])
+            v0 = rkg_y_initial[3:6] - charge_sign * vector_potential_func(rkg_y_initial[0:3])
             E_rkg_0 = ul.npfloat(0.5) * ul.npfloat(np.sum(v0 * v0))
         else:
             E_rkg_0 = E_rkg[0]

@@ -143,7 +143,9 @@ def main(cfg_path, replot=False):
     v_si = npfloat(np.sqrt(npfloat(2 * KE_particle * evtoj / mass_si))) / 1000  # /1000 puts things in km
     tau_time = mass_si / (abs(q_e) * B_0)
 
-    gyro_radius_si = v_si * np.sin(pitch_rad) * mass_si / (abs(q_e) * B_0)
+    # |sin| because gyroradius is a magnitude — pitch sign only sets the
+    # rotation direction (via v_perp's sign in the IC), not the radius.
+    gyro_radius_si = v_si * np.abs(np.sin(pitch_rad)) * mass_si / (abs(q_e) * B_0)
     r_normalization = delta
     v_tau = v_si * tau_time / r_normalization
     # `gamma` is the field-scale factor in B(y) = B_0 tanh(gamma*y) (paper Eq. 31),

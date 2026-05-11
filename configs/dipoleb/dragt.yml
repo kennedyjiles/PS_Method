@@ -3,10 +3,12 @@
 # (energy_eV / pitch_deg / particle inherited from base.yml)
 # ===================================================================
 
-phi_deg: 0.0
-x_initial: 1.3
-gyroperiods: 1.0e3
-use_gyroradius_L_correction: true
+pitch_deg: 67.61877044327187
+phi_deg: -90.0
+x_initial: 4.45978528
+energy_eV: 71.37202917184707e6 
+gyroperiods: 1.0e4
+use_gyroradius_L_correction: false
 
 solvers:
   adaptive: true
