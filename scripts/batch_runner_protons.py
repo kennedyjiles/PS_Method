@@ -19,12 +19,13 @@ Output layout:
     data/dipoleb/<group>/master_simulation_log.csv   consolidated CSV for the batch
 
 Usage:
-    python scripts/batch_runner.py --phase 1 --workers 10
-    python scripts/batch_runner.py --phase 1 --workers 10 --adaptive
-    python scripts/batch_runner.py --phase 1 --workers 10 --dry-run
-    python scripts/batch_runner.py --phase 1 --workers 10 --resume
-    python scripts/batch_runner.py --phase 1 --group my_sweep --workers 10
+    python scripts/batch_runner_protons.py                # phase 1, n_cores-1 workers
+    python scripts/batch_runner_protons.py --workers 4    # cap workers
+    python scripts/batch_runner_protons.py --dry-run      # preview without running
+    python scripts/batch_runner_protons.py --resume       # skip already-completed runs
+    python scripts/batch_runner_protons.py --adaptive     # use adaptive PS stepping
 
+Output always lands in data/dipoleb/proton/ (DEFAULT_GROUPS in this script).
 """
 
 import os
@@ -73,10 +74,10 @@ CELLS = {
 }
 
 GYROPERIODS = {
-    1: 154061.9849129547,
-    2: 154061.9849129547,
-    3: 154061.9849129547,
-    4: 154061.9849129547,
+    1: None,
+    2: None,
+    3: None,
+    4: None,
 }
 
 STEPS_PER_GYRO_PS = {
@@ -117,10 +118,7 @@ DEFAULT_GROUPS = {
 # solvers override enables RK4 / RK45 / RKG alongside PS for the four-method
 # comparison rows in the table. (base.yml has rk4/rk45/rkg false.)
 OVERRIDES = {
-    1: {
-        "phi_deg": 0.0,
-        "use_gyroradius_L_correction": False,
-        "user_min_phase": 0.0001,
+    1: {"gyroperiods": None, "total_steps": 1.0e7,
         "solvers": {"rk4": True, "rk45": True, "rkg": True},
     },
     2: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.00001},
@@ -171,9 +169,13 @@ def build_run_list(phase):
                 "energy_eV":  energy,
                 "x_initial":  round(L, 2),
                 "pitch_deg":  pitch,
-                "gyroperiods": gyros,
                 "phase":      phase,
             }
+            # Only include gyroperiods if set. None means the phase is
+            # driven by total_steps (set via OVERRIDES) and we shouldn't
+            # write a gyroperiods value to the per-worker yml.
+            if gyros is not None:
+                run["gyroperiods"] = gyros
             if steps_per_gyro is not None:
                 run["steps_per_gyro_ps"] = steps_per_gyro
             skip_key = (energy, L, pitch)
@@ -272,11 +274,15 @@ def write_config(run, config_path, group):
         "energy_eV":   float(run["energy_eV"]),
         "x_initial":   float(run["x_initial"]),
         "pitch_deg":   float(run["pitch_deg"]),
-        "gyroperiods": float(run["gyroperiods"]),
         "particle":    PARTICLE.get(run["phase"], "proton"),
         "read_data":   False,
         "solvers":     sweep_solvers,
     }
+    # Only include gyroperiods in sweep when it's actually set per-run;
+    # otherwise let OVERRIDES (e.g. {"gyroperiods": null, "total_steps": N})
+    # or base.yml decide. Same pattern as phi_deg below.
+    if "gyroperiods" in run:
+        sweep["gyroperiods"] = float(run["gyroperiods"])
     # Only include phi_deg in sweep if it's actually a per-run value;
     # otherwise let OVERRIDES (or base.yml) decide.
     if "phi_deg" in run:
@@ -292,7 +298,7 @@ def write_config(run, config_path, group):
 
 
 # Module-level variable set by main() so execute_single_run can access it
-_batch_group = "walt"
+_batch_group = "proton"
 
 
 def execute_single_run(run):
@@ -459,27 +465,29 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --phase 1 --dry-run                        Preview Phase 1
-  %(prog)s --phase 1 --workers 10                     Phase 1, fixed-step, 10 cores
-  %(prog)s --phase 2 --workers 8 --adaptive           Phase 2, adaptive stepping
-  %(prog)s --phase 1 --workers 10 --resume            Resume interrupted Phase 1
-  %(prog)s --single E1e+07_L2.00_P89.0                Run one specific case
-  %(prog)s --phase 1 --group my_sweep --workers 10    Custom group name
+  %(prog)s --dry-run                          Preview Phase 1 (default)
+  %(prog)s                                    Run Phase 1 with n_cores-1 workers
+  %(prog)s --workers 4                        Cap to 4 workers
+  %(prog)s --adaptive                         Use adaptive PS stepping
+  %(prog)s --resume                           Skip cells already completed
+  %(prog)s --single E1e+04_L5.00_P30.0        Run one specific cell
         """)
     parser.add_argument("--phase", type=int, default=1, choices=[1, 2, 3, 4],
-                        help="Which Table A.5 tier to run (default: 1, cheapest). "
-                             "Phase 1=default tier (10⁵ gyro, 65 spg), "
-                             "Phase 2=* tier (10⁶ gyro, 65 spg), "
-                             "Phase 3=† tier (10⁷ gyro, 15 spg), "
-                             "Phase 4=‡ tier (2×10⁷ gyro, 15 spg). "
-                             "All four share group 'table_a5' so the CSV consolidates.")
-    parser.add_argument("--group", type=str, default=None,
-                        help="Batch group name for output directory "
-                             "(default: flux_map). All runs land in "
-                             "data/dipoleb/<group>/.")
-    parser.add_argument("--workers", type=int, default=1,
-                        help="Number of parallel workers (default: 1 = sequential). "
-                             "Recommended: 8-10 for M4 Max, 4-6 for M1/M2.")
+                        help="Which proton sweep phase to run (default: 1). "
+                             "Phase 1 = the method-comparison table "
+                             "(4 energies × 2 pitches at L=5 = 8 cells). "
+                             "Phases 2-4 reserved for future extensions. "
+                             "All phases share group 'proton'.")
+    # NOTE: --group intentionally removed. Output group is fixed by
+    # DEFAULT_GROUPS[phase] in this runner so proton runs always land in
+    # data/dipoleb/proton/ (not the walt folder, which the walt runner owns).
+    # Default to (n_cores - 1) so the machine stays responsive without
+    # requiring the user to look up their core count.
+    _default_workers = max(1, (os.cpu_count() or 2) - 1)
+    parser.add_argument("--workers", type=int, default=_default_workers,
+                        help=f"Number of parallel workers "
+                             f"(default: n_cores-1 = {_default_workers} on this machine). "
+                             f"Pass 1 to disable parallelism.")
     parser.add_argument("--adaptive", action="store_true",
                         help="Use adaptive PS stepping (default: fixed-step).")
     parser.add_argument("--dry-run", action="store_true",
@@ -493,9 +501,10 @@ Examples:
                              "and re-run them with adaptive stepping.")
     args = parser.parse_args()
 
-    # ── Resolve group name ─────────────────────────────────────────
-    group = args.group or DEFAULT_GROUPS[args.phase]
+    # ── Resolve group name (always from DEFAULT_GROUPS — no CLI override) ──
+    group = DEFAULT_GROUPS[args.phase]
     _batch_group = group
+    print(f"Output destination: data/dipoleb/{group}/")
 
     # ── Rerun-chaotic mode ─────────────────────────────────────────
     if args.rerun_chaotic:

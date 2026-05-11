@@ -464,9 +464,13 @@ Examples:
                         help="Batch group name for output directory "
                              "(default: flux_map). All runs land in "
                              "data/dipoleb/<group>/.")
-    parser.add_argument("--workers", type=int, default=1,
-                        help="Number of parallel workers (default: 1 = sequential). "
-                             "Recommended: 8-10 for M4 Max, 4-6 for M1/M2.")
+    # Default to (n_cores - 1) so the machine stays responsive without
+    # requiring the user to look up their core count.
+    _default_workers = max(1, (os.cpu_count() or 2) - 1)
+    parser.add_argument("--workers", type=int, default=_default_workers,
+                        help=f"Number of parallel workers "
+                             f"(default: n_cores-1 = {_default_workers} on this machine). "
+                             f"Pass 1 to disable parallelism.")
     parser.add_argument("--adaptive", action="store_true",
                         help="Use adaptive PS stepping (default: fixed-step).")
     parser.add_argument("--dry-run", action="store_true",

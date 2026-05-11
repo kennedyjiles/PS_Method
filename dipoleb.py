@@ -91,6 +91,7 @@ def main(cfg_path, replot=False):
     npfloat = np.float128 if USE_FLOAT128 else np.float64
     builtins.npfloat = npfloat
     tol = 1.0 * np.finfo(npfloat).eps
+
     plt.rcParams['agg.path.chunksize'] = 100000 if USE_FLOAT128 else 1000
 
     # --- Import physics modules AFTER builtins.npfloat is set ---
@@ -424,7 +425,8 @@ def main(cfg_path, replot=False):
 
     physical_time = norm_time * abs(tau_time)           # actual physical time, t; normalized time =t/tau_time
     window_duration = window_time/tau_time              # converting window_time to dimensionless time
-    # Old (paper version): tol_local = npfloat(tol) * tau_time   # Scale tolerance by tau_0
+    # Old (paper version):
+    # tol_local = npfloat(tol) * tau_time   # Scale tolerance by tau_0
     tol_local = npfloat(tol)                            # plain machine eps; advisor's relative test in ps_integrate handles scaling
 
     # === Velocity Config based on INput Angles ===
