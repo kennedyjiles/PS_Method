@@ -760,7 +760,6 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         "plot_boundary_pad":   cfg["plot_boundary_pad"],
 
         # Special modes
-        "legacy_h5_path": cfg.get("legacy_h5_path"),  # not in base.yml
         "manual_h5_path": cfg["manual_h5_path"],
 
         # Adaptive PS settings
@@ -777,10 +776,6 @@ def compute_derived_dipoleb(cfg, npfloat=None):
     }
 
     return params
-
-
-# Backward compatibility alias
-compute_derived = compute_derived_dipoleb
 
 
 # ---------------------------------------------------------------------------

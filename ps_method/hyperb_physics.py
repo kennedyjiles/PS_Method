@@ -2,8 +2,7 @@
 hyperb_physics.py — Physics functions for charged particle motion in a
                    hyperbolic-tangent magnetic field.
 
-Three functions are provided:
-  • cauchy_sum    – Cauchy product helper for power-series coefficient multiplication.
+Two functions are provided:
   • ps_integrate  – Power-series integrator with adaptive truncation order.
   • lorentz_force – RHS function for scipy / RK4 integrators.
 
@@ -15,16 +14,7 @@ from . import utils as ul
 
 
 @ul.maybe_njit
-def cauchy_sum(a, b, n):
-    """Cauchy product: n-th coefficient of the product of two power series."""
-    result = ul.npfloat(0.0)
-    for j in range(n + 1):
-        result += a[j] * b[n - j]
-    return result
-
-
-@ul.maybe_njit
-def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, charge_sign, tol):
+def ps_integrate(ps_order, steps_ps, initial_pos_vel, timedelta, gamma, charge_sign, tol):
     """Advance a charged particle through B = ẑ tanh(γy) using power-series method.
 
     The state vector has 9 components: the 6 physical variables [x, y, z, vx,
@@ -56,12 +46,20 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, charge_s
     state_history[cosh_aux, 0] = np.cosh(gamma * y0)
     state_history[Bz_aux, 0]   = np.tanh(gamma * y0)
 
-    Bz_series   = np.zeros(PS_order, dtype=ul.npfloat)
+    # Cauchy product, nested so it gets JIT'd alongside the integrator and
+    # never shows up as a public symbol of this module.
+    def cauchy_sum(a, b, n):
+        result = ul.npfloat(0.0)
+        for k in range(n + 1):
+            result += a[k] * b[n - k]
+        return result
+
+    Bz_series   = np.zeros(ps_order, dtype=ul.npfloat)
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
     _one        = ul.npfloat(1.0)
-    oip1        = _one / (_one + np.arange(PS_order))   # 1/(i+1) lookup table
+    oip1        = _one / (_one + np.arange(ps_order))   # 1/(i+1) lookup table
 
-    c = np.zeros((n_total, PS_order + 1), dtype=ul.npfloat)
+    c = np.zeros((n_total, ps_order + 1), dtype=ul.npfloat)
     sum_terms = np.zeros(n_total, dtype=ul.npfloat)
 
     for j in range(1, steps_ps + 1):
@@ -71,7 +69,7 @@ def ps_integrate(PS_order, steps_ps, initial_pos_vel, timedelta, gamma, charge_s
         i         = 0
         max_contrib = tol + ul.npfloat(1.0)
 
-        while max_contrib > tol and i < PS_order:
+        while max_contrib > tol and i < ps_order:
 
             # --- Bz coefficient via division recurrence ---
             if i == 0:

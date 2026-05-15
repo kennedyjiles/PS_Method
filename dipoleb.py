@@ -1368,9 +1368,8 @@ def main(cfg_path, replot=False):
     wr.summary_txt_dipoleb(
         summary=summary, run_folder=run_folder, stem=stem,
         dragt_log=dragt_log, bounce_results=bounce_results, drift_results=drift_results,
-        gyroperiods=gyroperiods, norm_time=norm_time, mass=mass, cache_path=cache_path,
+        gyroperiods=gyroperiods, norm_time=norm_time, cache_path=cache_path,
         USE_PS=USE_PS, USE_RK4=USE_RK4, USE_RK45=USE_RK45, USE_RKG=USE_RKG,
-        ps_decimate=ps_decimate,
         ps_step=ps_step,
         rk4_step=rk4_step if USE_RK4 else None,
         rkg_step=rkg_step if USE_RKG else None,

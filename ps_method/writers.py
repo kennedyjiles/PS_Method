@@ -3,10 +3,11 @@ writers.py — Consolidated I/O for all field types (dipoleb, constb, hyperb).
 
 Shared utilities:
     _to_serializable   — JSON encoder for numpy scalars (including float128)
-    run_hash           — deterministic SHA-256 hash of a run-parameter dict
-    h5_path_for        — build cache file path from params + output folder
+    run_hash           — deterministic SHA-1 (truncated to 6 hex chars) hash of a run-parameter dict
+    h5_path_for        — build cache file path from a hash string + output folder
+    stem_from_h5       — extract the canonical run stem from an h5 path (strips _full)
     build_filename     — assemble a figure/output path from stem + tag
-    summarize          — min/max/mean/final statistics for an error array
+    summarize          — mean / max / rms statistics for an error array
     summarize_to_file  — write summarize() output to an open file handle
     write_dict         — pretty-print a nested dict to a file handle
 
@@ -445,9 +446,9 @@ def load_results_h5_hyperb(h5_path):
 
 def summary_txt_dipoleb(
     summary, run_folder, stem, dragt_log, bounce_results, drift_results,
-    gyroperiods, norm_time, mass, cache_path,
+    gyroperiods, norm_time, cache_path,
     # Solver flags
-    USE_PS, USE_RK4, USE_RK45, USE_RKG, ps_decimate,
+    USE_PS, USE_RK4, USE_RK45, USE_RKG,
     # Step sizes
     ps_step, rk4_step=None, rkg_step=None,
     # Energy drift arrays (already computed)

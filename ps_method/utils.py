@@ -61,7 +61,6 @@ def maybe_njit(func):
 # constructing np.float64(2.0) etc. on every call.
 two = npfloat(2.0)
 six = npfloat(6.0)
-half = npfloat(0.5)
 
 # ================================================================
 # =============== Runge Kutta 4th Order Fixed Step ===============
@@ -195,7 +194,6 @@ def setup_log_axes(ax):
     ax.set_yscale("log")
     ax.set_xscale("log")
     ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))
     ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
     ax.yaxis.set_minor_formatter(NullFormatter())
     ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
