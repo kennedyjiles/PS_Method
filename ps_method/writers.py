@@ -10,8 +10,8 @@ Shared utilities:
     summarize_to_file  — write summarize() output to an open file handle
     write_dict         — pretty-print a nested dict to a file handle
 
-Field-specific run-param builders:
-    get_run_params_dipoleb — parameter signature dict for dipole runs
+Field-specific run-param builders (saved as params_json in h5 for manual-
+mode identity recovery — not used for cache hashing; that's physics_hash):
     get_run_params_constb  — parameter signature dict for constant-B runs
     get_run_params_hyperb  — parameter signature dict for hyperbolic-B runs
 
@@ -135,59 +135,6 @@ def summarize_to_file(label, err, f):
 # =====================================================================
 # =================  Run-param builders  ==============================
 # =====================================================================
-
-def get_run_params_dipoleb(USE_RK45, USE_RK4, USE_RKG, USE_PS, decimate, PS_CHUNKING,
-                          mass_si, q_e, B_0, gamma, user_min_phase,
-                          x_initial, y_initial, z_initial,
-                          pitch_deg, phi_deg,
-                          norm_time, ps_step, rk4_step, rkg_step,
-                          ps_order, tol, charge_sign, rtol_rk45, atol_rk45):
-    """Collect all knobs that define a unique dipoleb run.
-
-    NOTE: dict KEYS like ``"PS_order"`` are kept in their historical
-    UPPERCASE spelling so the params_json hash (cache filename) stays
-    backward-compatible with existing dipoleb h5 files. Function PARAMETER
-    names follow the lowercase project convention.
-    """
-    return {
-        # toggles
-        "USE_RK45": bool(USE_RK45),
-        "USE_RK4":  bool(USE_RK4),
-        "USE_RKG":  bool(USE_RKG),
-        "USE_PS":   bool(USE_PS),
-        "PS_CHUNKING": bool(PS_CHUNKING),
-
-        # physics & normalization
-        "decimate": _to_serializable(decimate),
-        "mass_si": _to_serializable(mass_si),
-        "q_e": _to_serializable(q_e),
-        "B_0": _to_serializable(B_0),
-        "gamma": _to_serializable(gamma),
-        "user_min_phase": _to_serializable(user_min_phase),
-
-        # initial conditions (positions in RE units and velocity setup)
-        "x_initial": _to_serializable(x_initial),
-        "y_initial": _to_serializable(y_initial),
-        "z_initial": _to_serializable(z_initial),
-        "pitch_deg": _to_serializable(pitch_deg),
-        "phi_deg": _to_serializable(phi_deg),
-
-        # times / steps
-        "norm_time": _to_serializable(norm_time),
-        "ps_step": _to_serializable(ps_step),
-        "rk4_step": _to_serializable(rk4_step),
-        "rkg_step": _to_serializable(rkg_step),
-
-        # PS & solver knobs (key kept uppercase for cache-hash stability)
-        "PS_order": int(ps_order),
-        "tol": _to_serializable(tol),
-        "rtol_rk45": _to_serializable(rtol_rk45),
-        "atol_rk45": _to_serializable(atol_rk45),
-
-        # charge/mass normalization used in RHS
-        "charge_sign": _to_serializable(charge_sign),
-    }
-
 
 def get_run_params_constb(USE_RK45, USE_RK4, KE_particle, rtol_rk45, atol_rk45,
                           mass_si, q_e, B_0,
