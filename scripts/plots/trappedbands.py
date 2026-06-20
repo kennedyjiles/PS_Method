@@ -19,10 +19,13 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 csv_path = sys.argv[1] if len(sys.argv) > 1 else "master_simulation_log.csv"
-df = pd.read_csv(csv_path)
+# on_bad_lines='warn' skips rows whose column count doesn't match the header,
+# printing a warning so we know which rows were dropped.  Defensive: a single
+# corrupt row shouldn't prevent the whole plot from rendering.
+df = pd.read_csv(csv_path, on_bad_lines='warn')
 df["energy_MeV"] = df["energy_eV"] / 1e6
 df["L"] = df["L_eff"].round(2)
-df["eps_max_plot"] = df["eps_max"].clip(upper=5.0)
+df["eps_plot"] = df["eps_max"].clip(upper=5.0)
 df["mu_max_err_plot"] = df["mu_max_err"].clip(lower=1e-3, upper=10.0)
 
 # ── Remove L=1 ──
@@ -42,31 +45,31 @@ eps_bot_atm = None
 eps_top_atm = None
 
 if len(atm_hits) > 0:
-    eps_bot_atm = atm_hits["eps_max_plot"].min()
+    eps_bot_atm = atm_hits["eps_plot"].min()
     # Lower boundary: use the highest no-atm case that is BELOW the atm range,
     # then go just above it.  This ensures all no-atm cases near the boundary
     # stay in the green zone.  KAM islands above this are expected (stable
     # orbits inside the chaotic sea) and will appear as green dots in blue.
     trapped_no_atm = df[(df["boundary"] == "CLOSED") & (df["hit_atmosphere"] == False)]
-    no_atm_below = trapped_no_atm[trapped_no_atm["eps_max_plot"] < eps_bot_atm]
+    no_atm_below = trapped_no_atm[trapped_no_atm["eps_plot"] < eps_bot_atm]
     if len(no_atm_below) > 0:
-        eps_boundary_1 = no_atm_below["eps_max_plot"].max() * 1.02  # just above highest no-atm below atm range
+        eps_boundary_1 = no_atm_below["eps_plot"].max() * 1.02  # just above highest no-atm below atm range
     else:
         eps_boundary_1 = eps_bot_atm * 0.95
 else:
     # No atmosphere hits — push boundaries above all data so only the green
     # "trapped" band is visible.
-    eps_boundary_1 = df["eps_max_plot"].max() * 1.5 if len(df) > 0 else 1.0
+    eps_boundary_1 = df["eps_plot"].max() * 1.5 if len(df) > 0 else 1.0
 
 if len(closed_atm) > 0 and len(open_cases) > 0:
-    eps_top_atm = closed_atm["eps_max_plot"].max()
-    eps_bot_open = open_cases["eps_max_plot"].min()
+    eps_top_atm = closed_atm["eps_plot"].max()
+    eps_bot_open = open_cases["eps_plot"].min()
     eps_boundary_2 = np.sqrt(eps_top_atm * eps_bot_open)
 elif len(closed_atm) > 0:
-    eps_top_atm = closed_atm["eps_max_plot"].max()
+    eps_top_atm = closed_atm["eps_plot"].max()
     eps_boundary_2 = eps_top_atm * 1.2
 elif len(open_cases) > 0:
-    eps_boundary_2 = open_cases["eps_max_plot"].min() * 0.95
+    eps_boundary_2 = open_cases["eps_plot"].min() * 0.95
 else:
     # No atmosphere, no open — push above all data
     eps_boundary_2 = eps_boundary_1 * 1.5
@@ -127,7 +130,7 @@ for zone in ["REGULAR", "CHAOTIC"]:
 
     if not closed.empty:
         ax.scatter(
-            closed["L"], closed["eps_max_plot"],
+            closed["L"], closed["eps_plot"],
             c=zone_colors[zone], s=60,
             label=zone_labels_pts[zone],
             edgecolors="none", linewidths=0, alpha=0.85, zorder=5,
@@ -135,7 +138,7 @@ for zone in ["REGULAR", "CHAOTIC"]:
 
     if not opened.empty:
         ax.scatter(
-            opened["L"], opened["eps_max_plot"],
+            opened["L"], opened["eps_plot"],
             c="#d62728", s=60,
             label=r"Open boundary ($W_0^2 > P_\phi^4/16$)",
             edgecolors="none", linewidths=0, alpha=0.85, zorder=5,
@@ -145,20 +148,20 @@ for zone in ["REGULAR", "CHAOTIC"]:
 # ── Atmosphere X markers ──
 atm = df[df["hit_atmosphere"] == True]
 if len(atm) > 0:
-    ax.scatter(atm["L"], atm["eps_max_plot"], marker="x", s=40, c="navy",
+    ax.scatter(atm["L"], atm["eps_plot"], marker="x", s=40, c="navy",
                linewidths=1.2, zorder=10, label="Hits atmosphere")
 
 # ── Energy series: faint connecting line per energy, labeled once ──
 for e_kev, grp in df.groupby("energy_eV"):
-    series = (grp.groupby("L")["eps_max_plot"].mean()
+    series = (grp.groupby("L")["eps_plot"].mean()
                   .reset_index().sort_values("L"))
     if len(series) < 1:
         continue
-    ax.plot(series["L"], series["eps_max_plot"],
+    ax.plot(series["L"], series["eps_plot"],
             color="0.4", lw=0.8, alpha=0.35, zorder=2)
     # Label once at the leftmost (lowest-L) point of the series
     x_lbl = series["L"].iloc[0]
-    y_lbl = series["eps_max_plot"].iloc[0]
+    y_lbl = series["eps_plot"].iloc[0]
     label_txt = f"{e_kev:.0e}".replace("e+0", "e").replace("e+", "e").replace("e-0", "e-")
     ax.annotate(label_txt, (x_lbl, y_lbl), fontsize=8,
                 ha="right", va="center",

@@ -430,26 +430,77 @@ def adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max, ste
 # =============================================================
 # ============== P_phi Relative Error =========================
 # =============================================================
-def pphi_error(run_folder, t_pphi_gyro, rel_error_log, P_phi_initial, max_err, ylabel_str, stem=""):
-    """Log-log plot of canonical angular momentum conservation error."""
+def pphi_error(
+    run_folder, stem, particle_type, ps_order_label,
+    USE_PLOT_TITLES, time_factor, norm_time,
+    ylabel_str=r"$|\Delta P_\phi|/|P_{\phi,0}|$",
+    ps_data=None, rk4_data=None, rk45_data=None, rkg_data=None,
+):
+    """
+    Canonical angular momentum (P_phi) relative error (log-log) for all
+    enabled solvers.  Mirrors the styling of ``ke_error``.
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(t_pphi_gyro[1:], rel_error_log[1:], color='crimson', linewidth=1.5)
+    Each *_data argument is a tuple ``(t_array, drift_array)`` or ``None``.
+    """
+    fig, ax = plt.subplots(figsize=(10, 5))
 
-    ax.set_xscale('log')
-    ax.set_yscale('log')
+    # ---- main solver lines ----
+    lnps = lnrk4 = lnrkg = lnrk45 = None
+    if ps_data is not None:
+        t_ps, drift_ps = ps_data
+        lnps, = ax.semilogy(t_ps[1:] * time_factor, np.abs(drift_ps[1:]),
+                            label=f"PS{ps_order_label}", alpha=0.8,
+                            color=COLORS["ps"], linestyle=LINESTYLES["ps"])
+    if rk4_data is not None:
+        t_rk4, drift_rk4 = rk4_data
+        lnrk4, = ax.semilogy(t_rk4[1:] * time_factor, np.abs(drift_rk4[1:]),
+                             label='RK4', alpha=0.8,
+                             color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+    if rkg_data is not None:
+        t_rkg, drift_rkg = rkg_data
+        lnrkg, = ax.semilogy(t_rkg[1:] * time_factor, np.abs(drift_rkg[1:]),
+                             label='RKG', alpha=0.8,
+                             color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+    if rk45_data is not None:
+        t_rk45, drift_rk45 = rk45_data
+        lnrk45, = ax.semilogy(t_rk45[1:] * time_factor, np.abs(drift_rk45[1:]),
+                              label='RK45',
+                              color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
 
-    ax.text(0.02, 0.85, f"Initial $P_\\phi$: {P_phi_initial:.6f}\nMax Relative Error: {max_err:.2e}",
-            transform=ax.transAxes, fontsize=11, color='black',
-            bbox=dict(facecolor='white', alpha=0.9, edgecolor='black'))
-
+    # ---- axis formatting ----
+    ul.setup_log_axes(ax)
     ax.set_xlabel(r"$\tau/T$")
     ax.set_ylabel(ylabel_str)
-    ax.set_title("Relative Error of Canonical Angular Momentum")
-    ax.grid(True, which="both", ls="--", alpha=0.5)
 
-    fig.tight_layout()
-    fig.savefig(os.path.join(run_folder, f"{stem}_P_phi_rel_error.png"), dpi=300)
+    if USE_PLOT_TITLES:
+        ax.set_title(f"{particle_type} Relative Canonical Angular Momentum Error in Dipole B Field")
+
+    fig.subplots_adjust(right=0.9)
+    fig.canvas.draw()
+
+    # ---- endpoint labels ----
+    endpoints = []
+    if ps_data is not None:
+        endpoints.append((norm_time * time_factor, np.abs(drift_ps[-1]),
+                         f"PS{ps_order_label}", lnps.get_color()))
+    if rk4_data is not None:
+        endpoints.append((norm_time * time_factor, np.abs(drift_rk4[-1]),
+                         "RK4", lnrk4.get_color()))
+    if rkg_data is not None:
+        endpoints.append((norm_time * time_factor, np.abs(drift_rkg[-1]),
+                         "RKG", lnrkg.get_color()))
+    if rk45_data is not None:
+        endpoints.append((norm_time * time_factor, np.abs(drift_rk45[-1]),
+                         "RK45", lnrk45.get_color()))
+
+    xmin, xmax = ax.get_xlim()
+    ax.set_xlim(xmin, xmax * 1.05)
+
+    ul.place_endpoint_labels(fig, ax, endpoints)
+
+    # === Save and Close ===
+    fig_path = wr.build_filename(run_folder, stem, figure_tag="Pphierror", ext="png")
+    plt.savefig(fig_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
 

@@ -108,6 +108,25 @@ def f64(arr):
     """Convert array to float64 (needed when plotting float128 data)."""
     return np.asarray(arr, dtype=np.float64)
 
+
+def ps_order_label_from_attrs(attrs_or_dict):
+    """Single integer label for a PS run, used in plot legends / filenames.
+
+    Prefers mean (typical work per step) over max (worst-case single step,
+    skewed by chaotic excursions). Falls back to max_ps for h5 files written
+    before mean tracking landed. Returns None if neither attr is present.
+    """
+    if "mean_ps" in attrs_or_dict:
+        return int(round(float(attrs_or_dict["mean_ps"])))
+    if "max_ps" in attrs_or_dict:
+        return int(attrs_or_dict["max_ps"])
+    return None
+
+
+def ps_order_label_from_orders(orders):
+    """Single integer label from an orders_used array (in-memory path)."""
+    return int(round(float(np.asarray(orders).mean())))
+
 def plt_config(scale=1):
     """Set global matplotlib rcParams (fonts, sizes, DPI). Side-effect only.
 
@@ -346,7 +365,7 @@ def prepare_slice_dipoleb(
             if j1 < j0:
                 raise RuntimeError("Empty PS stored slice")
             y_win = ps_y[:, j0:j1+1]
-            result["ps_order_label"] = int(ps_grp.attrs["max_ps"])
+            result["ps_order_label"] = ps_order_label_from_attrs(ps_grp.attrs)
 
         plot_stride = max(1, y_win.shape[1] // max_plot_points)
         result["ps_x_slice"] = y_win[0, ::plot_stride]

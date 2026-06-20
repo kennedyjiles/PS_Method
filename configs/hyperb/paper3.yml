@@ -1,7 +1,6 @@
 # ===================================================================
 # Paper 3 — 100 keV proton, -15° pitch, delta=200 km, B0=10 nT
 # ===================================================================
-
 particle: proton
 energy_eV: 100.0e3
 pitch_deg: -15.0
@@ -21,7 +20,7 @@ external_h5:
   root: data/hyperb/paper3/_rawdata/ 
   a:
     enabled: false
-    file: null
+    file: c9c638_full.h5
   b:
     enabled: false
-    file: 5a835a_full.h5
+    file: null

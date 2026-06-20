@@ -218,7 +218,7 @@ def compute_mu_deviation_ps(
         "t"              : 1D time array in gyroperiods (decimated for plotting)
         "mudrift"        : 1D full mu deviation array
         "mudrift_plot"   : 1D decimated mu deviation for plotting
-        "ps_order_label" : int, max PS order from h5 attrs
+        "ps_order_label" : int, plot label (mean PS order) from h5 attrs
     """
     window_steps = n_gyro * n_steps_per_gyro
     i0_phys, i1_phys = _gyro_window_indices(gyro_window, steps_ps, window_steps)
@@ -230,7 +230,7 @@ def compute_mu_deviation_ps(
     with h5py.File(cache_path, "r") as ps_h5:
         ps_grp = ps_h5["ps"]
         ps_y = ps_grp["y"]
-        ps_order_label = int(ps_grp.attrs["max_ps"])
+        ps_order_label = ul.ps_order_label_from_attrs(ps_grp.attrs)
         n_store = ps_y.shape[1]
 
         j0 = max(0, min(j0, n_store))

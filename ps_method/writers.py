@@ -338,11 +338,13 @@ def save_results_h5_constb(h5_path, params, results):
                         continue
                     grp.create_dataset(name, data=arr, compression="gzip", compression_opts=1, shuffle=True)
 
-        # Self-describing PS order so external-h5 comparison plots can
-        # auto-detect the order without the consuming yml having to spell
-        # it out. Reads as ps.attrs["max_ps"] alongside ps/orders.
+        # Self-describing PS order summary so external-h5 comparison plots
+        # can auto-detect the order without the consuming yml having to
+        # spell it out. Both max and mean are written; plot labels use mean.
         if results.get("ps") and results["ps"].get("orders") is not None:
-            f["ps"].attrs["max_ps"] = int(np.max(results["ps"]["orders"]))
+            _orders = np.asarray(results["ps"]["orders"])
+            f["ps"].attrs["max_ps"]  = int(_orders.max())
+            f["ps"].attrs["mean_ps"] = float(_orders.mean())
 
         meta = results.get("meta", {})
         gmeta = f.create_group("meta")
@@ -395,11 +397,13 @@ def save_results_h5_hyperb(h5_path, params, results):
                         continue
                     grp.create_dataset(name, data=arr, compression="gzip", compression_opts=1, shuffle=True)
 
-        # Self-describing PS order so external-h5 comparison plots can
-        # auto-detect the order without the consuming yml having to spell
-        # it out. Reads as ps.attrs["max_ps"] alongside ps/orders.
+        # Self-describing PS order summary so external-h5 comparison plots
+        # can auto-detect the order without the consuming yml having to
+        # spell it out. Both max and mean are written; plot labels use mean.
         if results.get("ps") and results["ps"].get("orders") is not None:
-            f["ps"].attrs["max_ps"] = int(np.max(results["ps"]["orders"]))
+            _orders = np.asarray(results["ps"]["orders"])
+            f["ps"].attrs["max_ps"]  = int(_orders.max())
+            f["ps"].attrs["mean_ps"] = float(_orders.mean())
 
         meta = results.get("meta", {})
         gmeta = f.create_group("meta")
@@ -453,6 +457,8 @@ def summary_txt_dipoleb(
     ps_step, rk4_step=None, rkg_step=None,
     # Energy drift arrays (already computed)
     rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None, rel_drift_rkg=None,
+    # P_phi drift arrays (already computed)
+    rel_pphi_ps=None, rel_pphi_rk4=None, rel_pphi_rk45=None, rel_pphi_rkg=None,
     # Mu reference values
     mu0_ps=None, mu0_rk4=None, mu0_rk45=None, mu0_rkg=None,
     # Solver solutions (for mu tail computation)
@@ -510,6 +516,19 @@ def summary_txt_dipoleb(
             summarize_to_file("RKG", rel_drift_rkg[j0_rkg:], f)
         if USE_PS:
             summarize_to_file("PS", rel_drift_ps[j0_ps:], f)
+
+        # --- P_phi (canonical angular momentum) tail errors ---
+        # Same tail-window indices as the energy block — the arrays are sampled
+        # at the same cadence per solver, so reusing j0_* is correct.
+        f.write("\n=== |delta P_phi|/|P_phi_0| (tail average) ===\n")
+        if USE_RK45 and rel_pphi_rk45 is not None:
+            summarize_to_file("RK45", rel_pphi_rk45[j0_rk45:], f)
+        if USE_RK4 and rel_pphi_rk4 is not None:
+            summarize_to_file("RK4", rel_pphi_rk4[j0_rk4:], f)
+        if USE_RKG and rel_pphi_rkg is not None:
+            summarize_to_file("RKG", rel_pphi_rkg[j0_rkg:], f)
+        if USE_PS and rel_pphi_ps is not None:
+            summarize_to_file("PS", rel_pphi_ps[j0_ps:], f)
 
         # --- Mu tail errors ---
         f.write("\n=== |delta mu|/mu0 (tail average) ===\n")

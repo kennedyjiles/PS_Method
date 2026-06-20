@@ -9,7 +9,7 @@ Functions
 High-level plots:
     full_2d          — full-run 2D trajectory
     full_3d          — full-run 3D trajectory
-    ke_error         — single KE error over time (RK4, RK45, PS max order)
+    ke_error         — single KE error over time (RK4, RK45, PS mean order)
     slice_2d         — sliced 2D trajectory (last/first N gyroperiods)
     slice_3d         — sliced 3D trajectory
     ke_error_multi   — multi-PS-order KE error comparison
@@ -75,7 +75,7 @@ def full_2d(
         ax.plot(solution_rk4[0], solution_rk4[1],
                 color=COLORS["rk4"], linestyle=LINESTYLES["rk4"], linewidth=0.75, label="RK4")
     ax.plot(solution_ps[0], solution_ps[1],
-            color=COLORS["ps"], linestyle=LINESTYLES["ps"], label=f"PS{orders_used.max()}")
+            color=COLORS["ps"], linestyle=LINESTYLES["ps"], label=f"PS{ul.ps_order_label_from_orders(orders_used)}")
 
     ax.set_xlabel(r"$x$")
     ax.set_ylabel(r"$y$")
@@ -114,7 +114,7 @@ def full_3d(
         ax.plot(solution_rk4[0], solution_rk4[1], solution_rk4[2],
                 label="RK4", color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
     ax.plot(solution_ps[0], solution_ps[1], solution_ps[2],
-            label=f"PS{orders_used.max()}", color=COLORS["ps"], linestyle=LINESTYLES["ps"])
+            label=f"PS{ul.ps_order_label_from_orders(orders_used)}", color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlabel(r"$x$")
     ax.set_ylabel(r"$y$")
@@ -190,7 +190,7 @@ def ke_error(
     if use_rk4 and "rk4" in lines:
         endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lines["rk4"].get_color()))
     endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]),
-                       f"PS{orders_used.max()}", lines["ps"].get_color()))
+                       f"PS{ul.ps_order_label_from_orders(orders_used)}", lines["ps"].get_color()))
     if ext_data is not None:
         t_ext, drift_ext, ps_order_ext = ext_data
         endpoints.append((t_ext[-1], np.abs(drift_ext[-1]),
@@ -230,7 +230,7 @@ def slice_2d(
         ax.plot(rk45_x, rk45_y, label="RK45", color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
     if use_rk4 and rk4_x is not None and not skip_rk4_slice:
         ax.plot(rk4_x, rk4_y, label="RK4", color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
-    ax.plot(ps_x, ps_y, label=f"PS{orders_used.max()}", color=COLORS["ps"], linestyle=LINESTYLES["ps"])
+    ax.plot(ps_x, ps_y, label=f"PS{ul.ps_order_label_from_orders(orders_used)}", color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlabel(r"$x$")
     ax.set_ylabel(r"$y$")
@@ -276,7 +276,7 @@ def slice_3d(
     if use_rk4 and rk4_x is not None:
         ax.plot(rk4_x, rk4_y, rk4_z, label="RK4",
                 color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
-    ax.plot(ps_x, ps_y, ps_z, label=f"PS{orders_used.max()}",
+    ax.plot(ps_x, ps_y, ps_z, label=f"PS{ul.ps_order_label_from_orders(orders_used)}",
             color=COLORS["ps"], linestyle=LINESTYLES["ps"])
 
     ax.set_xlabel(r"$x$")
@@ -429,20 +429,16 @@ def trajectory_error(
             label="RK4", linestyle=LINESTYLES["rk4"], color=COLORS["rk4"])
     lines["ps"], = ax.semilogy(
         ul.f64(t_eval_ps) * time_factor, np.abs(ul.f64(rel_traj_err_ps)),
-        label=f"PS{orders_used.max()}", linestyle=LINESTYLES["ps"], color=COLORS["ps"])
+        label=f"PS{ul.ps_order_label_from_orders(orders_used)}", linestyle=LINESTYLES["ps"], color=COLORS["ps"])
     if use_external_h5 and rel_traj_err_ext is not None:
         lines["ext"], = ax.semilogy(
             ul.f64(t_ext) * time_factor, np.abs(ul.f64(rel_traj_err_ext)),
             label=f"PS{ps_order_ext}*", linestyle="-.", color=COLORS["ext"])
 
     ul.setup_log_axes(ax)
-    if not use_full_plot:
-        ax.tick_params(axis="x", which="both", labelbottom=False)
-    else:
-        ax.set_xlabel(r"$\tau/T$")
-        ax.tick_params(axis="x", which="both", labelbottom=True)
+    ax.tick_params(axis="x", which="both", labelbottom=False)
 
-    ax.set_ylabel(r"$\Delta \mathbf{r}_\perp/\rho_L$")
+    ax.set_ylabel(r"$\Delta \mathbf{r}_\perp/r_g$")
     if use_plot_titles:
         ax.set_title(f"{particle_type} Gyroradius Error in {field_label}")
 
@@ -460,7 +456,99 @@ def trajectory_error(
         endpoints.append((t_ext[-1], np.abs(rel_traj_err_ext[-1]),
                           f"PS{ps_order_ext}*", lines["ext"].get_color()))
     endpoints.append((t_eval_ps[-1], np.abs(rel_traj_err_ps[-1]),
-                      f"PS{orders_used.max()}", lines["ps"].get_color()))
+                      f"PS{ul.ps_order_label_from_orders(orders_used)}", lines["ps"].get_color()))
+
+    ul.place_endpoint_labels(fig, ax, endpoints)
+
+    fig.savefig(save_path, dpi=600, bbox_inches="tight")
+    plt.close(fig)
+
+
+# =====================================================================
+# ======= Multi-PS-order Trajectory Error vs Analytical (constb) ======
+# =====================================================================
+def trajectory_error_multi(
+    save_path, *,
+    t_eval_ps, orders_used,
+    ps_traj_errs,
+    t_eval_rk4=None, rel_traj_err_rk4=None,
+    t_eval_rk45=None, rel_traj_err_rk45=None,
+    use_rk4=False, use_rk45=False,
+    ext_data=None, extb_data=None,
+    particle_type="", field_label="", use_plot_titles=True,
+    time_factor=None,
+):
+    """Multi-PS-order trajectory error comparison plot. constb only — uses
+    the analytical closed-form as the reference for each PS order's drift.
+
+    Parameters
+    ----------
+    ps_traj_errs : list of (order_int, rel_traj_err_array, color, linestyle)
+        Each entry is a PS order to plot.
+    ext_data, extb_data : (t, rel_traj_err, ps_order_label) or None
+        External h5 trajectory-error overlays.
+    """
+    if time_factor is None:
+        time_factor = 1.0 / (2.0 * np.pi)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    lines = {}
+    if use_rk45 and rel_traj_err_rk45 is not None:
+        lines["rk45"], = ax.semilogy(
+            ul.f64(t_eval_rk45) * time_factor, np.abs(ul.f64(rel_traj_err_rk45)),
+            linestyle=LINESTYLES["rk45"], color=COLORS["rk45"])
+    if use_rk4 and rel_traj_err_rk4 is not None:
+        lines["rk4"], = ax.semilogy(
+            ul.f64(t_eval_rk4) * time_factor, np.abs(ul.f64(rel_traj_err_rk4)),
+            linestyle=LINESTYLES["rk4"], color=COLORS["rk4"])
+
+    ps_lines = {}
+    for order, traj_err, color, ls in ps_traj_errs:
+        key = f"ps{order}"
+        ps_lines[key], = ax.semilogy(
+            ul.f64(t_eval_ps) * time_factor, np.abs(ul.f64(traj_err)),
+            linestyle=ls, color=color)
+
+    if ext_data is not None:
+        t_ext, traj_err_ext, ps_order_ext = ext_data
+        lines["ext"], = ax.semilogy(
+            ul.f64(t_ext) * time_factor, np.abs(ul.f64(traj_err_ext)),
+            linestyle="-.", linewidth=1.2, color=COLORS["ext"])
+    if extb_data is not None:
+        t_extb, traj_err_extb, ps_order_extb = extb_data
+        lines["extb"], = ax.semilogy(
+            ul.f64(t_extb) * time_factor, np.abs(ul.f64(traj_err_extb)),
+            linestyle="-", linewidth=1.2, color=COLORS["extb"])
+
+    ul.setup_log_axes(ax)
+    ax.tick_params(axis="x", which="both", labelbottom=False)
+    ax.set_ylabel(r"$\Delta \mathbf{r}_\perp/r_g$")
+    if use_plot_titles:
+        ax.set_title(f"{particle_type} Gyroradius Error in {field_label}")
+
+    fig.subplots_adjust(right=0.9)
+    fig.canvas.draw()
+
+    endpoints = []
+    if use_rk45 and "rk45" in lines:
+        endpoints.append((t_eval_rk45[-1], np.abs(rel_traj_err_rk45[-1]),
+                          "RK45", lines["rk45"].get_color()))
+    if use_rk4 and "rk4" in lines:
+        endpoints.append((t_eval_rk4[-1], np.abs(rel_traj_err_rk4[-1]),
+                          "RK4", lines["rk4"].get_color()))
+
+    for order, traj_err, color, ls in ps_traj_errs:
+        key = f"ps{order}"
+        endpoints.append((t_eval_ps[-1], np.abs(traj_err[-1]),
+                          f"PS{order}", ps_lines[key].get_color()))
+
+    if ext_data is not None:
+        endpoints.append((t_ext[-1], np.abs(traj_err_ext[-1]),
+                          f"PS{ps_order_ext}*", lines["ext"].get_color()))
+    if extb_data is not None:
+        endpoints.append((t_extb[-1], np.abs(traj_err_extb[-1]),
+                          f"PS{ps_order_extb}*", lines["extb"].get_color()))
 
     ul.place_endpoint_labels(fig, ax, endpoints)
 

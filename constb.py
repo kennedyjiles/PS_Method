@@ -351,11 +351,13 @@ def main(cfg_path, replot=False):
     def _resolve_ext_order(yml_value, ext_grp):
         if yml_value is not None:
             return yml_value
-        saved = ext_grp.get("max_ps")
-        if saved is not None:
-            return int(saved)
+        # Plot label uses mean (typical work/step). Fall back to max for old
+        # h5 files, then to recomputing from the orders array.
+        label = ul.ps_order_label_from_attrs(ext_grp)
+        if label is not None:
+            return label
         if "orders" in ext_grp:
-            return int(np.max(ext_grp["orders"]))
+            return ul.ps_order_label_from_orders(ext_grp["orders"])
         return None
 
     ext_data = extb_data = None
@@ -423,24 +425,30 @@ def main(cfg_path, replot=False):
     # ===============================================================
     # === Multi-PS-order KE error comparison ========================
     # ===============================================================
+    # Solutions integrated here at fixed PS orders are cached and reused
+    # below by the trajectory_error_multi plot — so each order is integrated
+    # only once even when both multi plots are produced.
+    ps_solutions_by_order = {}
+    _main_order = None
     if USE_FULL_PLOT and not USE_FLOAT128:
         # ext_data / extb_data already loaded above (so the simple ke_error
         # plot can use them too). They're reused here unchanged.
 
         # --- Recompute PS at various orders ---
-        # Skip any order that matches the main run's PS order — otherwise
-        # the comparison plot would draw two lines for the same order.
-        _main_order = int(orders_used.max())
-        _ps_orders = [n for n in (4, 5, 6, 7, 10) if n != _main_order]
+        # Skip any order that matches the main run's label — otherwise the
+        # comparison plot would draw two lines with the same legend entry.
+        _main_order = ul.ps_order_label_from_orders(orders_used)
+        _ps_orders = [n for n in (4, 5, 6, 7) if n != _main_order]
         ps_drifts = []
         for order in _ps_orders:
             sol, _ = cp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, Bfield, charge_sign, tol)
+            ps_solutions_by_order[order] = sol
             drift = ea.energy_drift(*ea.extract_v(sol))
             ps_drifts.append((order, drift,
                               fplt.COLORS[f"ps{order}"],
                               fplt.LINESTYLES[f"ps{order}"]))
 
-        ps_drifts.append((orders_used.max(), rel_drift_ps,
+        ps_drifts.append((_main_order, rel_drift_ps,
                           fplt.COLORS["ps"], fplt.LINESTYLES["ps"]))
 
         fplt.ke_error_multi(
@@ -489,10 +497,10 @@ def main(cfg_path, replot=False):
             rel_traj_err_ext = ea.trajectory_error_xy(
                 y_ext, sol_ana_ext[0], sol_ana_ext[1], gyro_radius_si)
             if ps_order_ext_label is None:
-                # h5's saved attr > computed max from orders array
-                ps_order_ext_label = ext_ps.get("max_ps")
+                # h5's saved attr (prefers mean_ps) > computed mean from orders.
+                ps_order_ext_label = ul.ps_order_label_from_attrs(ext_ps)
                 if ps_order_ext_label is None and "orders" in ext_ps:
-                    ps_order_ext_label = int(np.max(ext_ps["orders"]))
+                    ps_order_ext_label = ul.ps_order_label_from_orders(ext_ps["orders"])
 
         fplt.trajectory_error(
             f"{_base}_TrajError.png",
@@ -504,6 +512,35 @@ def main(cfg_path, replot=False):
             use_full_plot=USE_FULL_PLOT,
             field_label="a Constant Magnetic Field", **{k: v for k, v in _plot_kw.items() if k != "field_label"},
         )
+
+        # ---- Multi-PS-order trajectory error (uses solutions cached in
+        # ---- the KE multi block — no second pass through ps_integrate).
+        if USE_FULL_PLOT and not USE_FLOAT128 and ps_solutions_by_order:
+            ps_traj_errs = []
+            for order, sol in ps_solutions_by_order.items():
+                traj_err = ea.trajectory_error_xy(sol, x_ana, y_ana, gyro_radius_si)
+                ps_traj_errs.append((order, traj_err,
+                                     fplt.COLORS[f"ps{order}"],
+                                     fplt.LINESTYLES[f"ps{order}"]))
+            ps_traj_errs.append((_main_order, rel_traj_err_ps,
+                                 fplt.COLORS["ps"], fplt.LINESTYLES["ps"]))
+
+            ext_traj_data = (
+                (t_ext_traj, rel_traj_err_ext, ps_order_ext_label)
+                if (USE_EXTERNAL_H5 and rel_traj_err_ext is not None) else None
+            )
+
+            fplt.trajectory_error_multi(
+                f"{_base}_TrajError_manyPS.png",
+                t_eval_ps=t_eval_ps, orders_used=orders_used,
+                ps_traj_errs=ps_traj_errs,
+                t_eval_rk4=t_eval_rk4 if USE_RK4 else None, rel_traj_err_rk4=rel_traj_err_rk4,
+                t_eval_rk45=t_eval_rk45 if USE_RK45 else None, rel_traj_err_rk45=rel_traj_err_rk45,
+                use_rk4=USE_RK4, use_rk45=USE_RK45,
+                ext_data=ext_traj_data, extb_data=None,
+                field_label="a Constant Magnetic Field",
+                **{k: v for k, v in _plot_kw.items() if k != "field_label"},
+            )
 
 
     # ============================================

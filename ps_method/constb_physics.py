@@ -36,6 +36,8 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, charge_si
     state_history[:, 0] = initial_pos_vel
     oip1 = one / (one + np.arange(order_max))       # 1/(i+1) lookup table
     orders_used = np.zeros(steps + 1, dtype=np.int32)
+    # Diagnostic: count steps that hit order_max without converging to `tol`.
+    n_unconverged = 0
 
     # Pre-allocated buffers reused across steps (avoid per-step alloc churn)
     c = np.zeros((n_total, order_max + 1), dtype=ul.npfloat)
@@ -63,20 +65,30 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, charge_si
             c[vy, i+1] = oip1[i] * charge_sign * (Bfield[0]*c[vz, i] - Bfield[2]*c[vx, i])
             c[vz, i+1] = oip1[i] * charge_sign * (Bfield[1]*c[vx, i] - Bfield[0]*c[vy, i])
 
+            # Finite check (defensive — constant B shouldn't generate inf in
+            # practice, but keeps the convergence loop uniform across modules).
+            if not np.isfinite(c[:, i+1]).all():
+                break
+
             new_term = c[:, i+1] * power
             sum_terms += new_term
-            
-            # Convergence test: per-component relative test — stop when
-            # |new_term[k]| < |sum_terms[k]| * tol for every component.
-            # Components with |sum_terms[k]| ≤ tol are treated as already
-            # converged (avoids divide-by-zero on inactive axes, e.g. z when vz=0).
+
+            # Convergence test: per-component relative on the contribution to
+            # sum_terms. When |sum_terms[k]| ≤ tol the component is still
+            # accumulating from near zero — don't declare it converged unless
+            # the new contribution itself is also < tol.
             max_contrib = ul.npfloat(0.0)
             for k in range(n_total):
                 ref = abs(sum_terms[k])
+                nt  = abs(new_term[k])
                 if ref > tol:
-                    ratio = abs(new_term[k]) / ref
-                    if ratio > max_contrib:
-                        max_contrib = ratio
+                    ratio = nt / ref
+                elif nt > tol:
+                    ratio = nt / tol     # use tol as the reference floor
+                else:
+                    ratio = ul.npfloat(0.0)
+                if ratio > max_contrib:
+                    max_contrib = ratio
             # --Old (paper version)---:
             # max_contrib = np.abs(c[:, i+1]).max()
             power *= timedelta
@@ -84,6 +96,13 @@ def ps_integrate(order_max, steps, initial_pos_vel, timedelta, Bfield, charge_si
 
         state_history[:, j] = state_history[:, j - 1] + sum_terms
         orders_used[j] = i
+        if max_contrib > tol:
+            n_unconverged += 1
+
+    if n_unconverged > 0:
+        # Numba njit can't handle format specs like {tol:.1e}, so leave tol unformatted.
+        print("  [constB ps_integrate] WARNING:", n_unconverged, "/", steps,
+              "steps hit order_max=", order_max, "without reaching tol=", tol)
 
     return state_history, orders_used
 

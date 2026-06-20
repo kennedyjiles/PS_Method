@@ -5,13 +5,13 @@
 # at coarser resolution. Both need overrides since 0.63 isn't the
 # default computed value.
 # ===================================================================
-
 step_overrides:
   ps: 0.63
   rk4: 0.063
 
 solvers:
   rk4: true
+  rk45: true
 
 plotting:
   titles: false

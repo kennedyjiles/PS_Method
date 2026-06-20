@@ -970,10 +970,12 @@ def main(cfg_path, replot=False):
         with h5py.File(cache_path, "r") as ps_h5:
             ps_grp = ps_h5["ps"]
             stride = max(1, steps_ps // max_plot_points_local)
-            ps_order_label = int(ps_grp.attrs["max_ps"])
-            # mean_ps absent on h5 files written before mean tracking landed
+            # Label uses mean (typical work/step) — falls back to max for
+            # h5 files written before mean tracking landed.
+            ps_order_label = ul.ps_order_label_from_attrs(ps_grp.attrs)
             if "mean_ps" in ps_grp.attrs:
                 ps_order_mean = float(ps_grp.attrs["mean_ps"])
+            ps_order_max = int(ps_grp.attrs["max_ps"]) if "max_ps" in ps_grp.attrs else None
 
             if USE_FULL_PLOT:
                 ps_y_h5 = ps_grp["y"]
@@ -1196,11 +1198,32 @@ def main(cfg_path, replot=False):
     # =========================================================
     # PLOT RELATIVE ERROR OF CANONICAL ANGULAR MOMENTUM
     # =========================================================
-    # Reads chunked PS data from the cache file; only meaningful when PS ran.
-    if USE_PS:
-        pphi = ea.compute_pphi_error_chunked(cache_path, initial_pos_vel, charge_sign, ps_step, time_factor)
-        dplt.pphi_error(fig_folder, pphi["t_gyro"], pphi["rel_error_log"],
-                        pphi["P_phi_initial"], pphi["max_err"], pphi["ylabel"], stem=stem)
+    # Computes P_phi drift for every enabled solver (mirrors compute_ke_errors),
+    # then plots them all on a single log-log axis using the same color /
+    # linestyle scheme as the kinetic-energy plot.
+    if USE_PS or USE_RK4 or USE_RK45 or USE_RKG:
+        _pphi = ea.compute_pphi_errors(
+            T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
+            USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
+            ps_decimate=ps_decimate, ps_y_initial=initial_pos_vel,
+            USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
+            rk4_y_initial=rk4_y_initial,
+            USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
+            rkg_y_initial=rkg_y_initial,
+            USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
+            rk45_y_initial=rk45_y_initial,
+            vector_potential_func=dp.vector_potential,
+            charge_sign=charge_sign,
+        )
+        dplt.pphi_error(
+            run_folder=fig_folder, stem=stem,
+            particle_type=particle_type, ps_order_label=ps_order_label,
+            USE_PLOT_TITLES=USE_PLOT_TITLES,
+            time_factor=time_factor, norm_time=norm_time,
+            ylabel_str=_pphi["ylabel"],
+            ps_data=_pphi["pphi_ps"], rk4_data=_pphi["pphi_rk4"],
+            rk45_data=_pphi["pphi_rk45"], rkg_data=_pphi["pphi_rkg"],
+        )
 
 
     # ============================================================
@@ -1377,6 +1400,10 @@ def main(cfg_path, replot=False):
         rel_drift_rk4=rel_drift_rk4 if USE_RK4 else None,
         rel_drift_rk45=rel_drift_rk45 if USE_RK45 else None,
         rel_drift_rkg=rel_drift_rkg if USE_RKG else None,
+        rel_pphi_ps=_pphi.get("rel_pphi_ps")   if USE_PS   else None,
+        rel_pphi_rk4=_pphi.get("rel_pphi_rk4") if USE_RK4  else None,
+        rel_pphi_rk45=_pphi.get("rel_pphi_rk45") if USE_RK45 else None,
+        rel_pphi_rkg=_pphi.get("rel_pphi_rkg") if USE_RKG  else None,
         mu0_ps=mu0_ps if USE_PS else None,
         mu0_rk4=mu0_rk4 if USE_RK4 else None,
         mu0_rk45=mu0_rk45 if USE_RK45 else None,

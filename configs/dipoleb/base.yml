@@ -16,7 +16,7 @@
 particle: proton          # "proton" or "electron"
 energy_eV: 100.0e6        # kinetic energy in eV
 pitch_deg: 60.0           # pitch angle (degrees)
-phi_deg: 90.0             # gyrophase angle (degrees)
+phi_deg: 0.0             # gyrophase angle (degrees)
 x_initial: 5.0            # initial x position (L-shell, in R_E)
 y_initial: 0.0            # initial y position (R_E), usually 0
 z_initial: 0.0            # initial z position (R_E), usually 0
@@ -26,7 +26,7 @@ use_float128: false        # true = use np.float128 (disables numba JIT and RKG)
 
 # --- Integration ---
 gyroperiods: 450          # number of gyroperiods to simulate
-use_gyroradius_L_correction: true  # Uses gyroradius-corrected L_eff for T_gyro computation
+use_gyroradius_L_correction: false  # Uses gyroradius-corrected L_eff for T_gyro computation
                                     # (more accurate step sizing). Launch position (x_initial)
                                     # is unchanged. Only matters when gyroradius is a significant
                                     # fraction of x_initial (e.g. 210 MeV protons at L~3).
@@ -116,7 +116,7 @@ dragt_monitor_rtol: 1.0e-4  # relative tolerance for Dragt conservation monitor
 # --- Atmospheric impact flag ---
 # Particle is marked as atmosphere-impacted when r < r_atmosphere (in R_E).
 # 1.0 = Earth's surface; 1.0157 ≈ 100 km altitude.
-r_atmosphere: 1.0
+r_atmosphere: 1.0157
 
 # --- Bounce/Drift Detection ---
 # Controls how mirror-bounce crossings and azimuthal drift are detected.

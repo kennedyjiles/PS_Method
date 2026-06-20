@@ -10,10 +10,10 @@ solvers:
   rk45: true
   rkg: true
 
+gyroperiods: 1.5e5          
 # Integration defined by total steps rather than gyroperiods.
 # 1e7 steps × ps_step gives norm_time; gyroperiods is derived.
-gyroperiods: null         # null suppresses base.yml's value so total_steps drives norm_time
-total_steps: 1.0e7
+# total_steps: 1.0e7
 
 window_time: 6209.0
 

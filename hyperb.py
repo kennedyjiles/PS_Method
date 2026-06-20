@@ -344,11 +344,13 @@ def main(cfg_path, replot=False):
     def _resolve_ext_order(yml_value, ext_grp):
         if yml_value is not None:
             return yml_value
-        saved = ext_grp.get("max_ps")
-        if saved is not None:
-            return int(saved)
+        # Plot label uses mean (typical work/step). Fall back to max for old
+        # h5 files, then to recomputing from the orders array.
+        label = ul.ps_order_label_from_attrs(ext_grp)
+        if label is not None:
+            return label
         if "orders" in ext_grp:
-            return int(np.max(ext_grp["orders"]))
+            return ul.ps_order_label_from_orders(ext_grp["orders"])
         return None
 
     ext_data = extb_data = None
@@ -417,10 +419,10 @@ def main(cfg_path, replot=False):
         # plot can use them too). They're reused here unchanged.
 
         # --- Recompute PS at various orders ---
-        # Skip any order that matches the main run's PS order — otherwise
-        # the comparison plot would draw two lines for the same order.
-        _main_order = int(orders_used.max())
-        _ps_orders = [n for n in (5, 6, 7, 10, 15) if n != _main_order]
+        # Skip any order that matches the main run's label — otherwise the
+        # comparison plot would draw two lines with the same legend entry.
+        _main_order = ul.ps_order_label_from_orders(orders_used)
+        _ps_orders = [n for n in (5, 6, 7, 10) if n != _main_order]
         ps_drifts = []
         for order in _ps_orders:
             sol, _ = hp.ps_integrate(order, steps_ps, initial_pos_vel, ps_step, gamma, charge_sign, tol)
@@ -429,7 +431,7 @@ def main(cfg_path, replot=False):
                               fplt.COLORS[f"ps{order}"],
                               fplt.LINESTYLES[f"ps{order}"]))
 
-        ps_drifts.append((orders_used.max(), rel_drift_ps,
+        ps_drifts.append((_main_order, rel_drift_ps,
                           fplt.COLORS["ps"], fplt.LINESTYLES["ps"]))
 
         fplt.ke_error_multi(

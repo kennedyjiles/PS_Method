@@ -7,9 +7,13 @@ __pycache__/
 master_simulation_log.csv
 outputs/
 data/
+*.npz
+*.json
+*.json.bak
+*.log
+*.docx
+/data/
 
-# Runtime/temp files
-scripts/batch_flux_progress.json
 
 # Images (generated)
 *.png
@@ -18,5 +22,12 @@ scripts/batch_flux_progress.json
 Archive/
 
 testrun.yml
+*_corrupt.py
 .claude/
 batch_tmp/
+
+# DELETE later  
+batch*
+flux_map_builder.py
+launch*
+trappedbands.py

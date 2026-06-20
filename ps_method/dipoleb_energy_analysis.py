@@ -3,7 +3,8 @@ Kinetic energy and P_phi conservation diagnostics for dipole trajectories.
 
     _compute_energy_ps_chunked    — KE error from h5 in chunks
     compute_ke_errors            — KE errors for all enabled solvers
-    compute_pphi_error_chunked   — P_phi error from h5 in chunks
+    compute_pphi_error_chunked   — P_phi error from h5 in chunks (PS-only)
+    compute_pphi_errors          — P_phi errors for all enabled solvers
 """
 
 import numpy as np
@@ -380,4 +381,190 @@ def compute_ke_errors(
         "ke_ext_rk4":  ke_ext_rk4,
         "ke_ext_rk45": ke_ext_rk45,
         "ke_ext_rkg":  ke_ext_rkg,
+    }
+
+
+# ------------------------------------------------------------------
+#  compute_pphi_errors  — canonical angular momentum error for all solvers
+# ------------------------------------------------------------------
+def _pphi_from_xyz_v(x, y, z, vx, vy, vz, charge_sign):
+    """Canonical P_phi = rho*v_phi - cs * rho^2/r^3, given positions and velocities."""
+    rho = np.sqrt(x*x + y*y)
+    r   = np.sqrt(x*x + y*y + z*z)
+    # v_phi = (x*vy - y*vx)/rho  (azimuthal component)
+    v_phi = (x*vy - y*vx) / rho
+    return (rho * v_phi) - charge_sign * (rho * rho) / (r * r * r)
+
+
+def _pphi_drift(P_phi_initial, P_phi_array):
+    """Relative drift (or absolute, when P_phi_initial is zero)."""
+    if P_phi_initial == 0:
+        return np.abs(P_phi_array)
+    return np.abs((P_phi_array - P_phi_initial) / P_phi_initial)
+
+
+def compute_pphi_errors(
+    T_gyro, n_ps=None,
+    max_plot_points=1_000_000,
+    # PS
+    USE_PS=False, cache_path=None, ps_step=None, ps_decimate=1, ps_y_initial=None,
+    # RK4
+    USE_RK4=False, solution_rk4=None, rk4_step=None, rk4_y_initial=None,
+    # RKG
+    USE_RKG=False, solution_rkg=None, rkg_step=None, rkg_y_initial=None,
+    # RK45
+    USE_RK45=False, y_rk45_common=None, rk45_y_initial=None,
+    # For RKG: convert momentum → velocity via v = p - charge_sign * A
+    vector_potential_func=None,
+    charge_sign=1,
+):
+    """Compute |ΔP_φ|/|P_{φ,0}| arrays for every enabled solver.
+
+    Same pattern as compute_ke_errors — returns a dict with plot-ready
+    tuples (t_array, drift_array) for each solver, plus the time_factor
+    and the initial P_phi values.
+
+    For RK4 / RK45 / PS: state is (x,y,z, vx,vy,vz) — P_phi computed directly.
+    For RKG: state is (x,y,z, px,py,pz) — convert to velocity first with
+    v = p - charge_sign * A(r), matching the Hamiltonian convention used
+    in compute_ke_errors.
+
+    Returns dict with keys:
+        time_factor, energy_stride,
+        rel_pphi_ps, rel_pphi_rk4, rel_pphi_rk45, rel_pphi_rkg,
+        pphi_ps, pphi_rk4, pphi_rk45, pphi_rkg,   (plot-ready tuples or None)
+        P_phi_initial_ps, P_phi_initial_rk4, P_phi_initial_rk45, P_phi_initial_rkg
+        ylabel_ps, ylabel_rk4, ylabel_rk45, ylabel_rkg
+    """
+    time_factor = 1.0 / T_gyro
+
+    energy_stride = 1
+    if USE_PS and n_ps is not None:
+        energy_stride = max(1, n_ps // max_plot_points)
+
+    # --- PS: chunked from h5 to keep memory bounded ---
+    rel_pphi_ps = t_ps_plot = None
+    P_phi_initial_ps = None
+    ylabel_ps = None
+    if USE_PS:
+        y0 = ps_y_initial
+        rho0  = np.sqrt(y0[0]**2 + y0[1]**2)
+        r0    = np.sqrt(y0[0]**2 + y0[1]**2 + y0[2]**2)
+        vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
+        P_phi_initial_ps = float((rho0 * vphi0) - charge_sign * (rho0**2 / r0**3))
+
+        chunk_cols = max_plot_points
+        with h5py.File(cache_path, "r") as h5:
+            ds = h5["ps"]["y"]
+            N = ds.shape[1]
+            err_dec = []
+            for i0 in range(0, N, chunk_cols):
+                i1 = min(i0 + chunk_cols, N)
+                ch = ds[:6, i0:i1]
+                pp = _pphi_from_xyz_v(ch[0], ch[1], ch[2], ch[3], ch[4], ch[5], charge_sign)
+                err = _pphi_drift(P_phi_initial_ps, pp)
+                err_dec.append(err[::energy_stride])
+                del ch, pp, err
+        rel_pphi_ps = np.concatenate(err_dec)
+        dt_ps_store = ps_step * (ps_decimate if ps_decimate > 1 else 1)
+        t_ps_plot = (np.arange(len(rel_pphi_ps), dtype=ul.npfloat)
+                     * dt_ps_store * energy_stride)
+        ylabel_ps = (r"$|\Delta P_\phi|$" if P_phi_initial_ps == 0
+                     else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
+
+    # --- RK4 ---
+    rel_pphi_rk4 = None; P_phi_initial_rk4 = None; ylabel_rk4 = None
+    if USE_RK4:
+        rk4 = solution_rk4
+        pp_rk4 = _pphi_from_xyz_v(rk4[0], rk4[1], rk4[2],
+                                   rk4[3], rk4[4], rk4[5], charge_sign)
+        if rk4_y_initial is not None:
+            y0 = rk4_y_initial
+            rho0 = np.sqrt(y0[0]**2 + y0[1]**2)
+            r0   = np.sqrt(y0[0]**2 + y0[1]**2 + y0[2]**2)
+            vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
+            P_phi_initial_rk4 = float((rho0*vphi0) - charge_sign*(rho0**2/r0**3))
+        else:
+            P_phi_initial_rk4 = float(pp_rk4[0])
+        rel_pphi_rk4 = _pphi_drift(P_phi_initial_rk4, pp_rk4)
+        ylabel_rk4 = (r"$|\Delta P_\phi|$" if P_phi_initial_rk4 == 0
+                      else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
+
+    # --- RK45 (state in y_rk45_common, shape (6, N)) ---
+    rel_pphi_rk45 = None; P_phi_initial_rk45 = None; ylabel_rk45 = None
+    if USE_RK45:
+        rk = y_rk45_common
+        pp_rk = _pphi_from_xyz_v(rk[0], rk[1], rk[2],
+                                  rk[3], rk[4], rk[5], charge_sign)
+        if rk45_y_initial is not None:
+            y0 = rk45_y_initial
+            rho0 = np.sqrt(y0[0]**2 + y0[1]**2)
+            r0   = np.sqrt(y0[0]**2 + y0[1]**2 + y0[2]**2)
+            vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
+            P_phi_initial_rk45 = float((rho0*vphi0) - charge_sign*(rho0**2/r0**3))
+        else:
+            P_phi_initial_rk45 = float(pp_rk[0])
+        rel_pphi_rk45 = _pphi_drift(P_phi_initial_rk45, pp_rk)
+        ylabel_rk45 = (r"$|\Delta P_\phi|$" if P_phi_initial_rk45 == 0
+                       else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
+
+    # --- RKG (state in solution_rkg, shape (N, 6); col 3:6 are MOMENTA) ---
+    rel_pphi_rkg = None; P_phi_initial_rkg = None; ylabel_rkg = None
+    if USE_RKG:
+        r_rkg = solution_rkg[:, 0:3]
+        p_rkg = solution_rkg[:, 3:6]
+        # v = p - charge_sign * A(r)  (matches energy convention)
+        A_rkg = np.zeros_like(r_rkg)
+        for i in range(len(r_rkg)):
+            A_rkg[i] = vector_potential_func(r_rkg[i])
+        v_rkg = p_rkg - charge_sign * A_rkg
+        pp_rkg = _pphi_from_xyz_v(r_rkg[:, 0], r_rkg[:, 1], r_rkg[:, 2],
+                                   v_rkg[:, 0], v_rkg[:, 1], v_rkg[:, 2], charge_sign)
+        if rkg_y_initial is not None:
+            r0v = rkg_y_initial[0:3]
+            p0  = rkg_y_initial[3:6]
+            A0  = vector_potential_func(r0v)
+            v0  = p0 - charge_sign * A0
+            rho0 = np.sqrt(r0v[0]**2 + r0v[1]**2)
+            r0   = np.sqrt(r0v[0]**2 + r0v[1]**2 + r0v[2]**2)
+            vphi0 = (r0v[0]*v0[1] - r0v[1]*v0[0]) / rho0
+            P_phi_initial_rkg = float((rho0*vphi0) - charge_sign*(rho0**2/r0**3))
+        else:
+            P_phi_initial_rkg = float(pp_rkg[0])
+        rel_pphi_rkg = _pphi_drift(P_phi_initial_rkg, pp_rkg)
+        ylabel_rkg = (r"$|\Delta P_\phi|$" if P_phi_initial_rkg == 0
+                      else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
+
+    # --- Time arrays for non-PS solvers ---
+    t_rk4  = (rk4_step  * np.arange(len(rel_pphi_rk4),  dtype=ul.npfloat)) if USE_RK4  else None
+    t_rkg  = (rkg_step  * np.arange(len(rel_pphi_rkg),  dtype=ul.npfloat)) if USE_RKG  else None
+    # RK45 was stored at PS-step cadence in the existing code path
+    t_rk45 = (ps_step   * np.arange(len(rel_pphi_rk45), dtype=ul.npfloat)) if USE_RK45 else None
+
+    # --- Plot-ready tuples ---
+    pphi_ps   = (t_ps_plot, rel_pphi_ps)   if USE_PS   else None
+    pphi_rk4  = (t_rk4,     rel_pphi_rk4)  if USE_RK4  else None
+    pphi_rk45 = (t_rk45,    rel_pphi_rk45) if USE_RK45 else None
+    pphi_rkg  = (t_rkg,     rel_pphi_rkg)  if USE_RKG  else None
+
+    # Use the first solver's ylabel as the shared one
+    ylabel = next((y for y in (ylabel_ps, ylabel_rk4, ylabel_rk45, ylabel_rkg)
+                   if y is not None), r"$|\Delta P_\phi|/|P_{\phi,0}|$")
+
+    return {
+        "time_factor":   time_factor,
+        "energy_stride": energy_stride,
+        "rel_pphi_ps":   rel_pphi_ps,
+        "rel_pphi_rk4":  rel_pphi_rk4,
+        "rel_pphi_rk45": rel_pphi_rk45,
+        "rel_pphi_rkg":  rel_pphi_rkg,
+        "pphi_ps":   pphi_ps,
+        "pphi_rk4":  pphi_rk4,
+        "pphi_rk45": pphi_rk45,
+        "pphi_rkg":  pphi_rkg,
+        "P_phi_initial_ps":   P_phi_initial_ps,
+        "P_phi_initial_rk4":  P_phi_initial_rk4,
+        "P_phi_initial_rk45": P_phi_initial_rk45,
+        "P_phi_initial_rkg":  P_phi_initial_rkg,
+        "ylabel":     ylabel,
     }
