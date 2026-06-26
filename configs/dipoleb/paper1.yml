@@ -10,14 +10,7 @@ solvers:
   rk45: true
   rkg: true
 
-gyroperiods: 1.5e5          
-# Integration defined by total steps rather than gyroperiods.
-# 1e7 steps × ps_step gives norm_time; gyroperiods is derived.
-# total_steps: 1.0e7
+gyroperiods: 1.5e5
 
 window_time: 6209.0
 
-external_h5:
-  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
-  ps:  "run_1f911496e90d7c4b.h5"
-  rkg: "run_ae2d63d764f68d00.h5"

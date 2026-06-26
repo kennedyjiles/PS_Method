@@ -12,12 +12,54 @@ import h5py
 from . import utils as ul
 
 
+def _vector_potential_batch(R):
+    """Vectorized dipole vector potential for an (N, 3) array of positions.
+
+    A = (y/r³, -x/r³, 0). Equivalent to calling
+    dipoleb_physics.vector_potential row-by-row, but in one numpy pass — the
+    per-point Python loop was a major stall once a decimated RKG array reaches
+    millions of points.
+    """
+    R = np.asarray(R)
+    x = R[:, 0]; y = R[:, 1]; z = R[:, 2]
+    r2 = x * x + y * y + z * z
+    r3 = r2 * np.sqrt(r2)
+    A = np.zeros_like(R, dtype=ul.npfloat)
+    nz = r3 != 0
+    A[nz, 0] =  y[nz] / r3[nz]
+    A[nz, 1] = -x[nz] / r3[nz]
+    # A[:, 2] stays 0
+    return A
+
+
+def log_spaced_indices(n, max_points):
+    """Sorted global indices sampled ~uniformly in log(index).
+
+    Used for PLOTTING ONLY. Uniform-stride decimation collapses the early
+    decades on a log time axis (the first kept point after 0 lands at
+    τ/T ≈ stride·dt, so the curve appears to "start" partway across). Sampling
+    uniformly in log(index) keeps a roughly constant number of points per
+    decade, so the beginning of the run is resolved as well as the end.
+
+    Always includes index 0 and n-1; returns ``np.arange(n)`` when the data
+    already fits under ``max_points``.
+    """
+    n = int(n)
+    if n <= max_points:
+        return np.arange(n, dtype=np.int64)
+    lg = np.logspace(0.0, np.log10(n - 1), int(max_points))
+    idx = np.unique(np.round(lg).astype(np.int64))
+    idx = np.clip(idx, 1, n - 1)
+    return np.unique(np.concatenate(([0], idx)))
+
+
 def _compute_energy_ps_chunked(
     ps_y_h5,
     e0_ps,
     dt_ps_store,
     chunk_cols=200000,
     stride=1,
+    log_indices=None,
     dtype=None,
 ):
     """
@@ -27,20 +69,34 @@ def _compute_energy_ps_chunked(
     computes the relative KE drift for that chunk, and writes the
     stride-aligned points into pre-allocated output arrays.
 
+    The uniform `stride` decimation is the canonical output used by the
+    summary tail statistics (so those numbers are unchanged). If `log_indices`
+    is given (a sorted index array from ``log_spaced_indices``), a SECOND
+    log-spaced sampling is collected in the SAME pass — used only for the plot
+    so the early decades are visible — and returned alongside.
+
     Returns
     -------
-    t_plot, drift_plot : 1D ndarrays
-        Time and relative drift, sampled every `stride` PS-store columns.
+    t_plot, drift_plot                      (when log_indices is None)
+    t_plot, drift_plot, t_log, drift_log    (when log_indices is given)
+        Uniform-strided and (optionally) log-spaced time / relative-drift.
     """
     if dtype is None:
         dtype = ul.npfloat
     n_store = ps_y_h5.shape[1]
 
-    # Pre-allocate decimated output (upper bound on size)
+    # Pre-allocate uniform (canonical) output (upper bound on size)
     n_points = (n_store + stride - 1) // stride
     t_plot = np.empty(n_points, dtype=ul.npfloat)
     drift_plot = np.empty(n_points, dtype=ul.npfloat)
     k = 0
+
+    want_log = log_indices is not None
+    if want_log:
+        log_indices = np.asarray(log_indices, dtype=np.int64)
+        t_log = np.empty(len(log_indices), dtype=ul.npfloat)
+        drift_log = np.empty(len(log_indices), dtype=ul.npfloat)
+        kl = 0
 
     for j0 in range(0, n_store, chunk_cols):
         j1 = min(j0 + chunk_cols, n_store)
@@ -60,6 +116,19 @@ def _compute_energy_ps_chunked(
             drift_plot[k:k+n_pts] = rel[aligned_global - j0]
             k += n_pts
 
+        # Log-spaced sampling for the plot (same chunk, no extra h5 read).
+        if want_log:
+            lo = np.searchsorted(log_indices, j0, side="left")
+            hi = np.searchsorted(log_indices, j1, side="left")
+            sel = log_indices[lo:hi]
+            n_l = len(sel)
+            if n_l:
+                t_log[kl:kl+n_l]     = sel * dt_ps_store
+                drift_log[kl:kl+n_l] = rel[sel - j0]
+                kl += n_l
+
+    if want_log:
+        return t_plot[:k], drift_plot[:k], t_log[:kl], drift_log[:kl]
     return t_plot[:k], drift_plot[:k]
 
 
@@ -250,8 +319,9 @@ def compute_ke_errors(
             ps_decimate_ext = ext_rk45.get("decimate", 1)
             dt_store_ext = ps_step_ext * ps_decimate_ext
             t_ext = dt_store_ext * np.arange(n_store, dtype=ul.npfloat)
-        energy_stride_ext = max(1, n_store // max_plot_points)
-        idx = np.arange(0, n_store, energy_stride_ext)
+        # Log-spaced (not uniform stride) so the early τ/T decades show on the
+        # log-x plot. y_rk45_ext is already in memory, so this is a cheap index.
+        idx = log_spaced_indices(n_store, max_plot_points)
         t_eval_rk45_ext = t_ext[idx]
         v = y_rk45_ext[3:6, idx].astype(ul.npfloat)
         E = 0.5 * np.sum(v*v, axis=0)
@@ -259,53 +329,80 @@ def compute_ke_errors(
         ke_ext_rk45 = (t_eval_rk45_ext, rel_drift_rk45_ext)
 
     if USE_EXTERNAL_H5_rkg:
+        # Large external RKG files (10s–100s of GB) can't be subsampled by
+        # scattered/strided access without h5py thrashing chunks. Instead make
+        # ONE sequential pass: read each block once, compute energy (vectorized),
+        # and keep the log-spaced indices that fall in it — skipping blocks that
+        # contain none. Log spacing keeps the early τ/T decades on the plot.
         with h5py.File(external_h5_rkg, 'r') as external_file:
             ext_rkg = external_file["rkg"]
             y_dataset = ext_rkg["y"]
             is_transposed = (y_dataset.shape[0] == 6)
             n_steps = y_dataset.shape[1] if is_transposed else y_dataset.shape[0]
-            rkg_stride = max(1, n_steps // max_plot_points)
-            if "t" in ext_rkg:
-                t_ext_rkg = ext_rkg["t"][::rkg_stride]
-            else:
+
+            t_source = ext_rkg["t"] if "t" in ext_rkg else None
+            dt_rkg = None
+            if t_source is None:
                 import json as _json
                 dt_rkg = ext_rkg.attrs.get("dt", ext_rkg.get("dt", None))
                 if dt_rkg is None and "params_json" in external_file.attrs:
                     params = _json.loads(external_file.attrs["params_json"])
                     dt_rkg = params.get("rkg_step")
-                if dt_rkg is not None:
-                    if hasattr(dt_rkg, 'value'): dt_rkg = dt_rkg[()]
-                    idx = np.arange(0, n_steps, rkg_stride)
-                    t_ext_rkg = dt_rkg * idx.astype(ul.npfloat)
-                else:
+                if dt_rkg is None:
                     raise ValueError("External RKG H5 file has no time info.")
-            if is_transposed:
-                y_ext_rkg = y_dataset[:, ::rkg_stride].T
-            else:
-                y_ext_rkg = y_dataset[::rkg_stride, :]
+                if hasattr(dt_rkg, 'value'):
+                    dt_rkg = dt_rkg[()]
 
-        r_rkg_ext = y_ext_rkg[:, 0:3]
-        p_rkg_ext = y_ext_rkg[:, 3:6]
-        A_rkg_ext = np.zeros_like(r_rkg_ext)
-        for i in range(len(r_rkg_ext)):
-            A_rkg_ext[i] = vector_potential_func(r_rkg_ext[i])
-        # v = p - charge_sign * A (matches hamiltonian_rhs)
-        v_rkg_ext = p_rkg_ext - charge_sign * A_rkg_ext
-        E_rkg_ext = ul.npfloat(0.5) * np.sum(v_rkg_ext**2, axis=1, dtype=ul.npfloat)
-        rel_drift_ext_rkg = np.abs(E_rkg_ext - E_rkg_ext[0]) / E_rkg_ext[0]
+            keep = log_spaced_indices(n_steps, max_plot_points)
+            block = max(max_plot_points, 1)
+
+            E_parts, t_parts = [], []
+            E0 = None
+            for j0 in range(0, n_steps, block):
+                j1 = min(j0 + block, n_steps)
+                lo = np.searchsorted(keep, j0, side="left")
+                hi = np.searchsorted(keep, j1, side="left")
+                # First block always read (sets E0); later empty blocks skipped.
+                if hi == lo and E0 is not None:
+                    continue
+                blk = (y_dataset[:, j0:j1].T if is_transposed
+                       else y_dataset[j0:j1, :])
+                A = _vector_potential_batch(blk[:, 0:3])
+                v = blk[:, 3:6] - charge_sign * A
+                E = ul.npfloat(0.5) * np.sum(v * v, axis=1, dtype=ul.npfloat)
+                if E0 is None:
+                    E0 = E[0]
+                sel = keep[lo:hi]
+                if len(sel):
+                    E_parts.append(E[sel - j0])
+                    if t_source is not None:
+                        t_parts.append(t_source[j0:j1][sel - j0])
+                    else:
+                        t_parts.append(sel.astype(ul.npfloat) * dt_rkg)
+                del blk, A, v, E
+
+        E_sel = np.concatenate(E_parts)
+        rel_drift_ext_rkg = np.abs(E_sel - E0) / E0
+        t_ext_rkg = np.concatenate(t_parts)
         ke_ext_rkg = (t_ext_rkg, rel_drift_ext_rkg)
 
     # --- Current-run PS energy (chunked from h5) ---
+    # rel_drift_ps = UNIFORM decimation -> feeds the summary tail (unchanged).
+    # (t_ps_log, drift_ps_log) = LOG-spaced -> plot only, so the early decades
+    # of τ/T are visible. Both are collected in one h5 pass.
     rel_drift_ps = t_ps_plot = None
+    t_ps_log = drift_ps_log = None
     if USE_PS:
         with h5py.File(cache_path, "r") as ps_h5:
             ps_y_h5 = ps_h5["ps"]["y"]
-            t_ps_plot, rel_drift_ps = _compute_energy_ps_chunked(
+            log_idx = log_spaced_indices(ps_y_h5.shape[1], max_plot_points)
+            t_ps_plot, rel_drift_ps, t_ps_log, drift_ps_log = _compute_energy_ps_chunked(
                 ps_y_h5=ps_y_h5,
                 e0_ps=e0_ps,
                 dt_ps_store=ps_step * (ps_decimate if ps_decimate > 1 else 1),
                 chunk_cols=max_plot_points,
                 stride=energy_stride,
+                log_indices=log_idx,
             )
 
     # --- Current-run RKG (Hamiltonian) ---
@@ -315,9 +412,7 @@ def compute_ke_errors(
     if USE_RKG:
         r_rkg = solution_rkg[:, 0:3]
         p_rkg = solution_rkg[:, 3:6]
-        A_rkg = np.zeros_like(r_rkg)
-        for i in range(len(r_rkg)):
-            A_rkg[i] = vector_potential_func(r_rkg[i])
+        A_rkg = _vector_potential_batch(r_rkg)
         # v = p - charge_sign * A (matches hamiltonian_rhs)
         v_rkg = p_rkg - charge_sign * A_rkg
         E_rkg = ul.npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=ul.npfloat)
@@ -358,7 +453,8 @@ def compute_ke_errors(
     t_rk45 = ps_step * np.arange(len(rel_drift_rk45), dtype=ul.npfloat) if USE_RK45 else None
 
     # --- Assemble plot-ready tuples ---
-    ke_ps   = (t_ps_plot, rel_drift_ps)    if USE_PS   else None
+    # Plot uses the LOG-spaced arrays; the summary uses uniform rel_drift_ps.
+    ke_ps   = (t_ps_log, drift_ps_log)     if USE_PS   else None
     ke_rk4  = (t_rk4, rel_drift_rk4)      if USE_RK4  else None
     ke_rk45 = (t_rk45, rel_drift_rk45)    if USE_RK45 else None
     ke_rkg  = (t_rkg, rel_drift_rkg)       if USE_RKG  else None
@@ -443,7 +539,11 @@ def compute_pphi_errors(
         energy_stride = max(1, n_ps // max_plot_points)
 
     # --- PS: chunked from h5 to keep memory bounded ---
+    # rel_pphi_ps = UNIFORM decimation -> summary tail (unchanged). The
+    # (t_pphi_log, drift_pphi_log) pair is LOG-spaced -> plot only, collected
+    # in the same h5 pass so the early decades of τ/T are visible.
     rel_pphi_ps = t_ps_plot = None
+    t_pphi_log = drift_pphi_log = None
     P_phi_initial_ps = None
     ylabel_ps = None
     if USE_PS:
@@ -454,21 +554,32 @@ def compute_pphi_errors(
         P_phi_initial_ps = float((rho0 * vphi0) - charge_sign * (rho0**2 / r0**3))
 
         chunk_cols = max_plot_points
+        dt_ps_store = ps_step * (ps_decimate if ps_decimate > 1 else 1)
         with h5py.File(cache_path, "r") as h5:
             ds = h5["ps"]["y"]
             N = ds.shape[1]
+            log_idx = log_spaced_indices(N, max_plot_points)
             err_dec = []
+            err_log = []
+            t_log = []
             for i0 in range(0, N, chunk_cols):
                 i1 = min(i0 + chunk_cols, N)
                 ch = ds[:6, i0:i1]
                 pp = _pphi_from_xyz_v(ch[0], ch[1], ch[2], ch[3], ch[4], ch[5], charge_sign)
                 err = _pphi_drift(P_phi_initial_ps, pp)
-                err_dec.append(err[::energy_stride])
+                err_dec.append(err[::energy_stride])           # uniform (summary)
+                lo = np.searchsorted(log_idx, i0, side="left")  # log (plot)
+                hi = np.searchsorted(log_idx, i1, side="left")
+                sel = log_idx[lo:hi]
+                if len(sel):
+                    err_log.append(err[sel - i0])
+                    t_log.append(sel)
                 del ch, pp, err
         rel_pphi_ps = np.concatenate(err_dec)
-        dt_ps_store = ps_step * (ps_decimate if ps_decimate > 1 else 1)
         t_ps_plot = (np.arange(len(rel_pphi_ps), dtype=ul.npfloat)
                      * dt_ps_store * energy_stride)
+        drift_pphi_log = np.concatenate(err_log)
+        t_pphi_log = np.concatenate(t_log).astype(ul.npfloat) * dt_ps_store
         ylabel_ps = (r"$|\Delta P_\phi|$" if P_phi_initial_ps == 0
                      else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
 
@@ -514,9 +625,7 @@ def compute_pphi_errors(
         r_rkg = solution_rkg[:, 0:3]
         p_rkg = solution_rkg[:, 3:6]
         # v = p - charge_sign * A(r)  (matches energy convention)
-        A_rkg = np.zeros_like(r_rkg)
-        for i in range(len(r_rkg)):
-            A_rkg[i] = vector_potential_func(r_rkg[i])
+        A_rkg = _vector_potential_batch(r_rkg)
         v_rkg = p_rkg - charge_sign * A_rkg
         pp_rkg = _pphi_from_xyz_v(r_rkg[:, 0], r_rkg[:, 1], r_rkg[:, 2],
                                    v_rkg[:, 0], v_rkg[:, 1], v_rkg[:, 2], charge_sign)
@@ -542,7 +651,8 @@ def compute_pphi_errors(
     t_rk45 = (ps_step   * np.arange(len(rel_pphi_rk45), dtype=ul.npfloat)) if USE_RK45 else None
 
     # --- Plot-ready tuples ---
-    pphi_ps   = (t_ps_plot, rel_pphi_ps)   if USE_PS   else None
+    # Plot uses the LOG-spaced arrays; the summary uses uniform rel_pphi_ps.
+    pphi_ps   = (t_pphi_log, drift_pphi_log) if USE_PS   else None
     pphi_rk4  = (t_rk4,     rel_pphi_rk4)  if USE_RK4  else None
     pphi_rk45 = (t_rk45,    rel_pphi_rk45) if USE_RK45 else None
     pphi_rkg  = (t_rkg,     rel_pphi_rkg)  if USE_RKG  else None

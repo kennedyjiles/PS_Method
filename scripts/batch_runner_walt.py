@@ -84,11 +84,41 @@ _PHASE_3_CELLS = (
 # Phase 4 — 2×10⁷ gyroperiods, 15 steps/gyro
 _PHASE_4_CELLS = [(1e1, 1), (1e2, 1)]
 
+
+# ─── Phase grid for thesis Table A.4 (proton bounce / drift) ─────────────────
+# The proton analogue of the electron table above. Pitch 85°, 65 steps/gyro for
+# every cell (per the Table A.4 caption). L-shells {1,2,3,4,5,6,8} (no L=7) ×
+# energies 10¹…10⁸ eV, with two carve-outs:
+#   • Dashes in the table — (10⁸, L∈{5,6,8}) — are NOT run: finite-gyroradius
+#     effects make the guiding-center analytical periods invalid there.
+#   • Asterisk (*) cells — (10¹,L1), (10¹,L2), (10²,L1) — need 10⁶ gyroperiods
+#     to resolve bounce statistics, so they move to Phase 6. Everything else
+#     runs at 10⁵ gyroperiods (Phase 5).
+# Unlike the electron tiers, gyroradius L-correction is ON (matches walt.yml) —
+# it matters for the high-energy proton cells (up to 100 MeV).
+
+# Phase 5 — 10⁵ gyroperiods, 65 steps/gyro (the non-asterisk proton cells)
+_PHASE_5_CELLS = (
+    [(1e1, L) for L in [3, 4, 5, 6, 8]]
+    + [(1e2, L) for L in [2, 3, 4, 5, 6, 8]]
+    + [(1e3, L) for L in [1, 2, 3, 4, 5, 6, 8]]
+    + [(1e4, L) for L in [1, 2, 3, 4, 5, 6, 8]]
+    + [(1e5, L) for L in [1, 2, 3, 4, 5, 6, 8]]
+    + [(1e6, L) for L in [1, 2, 3, 4, 5, 6, 8]]
+    + [(1e7, L) for L in [1, 2, 3, 4, 5, 6, 8]]
+    + [(1e8, L) for L in [1, 2, 3, 4]]
+)
+
+# Phase 6 — 10⁶ gyroperiods, 65 steps/gyro (the asterisk proton cells)
+_PHASE_6_CELLS = [(1e1, 2), (1e1, 1), (1e2, 1)]
+
 CELLS = {
     1: _PHASE_1_CELLS,
     2: _PHASE_2_CELLS,
     3: _PHASE_3_CELLS,
     4: _PHASE_4_CELLS,
+    5: _PHASE_5_CELLS,
+    6: _PHASE_6_CELLS,
 }
 
 GYROPERIODS = {
@@ -96,6 +126,8 @@ GYROPERIODS = {
     2: 1e6,
     3: 1e7,
     4: 2e7,
+    5: 1e5,
+    6: 1e6,
 }
 
 STEPS_PER_GYRO_PS = {
@@ -103,9 +135,11 @@ STEPS_PER_GYRO_PS = {
     2: 20,
     3: 15,
     4: 15,
+    5: 20,
+    6: 20,
 }
 
-# Pitch angle (degrees) — same for all Table A.5 cells
+# Pitch angle (degrees) — same for all Table A.4 / A.5 cells (85°)
 PITCH_ANGLES = [85.0]
 
 # Particle per phase
@@ -114,15 +148,21 @@ PARTICLE = {
     2: "electron",
     3: "electron",
     4: "electron",
+    5: "proton",
+    6: "proton",
 }
 
-# Default batch group names per phase — all four phases share one group so
-# the consolidated CSV holds the full table.
+# BASE batch group per phase. main() appends a per-particle subfolder
+# (-> walt/electrons, walt/protons) automatically from PARTICLE[phase], so
+# electron and proton tables consolidate separately and their run folders
+# (created on demand by dipoleb.py) never need to be made by hand.
 DEFAULT_GROUPS = {
     1: "walt",
     2: "walt",
     3: "walt",
     4: "walt",
+    5: "walt",
+    6: "walt",
 }
 
 # Per-phase overrides applied on top of base.yml. Sweep params (energy, L,
@@ -136,6 +176,10 @@ OVERRIDES = {
     2: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.00001},
     3: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.000001},
     4: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.0000001},
+    # Proton phases (Table A.4): gyroradius L-correction ON (matches walt.yml);
+    # min_phase tier follows gyroperiod count like the electron phases.
+    5: {"phi_deg": 0.0, "use_gyroradius_L_correction": True, "user_min_phase": 0.0001},
+    6: {"phi_deg": 0.0, "use_gyroradius_L_correction": True, "user_min_phase": 0.00001},
 }
 
 
@@ -343,7 +387,7 @@ def run_parallel(runs, max_workers, dry_run=False):
             print(f"  [{i+1:>4d}/{total}] {key}  "
                   f"E={E_MeV:.0f} MeV  L={run['x_initial']:.2f}  "
                   f"alpha={run['pitch_deg']:.0f} deg")
-        return
+        return 0, 0
 
     # Submit all runs to the pool
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -453,13 +497,17 @@ Examples:
   %(prog)s --single E1e+07_L2.00_P89.0                Run one specific case
   %(prog)s --phase 1 --group my_sweep --workers 10    Custom group name
         """)
-    parser.add_argument("--phase", type=int, default=1, choices=[1, 2, 3, 4],
-                        help="Which Table A.5 tier to run (default: 1, cheapest). "
-                             "Phase 1=default tier (10⁵ gyro, 65 spg), "
-                             "Phase 2=* tier (10⁶ gyro, 65 spg), "
+    parser.add_argument("--phase", type=int, default=1, choices=[1, 2, 3, 4, 5, 6],
+                        help="Which Walt-table tier to run (default: 1, cheapest). "
+                             "Electron Table A.5 (group walt/electrons): "
+                             "Phase 1=default tier (10⁵ gyro, 20 spg), "
+                             "Phase 2=* tier (10⁶ gyro, 20 spg), "
                              "Phase 3=† tier (10⁷ gyro, 15 spg), "
                              "Phase 4=‡ tier (2×10⁷ gyro, 15 spg). "
-                             "All four share group 'table_a5' so the CSV consolidates.")
+                             "Proton Table A.4 (group walt/protons, 65 spg): "
+                             "Phase 5=default tier (10⁵ gyro, 50 cells), "
+                             "Phase 6=* tier (10⁶ gyro, 3 cells). "
+                             "Phases share a group per particle so each table consolidates.")
     parser.add_argument("--group", type=str, default=None,
                         help="Batch group name for output directory "
                              "(default: flux_map). All runs land in "
@@ -485,7 +533,15 @@ Examples:
     args = parser.parse_args()
 
     # ── Resolve group name ─────────────────────────────────────────
-    group = args.group or DEFAULT_GROUPS[args.phase]
+    # Auto-route each phase into a per-particle subfolder (walt/electrons,
+    # walt/protons). The run key (E…_L…_P…) does NOT encode particle, so
+    # electron and proton runs at the same (E, L, pitch) would otherwise
+    # collide in one folder. dipoleb.py creates the nested path via
+    # os.makedirs(exist_ok=True), so these subfolders never need to be made
+    # by hand. A --group override is still honored as the base.
+    base_group = args.group or DEFAULT_GROUPS[args.phase]
+    particle = PARTICLE.get(args.phase, "proton")
+    group = f"{base_group}/{particle}s"
     _batch_group = group
 
     # ── Rerun-chaotic mode ─────────────────────────────────────────

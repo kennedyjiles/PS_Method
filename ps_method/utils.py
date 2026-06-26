@@ -171,8 +171,21 @@ def data_to_fig(x, y, ax, fig):
     fx, fy = fig.transFigure.inverted().transform([[px, py]])[0]
     return fx, fy
 
-def place_endpoint_labels(fig, ax, endpoints, fontsize=11, min_gap=0.025):
-    """Place non-overlapping endpoint labels to the right of the axes.
+def place_endpoint_labels(fig, ax, endpoints, fontsize=11, min_gap=0.025,
+                          x_pad=0.005):
+    """Place non-overlapping labels just past the END OF EACH CURVE.
+
+    Each label is positioned at its own curve's final data x (converted to
+    figure coords), nudged right by ``x_pad``. When curves have different
+    lengths the label tracks where that curve actually stops — so a short
+    RK45 run is labelled near τ/T≈1e5 while a long PS run is labelled out near
+    τ/T≈1e9, instead of all labels piling up at the axis edge. When every
+    curve runs the full length their endpoints coincide at the right edge, so
+    this degrades to the old "stacked at the edge" look automatically.
+
+    The vertical de-overlap (``min_gap``) still runs, so labels that would
+    collide in y get spread apart — which is what keeps the all-at-edge case
+    readable.
 
     Parameters
     ----------
@@ -181,19 +194,22 @@ def place_endpoint_labels(fig, ax, endpoints, fontsize=11, min_gap=0.025):
     endpoints : list of (x_data, y_data, label_str, color)
     fontsize  : int
     min_gap   : float  — minimum vertical spacing in figure coords
+    x_pad     : float  — horizontal gap (figure coords) between the curve end
+                         and the start of its label text
     """
     ax_pos = ax.get_position()
-    x_fig_label = ax_pos.x1
 
+    # [fy, fx, label, color] — fx is per-curve so each label sits at its end.
     labels = []
     for x, y, label, color in endpoints:
-        _, fy = data_to_fig(x, y, ax, fig)
+        fx, fy = data_to_fig(x, y, ax, fig)
         fy = min(max(fy, ax_pos.y0), ax_pos.y1)
-        labels.append([fy, label, color])
+        fx = min(max(fx, ax_pos.x0), ax_pos.x1)   # keep inside the axes span
+        labels.append([fy, fx, label, color])
 
     labels.sort(key=lambda v: v[0])
 
-    # Push overlapping labels apart (bottom-up)
+    # Push overlapping labels apart in y (bottom-up)
     for i in range(1, len(labels)):
         if labels[i][0] - labels[i - 1][0] < min_gap:
             labels[i][0] = labels[i - 1][0] + min_gap
@@ -203,8 +219,8 @@ def place_endpoint_labels(fig, ax, endpoints, fontsize=11, min_gap=0.025):
         if labels[i + 1][0] - labels[i][0] < min_gap:
             labels[i][0] = labels[i + 1][0] - min_gap
 
-    for fy, label, color in labels:
-        fig.text(x_fig_label, fy, label, color=color,
+    for fy, fx, label, color in labels:
+        fig.text(fx + x_pad, fy, label, color=color,
                  va="center", ha="left", fontsize=fontsize)
 
 def setup_log_axes(ax):

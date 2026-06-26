@@ -735,7 +735,7 @@ def main(cfg_path, replot=False):
                 steps_rkg = max(1, steps_rkg)
 
                 start_time_rkg = time.time()
-                solution_rkg, rkg_n_failed = dp.rkgl4_hamiltonian(
+                solution_rkg, rkg_n_failed, rkg_avg_iters, rkg_max_iters = dp.rkgl4_hamiltonian(
                     dp.hamiltonian_rhs,
                     y0,
                     rkg_step,
@@ -743,10 +743,17 @@ def main(cfg_path, replot=False):
                     args=(charge_sign,),
                 )
                 end_time_rkg = time.time()
+                # Fixed-point (functional iteration) diagnostics for the implicit
+                # RKG stage solve — matches Yugo & Iyemori (2007) / Calvo (2003).
+                # Stopping tol 1e-15 on the stage-update, cap 100 sweeps — see
+                # dp.rkgl4_hamiltonian_step_fp. (Tol must stay well below the
+                # per-step truncation error or the residual floor drifts the energy.)
+                print(f"  RKG fixed-point: avg {rkg_avg_iters:.2f} sweeps/step, "
+                      f"max {rkg_max_iters} (cap 100), tol 1e-15")
                 if rkg_n_failed > 0:
                     pct = 100.0 * rkg_n_failed / steps_rkg
                     print(f"  WARNING: {rkg_n_failed:,} of {steps_rkg:,} RKG steps "
-                          f"({pct:.2f}%) hit max_iter without Newton convergence. "
+                          f"({pct:.2f}%) hit the sweep cap without converging. "
                           f"Consider reducing rkg_step or increasing max_iter.")
 
             results = {
@@ -1160,6 +1167,7 @@ def main(cfg_path, replot=False):
         rk45_data=_ke["ke_rk45"], rkg_data=_ke["ke_rkg"],
         ext_ps_data=_ke["ke_ext_ps"], ext_rk4_data=_ke["ke_ext_rk4"],
         ext_rk45_data=_ke["ke_ext_rk45"], ext_rkg_data=_ke["ke_ext_rkg"],
+        envelope=True,   # True = plot max-per-bin upper envelope (cleaner RKG band)
     )
 
     if DEBUG:
@@ -1271,6 +1279,16 @@ def main(cfg_path, replot=False):
         rk4_data=(mu_rk4_result["t"], mu_rk4_result["mudrift"]) if mu_rk4_result else None,
         rk45_data=(mu_rk45_result["t"], mu_rk45_result["mudrift"]) if mu_rk45_result else None,
         rkg_data=(mu_rkg_result["t"], mu_rkg_result["mudrift"]) if mu_rkg_result else None,
+    )
+
+    # Instantaneous μ/μ₀ shape over the same window (companion to mu_deviation).
+    dplt.mu_shape(
+        fig_folder, stem, particle_type, ps_order_label,
+        USE_PLOT_TITLES,
+        ps_data=(mu_ps_result["t"], mu_ps_result["mu_ratio_plot"]) if mu_ps_result else None,
+        rk4_data=(mu_rk4_result["t"], mu_rk4_result["mu_ratio"]) if mu_rk4_result else None,
+        rk45_data=(mu_rk45_result["t"], mu_rk45_result["mu_ratio"]) if mu_rk45_result else None,
+        rkg_data=(mu_rkg_result["t"], mu_rkg_result["mu_ratio"]) if mu_rkg_result else None,
     )
 
 

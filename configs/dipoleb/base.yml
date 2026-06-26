@@ -16,7 +16,7 @@
 particle: proton          # "proton" or "electron"
 energy_eV: 100.0e6        # kinetic energy in eV
 pitch_deg: 60.0           # pitch angle (degrees)
-phi_deg: 0.0             # gyrophase angle (degrees)
+phi_deg: 90.0             # gyrophase angle (degrees)
 x_initial: 5.0            # initial x position (L-shell, in R_E)
 y_initial: 0.0            # initial y position (R_E), usually 0
 z_initial: 0.0            # initial z position (R_E), usually 0

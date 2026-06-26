@@ -399,7 +399,7 @@ def run_ps_streaming_adaptive(
 
             if not force_adaptive and _use_fast_path(cur_state, ps_step, min_fast_path_N):
                 # =============================================
-                #  FAST PATH: use original ps_integrate batch
+                #  FAST PATH: use ps_integrate batch
                 #  (ps_step is small enough for the local field)
                 # =============================================
                 sol_chunk, orders_chunk = dp.ps_integrate(

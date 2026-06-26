@@ -862,10 +862,8 @@ def master_csv(
             "method": method,
             "energy_mean_err": e["mean"],
             "energy_max_err": e["max"],
-            "energy_rms_err": e["rms"],
             "mu_mean_err": mu["mean"],
             "mu_max_err": mu["max"],
-            "mu_rms_err": mu["rms"],
             # --- PS-only trajectory diagnostics (blank on non-PS rows) ---
             "eps_initial":        dragt_log["eps_initial"]    if is_ps else None,
             "eps_mean":           dragt_log["eps_mean"]       if is_ps else None,

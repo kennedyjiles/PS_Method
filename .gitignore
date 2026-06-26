@@ -14,6 +14,10 @@ data/
 *.docx
 /data/
 
+#ymls
+dragt.yml
+configs/dipoleb/protons/*
+configs/dipoleb/electrons/*
 
 # Images (generated)
 *.png
@@ -21,13 +25,16 @@ data/
 # Archive
 Archive/
 
+timestepplots.py
 testrun.yml
 *_corrupt.py
 .claude/
 batch_tmp/
 
 # DELETE later  
-batch*
 flux_map_builder.py
 launch*
 trappedbands.py
+Book2*
+build_summary_results.py
+timestepplots.py

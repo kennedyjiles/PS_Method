@@ -6,15 +6,17 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from ps_method.utils import plt_config
 
 plt_config(scale=1)
 
 # --- Input/output setup ---
-csv_path = "L_energy_table_p.csv"   # <== your input CSV
+# Resolve relative to this script so it runs from any cwd.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+csv_path = os.path.join(SCRIPT_DIR, "L_energy_table_p.csv")   # <== your input CSV
 csv_basename = os.path.splitext(os.path.basename(csv_path))[0]
-out_file = f"{csv_basename}.png"    # Output will auto-match CSV name
+out_file = os.path.join(SCRIPT_DIR, f"{csv_basename}.png")    # Output will auto-match CSV name
 print(f"Generating plot from {csv_path} → {out_file}")
 
 

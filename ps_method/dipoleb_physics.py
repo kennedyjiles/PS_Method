@@ -5,7 +5,7 @@ Core solvers:
     lorentz_force                — dipole Lorentz force (numba-compiled)
     ps_integrate                 — power series integrator (chunked, streamed to h5)
     hamiltonian_rhs              — Hamilton's equations for symplectic integrator
-    rkgl4_hamiltonian_step       — single implicit Gauss-Legendre RK4 step
+    rkgl4_hamiltonian_step       — single implicit Gauss-Legendre step (s=2, order 4)
     rkgl4_hamiltonian            — full symplectic integration loop
 
 Vector potential:
@@ -61,7 +61,7 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
 
     # set up initial dynamic variables
     state_history[0:6, 0] = initial_pos_vel
-    x0, y0, z0 = initial_pos_vel[0], initial_pos_vel[1], initial_pos_vel[2]  # need for initilizing aux variables
+    x0, y0, z0 = initial_pos_vel[0], initial_pos_vel[1], initial_pos_vel[2]
     vx0, vy0, vz0 = initial_pos_vel[3], initial_pos_vel[4], initial_pos_vel[5]
 
     # set up initial aux variables
@@ -82,46 +82,30 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
     state_history[e_aux, 0] = e0
     state_history[f_aux, 0] = f0
     state_history[g_aux, 0] = g0
-
     state_history[Bz_aux, 0] = -a0 * b0
     state_history[By_aux, 0] = -three * a0 * c0
     state_history[Bx_aux, 0] = -three * a0 * d0
 
     oip1 = one / (one + np.arange(ps_order, dtype=ul.npfloat))
     orders_used = np.zeros(steps_ps + 1, dtype=np.int32)
-    # Diagnostic: count steps that hit ps_order without converging to `tol`.
-    # Non-zero at end of run is a hint to either raise ps_order, tighten dt,
-    # or switch to the adaptive integrator.
     n_unconverged = 0
 
-    # these worked better inline
     def cauchy_sum_inline(a, b, n):
         result = 0.0
-        for j in range(n + 1):
-            result += a[j] * b[n - j]
-        return result  
+        for jj in range(n + 1):
+            result += a[jj] * b[n - jj]
+        return result
 
-    def cauchy_divide(a, b, out, n):        #computiing zeta=a/b up to through n and stores it as out[:]
-        out[0] = a[0] / b[0]
-        for i in range(1, n+1):
-            acc = a[i]
-            for j in range(1, i + 1):
-                acc -= b[j] * out[i - j]
-            out[i] = acc / b[0]
-
-
-    c = np.zeros((n_total, ps_order + 1), dtype=ul.npfloat) 
+    c = np.zeros((n_total, ps_order + 1), dtype=ul.npfloat)
     sum_terms = np.zeros(n_total, dtype=ul.npfloat)
     zeta = np.zeros(ps_order + 1, dtype=ul.npfloat)
-
-    # initialize base terms outside the loop 
-    c[r2_aux, 0] = state_history[x, 0]**two + state_history[y, 0]**two + state_history[z, 0]**two
-    c[a_aux, 0] = c[r2_aux, 0]**(-twopointfive)
-    zeta[0] = c[a_aux, 0] / c[r2_aux, 0]
 
     for j in range(1, steps_ps + 1):
         c[:, 0] = state_history[:, j - 1]
         sum_terms[:] = 0
+
+        # base division coefficient for this step's coefficients
+        zeta[0] = c[a_aux, 0] / c[r2_aux, 0]
 
         power = timedelta
         max_contrib = tol + one
@@ -136,9 +120,17 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
             c[vz, i+1] = charge_sign * cauchy_sum_inline(c[a_aux], c[g_aux], i) * oip1[i]
 
             c[r2_aux, i+1] = cauchy_sum_inline(c[x], c[x], i+1) + cauchy_sum_inline(c[y], c[y], i+1) + cauchy_sum_inline(c[z], c[z], i+1)
-            cauchy_divide(c[a_aux], c[r2_aux], zeta, i+1)      #This is modifying zeta in place 
+
+            # (1) incremental division — compute only the new zeta[i]; zeta[0..i-1]
+            #     persist from earlier orders (a_aux/r2_aux coeffs are fixed once set).
+            if i >= 1:
+                acc = c[a_aux, i]
+                for jj in range(1, i + 1):
+                    acc -= c[r2_aux, jj] * zeta[i - jj]
+                zeta[i] = acc / c[r2_aux, 0]
+
             a_prime = 0.0
-            for k in range(i+1):
+            for k in range(i + 1):
                 a_prime += (i - k + 1) * zeta[k] * c[r2_aux, i - k + 1]
             c[a_aux, i+1] = - (five / (two * (i + 1))) * a_prime
 
@@ -150,52 +142,42 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
             c[f_aux, i+1] = -(three * cauchy_sum_inline(c[d_aux], c[vz], i+1) - cauchy_sum_inline(c[b_aux], c[vx], i+1))
             c[g_aux, i+1] = -(three * (cauchy_sum_inline(c[c_aux], c[vx], i+1) - cauchy_sum_inline(c[d_aux], c[vy], i+1)))
 
-            c[Bx_aux, i+1] = -three * cauchy_sum_inline(c[a_aux], c[d_aux], i+1)
-            c[By_aux, i+1] = -three * cauchy_sum_inline(c[a_aux], c[c_aux], i+1)
-            c[Bz_aux, i+1] =        -cauchy_sum_inline(c[a_aux], c[b_aux], i+1)
+            # (2) B-field Taylor coefficients dropped — unused here; output B is
+            #     computed directly from the advanced state below.
 
-            # Finite check: the r^(-5/2) factor in the dipole recurrence can
-            # blow up if a chaotic orbit dips toward the origin. Bail before
-            # NaN propagates into sum_terms — the adaptive subdivider reacts.
-            if not np.isfinite(c[:, i+1]).all():
+            # (4) finite check on the divergence source only
+            if not np.isfinite(c[a_aux, i+1]):
                 break
 
-            new_term = c[:, i+1] * power
-            sum_terms += new_term
-            # Convergence test: per-component relative on the contribution to
-            # sum_terms. When |sum_terms[k]| ≤ tol the component is still
-            # accumulating from near zero — don't declare it converged unless
-            # the new contribution itself is also < tol.
+            # (3) accumulate + convergence over the 6 state rows only
             max_contrib = ul.npfloat(0.0)
-            for k in range(n_total):
+            for k in range(6):
+                nt = c[k, i+1] * power
+                sum_terms[k] += nt
                 ref = abs(sum_terms[k])
-                nt  = abs(new_term[k])
+                ant = abs(nt)
                 if ref > tol:
-                    ratio = nt / ref
-                elif nt > tol:
-                    ratio = nt / tol     # use tol as the reference floor
+                    ratio = ant / ref
+                elif ant > tol:
+                    ratio = ant / tol
                 else:
                     ratio = ul.npfloat(0.0)
                 if ratio > max_contrib:
                     max_contrib = ratio
-            # Old (paper version): max_contrib = np.abs(c[:, i+1] * power).max()
+
             power *= timedelta
             i += 1
 
-        state_history[:, j] = state_history[:, j - 1] + sum_terms
+        state_history[0:6, j] = state_history[0:6, j - 1] + sum_terms[0:6]
 
         x_now, y_now, z_now = state_history[x, j], state_history[y, j], state_history[z, j]
         vx_now, vy_now, vz_now = state_history[vx, j], state_history[vy, j], state_history[vz, j]
 
-        # tethering variables
         r2_now = x_now**two + y_now**two + z_now**two
         a_now = r2_now**(-twopointfive)
         b_now = two * z_now**two - x_now**two - y_now**two
         c_now = y_now * z_now
         d_now = x_now * z_now
-
-        # Minus baked in to match the initial-condition convention at the top
-        # of the function (e0/f0/g0): the auxiliaries store -(b*vy - 3c*vz) etc.
         e_now = -(b_now * vy_now - three * c_now * vz_now)
         f_now = -(three * d_now * vz_now - b_now * vx_now)
         g_now = -(three * c_now * vx_now - three * d_now * vy_now)
@@ -217,7 +199,6 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
             n_unconverged += 1
 
     if n_unconverged > 0:
-        # Numba njit can't handle format specs like {tol:.1e}, so leave tol unformatted.
         print("  [dipoleb ps_integrate] WARNING:", n_unconverged, "/", steps_ps,
               "steps hit ps_order=", ps_order, "without reaching tol=", tol)
 
@@ -288,6 +269,10 @@ def hamiltonian_rhs(t, d, charge_sign):
 
 @ul.maybe_njit
 def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):
+    # RETAINED FOR REFERENCE — Newton (finite-difference Jacobian) stage solver.
+    # No longer called: rkgl4_hamiltonian() now uses fixed-point iteration
+    # (rkgl4_hamiltonian_step_fp) to match Yugo & Iyemori (2007). To switch back,
+    # point the loop's step call at this function instead.
     sqrt3 = np.sqrt(3.0)
     a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
     a21, a22 = 0.25 + sqrt3 / 6.0, 0.25
@@ -325,7 +310,8 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
             converged = True
             break
 
-        # Build Jacobian by finite differences
+        # Build Jacobian by finite differences (rebuilt each iteration → full
+        # Newton, quadratic convergence to ~machine precision).
         J.fill(0.0)
         for i in range(2):
             for j in range(dim):
@@ -344,35 +330,107 @@ def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e
                     J[d,       i * dim + j] = (F1_pert[d] - F1[d]) / eps
                     J[dim + d, i * dim + j] = (F2_pert[d] - F2[d]) / eps
 
-                K[i, j] = K_save[i, j]  
+                K[i, j] = K_save[i, j]
 
         dK_flat = np.linalg.solve(J, -F)
         for d in range(dim):
             K[0, d] += dK_flat[d]
             K[1, d] += dK_flat[dim + d]
 
+    # Number of Newton updates actually performed this step (0 if the Euler
+    # guess already met tol; max_iter if it never converged).
+    iters = n if converged else max_iter
+
     result = np.zeros(dim, dtype=ul.npfloat)
     for d in range(dim):
         result[d] = y0[d] + dt * (b1 * K[0, d] + b2 * K[1, d])
-    return result, converged
+    return result, converged, iters
+
+
+@ul.maybe_njit
+def rkgl4_hamiltonian_step_fp(func, y0, dt, args=(), max_iter=100, tol=1e-15):
+    """One step of the 2-stage Gauss-Legendre method via FIXED-POINT
+    iteration — (I THINK) the scheme used by Yugo & Iyemori (2007), following
+    the starting algorithms of Calvo et al. (2003).
+
+    Returns (result, converged, iters).
+    """
+    sqrt3 = np.sqrt(3.0)
+    a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
+    a21, a22 = 0.25 + sqrt3 / 6.0, 0.25
+    b1 = b2 = 0.5
+
+    dim = len(y0)
+    Y1 = np.zeros(dim, dtype=ul.npfloat)
+    Y2 = np.zeros(dim, dtype=ul.npfloat)
+
+    # Initial guess from explicit Euler
+    K0 = func(0.0, y0, *args)
+    K1 = K0.copy()
+
+    converged = False
+    iters = 0
+    for n in range(max_iter):
+        for d in range(dim):
+            Y1[d] = y0[d] + dt * (a11 * K0[d] + a12 * K1[d])
+            Y2[d] = y0[d] + dt * (a21 * K0[d] + a22 * K1[d])
+
+        K0_new = func(0.0, Y1, *args)
+        K1_new = func(0.0, Y2, *args)
+
+        # Convergence: largest change in the stage derivatives this sweep.
+        diff = 0.0
+        for d in range(dim):
+            c0 = abs(K0_new[d] - K0[d])
+            c1 = abs(K1_new[d] - K1[d])
+            if c0 > diff:
+                diff = c0
+            if c1 > diff:
+                diff = c1
+
+        K0 = K0_new
+        K1 = K1_new
+        iters = n + 1
+        if diff < tol:
+            converged = True
+            break
+
+    result = np.zeros(dim, dtype=ul.npfloat)
+    for d in range(dim):
+        result[d] = y0[d] + dt * (b1 * K0[d] + b2 * K1[d])
+    return result, converged, iters
+
 
 @ul.maybe_njit
 def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
-    """Symplectic integration loop. Returns (trajectory, n_failed) where
-    n_failed is the count of steps that hit max_iter without Newton convergence.
+    """Symplectic integration loop (fixed-point stage solver — Yugo/Calvo).
+
+    Returns (trajectory, n_failed, avg_iters, max_iters):
+        n_failed   steps that hit max_iter without the iteration converging
+        avg_iters  mean fixed-point sweeps per step (solver-effort diagnostic)
+        max_iters  worst-case sweeps over the whole run
+
+    To use the Newton solver instead, change the step call below back to
+    rkgl4_hamiltonian_step (retained above).
     """
     d_out = np.zeros((steps + 1, len(y0)), dtype=ul.npfloat)
     d_out[0] = y0
     n_failed = 0
+    total_iters = 0
+    max_iters = 0
 
     for i in range(1, steps + 1):
-        d_out[i], converged = rkgl4_hamiltonian_step(
+        d_out[i], converged, iters = rkgl4_hamiltonian_step_fp(
             func, d_out[i - 1], dt, args
         )
         if not converged:
             n_failed += 1
+        total_iters += iters # keep track of total iterations per reviewer comment
+        if iters > max_iters:
+            max_iters = iters
 
-    return d_out, n_failed
+    avg_iters = total_iters / steps
+    return d_out, n_failed, avg_iters, max_iters
 
 # ===================================
 # === Decimate/Chunking Functions ===

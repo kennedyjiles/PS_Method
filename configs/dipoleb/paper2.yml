@@ -9,14 +9,11 @@ solvers:
   rk45: true
   rkg: true
 
-total_steps: 1.0e7
+gyroperiods: 1.5e5
+# total_steps: 1.0e7
 
 plotting:
   titles: true
   n_gyro: 75
 
 window_time: 11.6
-
-external_h5:
-  root: "/Volumes/Extreme SSD/Thesis/PS_method/outputs_rawdata"
-  ps: "run_5f2698f4194712e0.h5"

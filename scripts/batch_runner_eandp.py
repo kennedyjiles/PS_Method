@@ -2,8 +2,9 @@
 """
 Batch Runner
 =============
-Orchestrates a parameter sweep of dipoleb.py across (energy, L-shell, pitch angle)
-and consolidates results into a single master CSV per batch group.
+Does a parameter sweep of dipoleb.py across (energy, L-shell, pitch angle)
+and consolidates results into a single master CSV per batch group. These match the paper
+runs in the appendix for protons and electrons. Each run produces its own output folder with plots, h5, etc.
 
 Supports parallel execution on multi-core machines (e.g. M4 Max with 16 cores).
 Each worker gets its own minimal YAML config file (merged with base.yml at load time)
@@ -19,13 +20,12 @@ Output layout:
     data/dipoleb/<group>/master_simulation_log.csv   consolidated CSV for the batch
 
 Usage:
-    python scripts/batch_runner_protons.py                # phase 1, n_cores-1 workers
-    python scripts/batch_runner_protons.py --workers 4    # cap workers
-    python scripts/batch_runner_protons.py --dry-run      # preview without running
-    python scripts/batch_runner_protons.py --resume       # skip already-completed runs
-    python scripts/batch_runner_protons.py --adaptive     # use adaptive PS stepping
+    python scripts/batch_runner_eandp.py --Phase 1      # phase 1, n_cores-2 workers
+    python scripts/batch_runner_eandp.py --workers 8    # cap workers (there are only 8 protons and 8 electrons, so 8 is enough)
+    python scripts/batch_runner_eandp.py --resume       # skip already-completed runs
+    python scripts/batch_runner_eandp.py --adaptive     # use adaptive PS stepping (NOT PART OF 2026 PAPER)
 
-Output always lands in data/dipoleb/proton/ (DEFAULT_GROUPS in this script).
+Output always lands in data/dipoleb/<group>/ (DEFAULT_GROUPS in this script).
 """
 
 import os
@@ -49,63 +49,55 @@ BATCH_TMP_DIR = os.path.join(SCRIPT_DIR, "batch_tmp")
 BASE_YML = os.path.join(PROJECT_ROOT, "configs", "dipoleb", "base.yml")
 
 
-# ─── Phase grid for proton method-comparison table (PS / RK4 / RK45 / RKG) ──
-# All cells at L=5; varies (energy, pitch). Each cell runs all 4 solvers,
-# producing one CSV row per solver (4 rows × 8 cells = 32 method-rows).
-# Phases 2–4 are reserved for future extensions (additional L-shells,
-# more energies, etc.) — leave empty for now.
+# ─── Phase grid for e/p method-comparison table (PS / RK4 / RK45 / RKG) ─────
+# All cells at L=5; varies (energy, pitch). Each cell runs the enabled solvers,
+# producing one CSV row per solver. Phase 1 = protons, Phase 2 = electrons;
+# each phase lands in its own group (protons / electrons).
 
-# Phase 1 — 4 energies × 2 pitches at L=5 = 8 cells
 _PHASE_1_CELLS = [
     (1e4, 5),   # 10 keV   proton @ L=5
     (1e5, 5),   # 100 keV
     (1e6, 5),   # 1 MeV
     (1e7, 5),   # 10 MeV
 ]
-_PHASE_2_CELLS = []
-_PHASE_3_CELLS = []
-_PHASE_4_CELLS = []
+_PHASE_2_CELLS = [
+    (5e4, 5),     # 50 keV    electron @ L=5
+    (1e6, 5),     # 1 MeV
+    (1e8, 5),     # 100 MeV
+    (1.5e8, 5),   # 150 MeV
+]
 
 CELLS = {
     1: _PHASE_1_CELLS,
     2: _PHASE_2_CELLS,
-    3: _PHASE_3_CELLS,
-    4: _PHASE_4_CELLS,
 }
 
 GYROPERIODS = {
-    1: None,
-    2: None,
-    3: None,
-    4: None,
+    1: 1.5e5,
+    2: 1.5e5,
 }
 
 STEPS_PER_GYRO_PS = {
     1: 65,
     2: 65,
-    3: 65,
-    4: 65,
 }
 
 # Pitch angles (degrees) — every (E, L) cell is run at each pitch in this list.
 # Phase 1 has 4 cells × 2 pitches = 8 runs.
-PITCH_ANGLES = [90.0, 30.0]
+PITCH_ANGLES = {1: [90.0, 30.0],
+                2: [90.0, 60.0],}
 
 # Particle per phase
 PARTICLE = {
     1: "proton",
-    2: "proton",
-    3: "proton",
-    4: "proton",
+    2: "electron"
 }
 
-# Default batch group names per phase — all four phases share one group so
-# the consolidated CSV holds the full table.
+# Default batch group names per phase — each phase writes to its own group
+# so the proton and electron tables consolidate separately.
 DEFAULT_GROUPS = {
-    1: "proton",
-    2: "proton",
-    3: "proton",
-    4: "proton",
+    1: "protons",
+    2: "electrons",
 }
 
 # Per-phase overrides applied on top of base.yml. Sweep params (energy, L,
@@ -118,12 +110,8 @@ DEFAULT_GROUPS = {
 # solvers override enables RK4 / RK45 / RKG alongside PS for the four-method
 # comparison rows in the table. (base.yml has rk4/rk45/rkg false.)
 OVERRIDES = {
-    1: {"gyroperiods": None, "total_steps": 1.0e7,
-        "solvers": {"rk4": True, "rk45": True, "rkg": True},
-    },
-    2: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.00001},
-    3: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.000001},
-    4: {"phi_deg": 0.0, "use_gyroradius_L_correction": False, "user_min_phase": 0.0000001},
+    1: {"solvers": {"rk4": True, "rk45": True, "rkg": True},},
+    2: {"solvers": {"rk4": True, "rk45": True, "rkg": False},},
 }
 
 
@@ -135,7 +123,8 @@ OVERRIDES = {
 # Key:   (energy_eV, x_initial, pitch_deg)
 # Value: dict of solver flags to force False (True wouldn't make sense here)
 SKIP_SOLVERS = {
-    (1e4, 5, 30.0): {"rk45": False},   # RK45 cannot resolve 10 keV proton at 30° pitch (runs indefinitely)
+    (1e4, 5, 30.0): {"rk45": False},   
+    (1e6, 5, 60.0): {"rk45": False},   
 }
 
 
@@ -155,7 +144,7 @@ def build_run_list(phase):
 
     Each phase carries an explicit list of (energy_eV, L) cells in CELLS,
     and uniform GYROPERIODS / STEPS_PER_GYRO_PS for the whole tier. Pitch
-    is taken from the global PITCH_ANGLES.
+    is taken from PITCH_ANGLES[phase].
 
     Per-cell solver skips from SKIP_SOLVERS (keyed by (E, L, pitch)) are
     attached to the run dict so write_config can apply them.
@@ -164,7 +153,7 @@ def build_run_list(phase):
     gyros          = GYROPERIODS[phase]
     steps_per_gyro = STEPS_PER_GYRO_PS.get(phase)        # None = use base.yml default
     for energy, L in CELLS[phase]:
-        for pitch in PITCH_ANGLES:
+        for pitch in PITCH_ANGLES[phase]:
             run = {
                 "energy_eV":  energy,
                 "x_initial":  round(L, 2),
@@ -183,6 +172,35 @@ def build_run_list(phase):
                 run["solver_skips"] = SKIP_SOLVERS[skip_key]
             runs.append(run)
     return runs
+
+
+def validate_skip_solvers():
+    """Sanity-check that every SKIP_SOLVERS key matches a real (energy, L,
+    pitch) cell across all defined phases.
+
+    SKIP_SOLVERS is keyed by exact (energy_eV, x_initial, pitch_deg). If a
+    cell's energy or pitch is edited without updating the matching skip key,
+    the skip silently stops applying — no error, the solver just quietly runs
+    again. This builds the set of all real cell keys and raises if any skip
+    key is stale, so the mismatch surfaces at startup instead of in the data.
+    """
+    valid = set()
+    for phase in CELLS:
+        for energy, L in CELLS[phase]:
+            for pitch in PITCH_ANGLES.get(phase, []):
+                valid.add((energy, L, pitch))
+    stale = [k for k in SKIP_SOLVERS if k not in valid]
+    if stale:
+        lines = "\n".join(
+            f"    {k}  (energy_eV={k[0]:.1e}, L={k[1]}, pitch_deg={k[2]})"
+            for k in stale
+        )
+        raise SystemExit(
+            "ERROR: SKIP_SOLVERS contains keys that match no (energy, L, "
+            "pitch) cell\nin any phase. These skips would silently never "
+            f"apply:\n{lines}\n"
+            "Fix the key to match a real cell, or remove the entry."
+        )
 
 
 def build_chaotic_rerun_list(group):
@@ -229,7 +247,7 @@ def build_chaotic_rerun_list(group):
 
 def run_key(run):
     """Unique string key for a run, used for progress tracking."""
-    key = f"E{run['energy_eV']:.0e}_L{run['x_initial']:.2f}_P{run['pitch_deg']:.1f}"
+    key = f"E{run['energy_eV']:.1e}_L{run['x_initial']:.2f}_P{run['pitch_deg']:.1f}"
     if run.get("phi_deg", 0.0) != 0.0:
         key += f"_phi{run['phi_deg']:.1f}"
     return key
@@ -287,7 +305,7 @@ def write_config(run, config_path, group):
     # otherwise let OVERRIDES (or base.yml) decide.
     if "phi_deg" in run:
         sweep["phi_deg"] = float(run["phi_deg"])
-    # Phase 4 sets per-cell steps_per_gyro_ps; otherwise base.yml default applies.
+    # Include per-cell steps_per_gyro_ps when set; otherwise base.yml default applies.
     if run.get("steps_per_gyro_ps") is not None:
         sweep["steps_per_gyro"] = {"ps": int(run["steps_per_gyro_ps"])}
     _deep_merge(cfg, sweep)
@@ -297,20 +315,19 @@ def write_config(run, config_path, group):
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
 
-# Module-level variable set by main() so execute_single_run can access it
-_batch_group = "proton"
-
-
-def execute_single_run(run):
+def execute_single_run(run, group):
     """
     Execute one dipoleb batch run.
     Called by worker processes -- must be a top-level function for pickling.
+    `group` is passed explicitly (not via a module global) because spawn-based
+    workers re-import this module fresh and would NOT see a global set in
+    main(); pickled arguments, however, are delivered to the worker.
     Returns (run_key, status, elapsed_min, error_msg).
     """
     key = run_key(run)
 
     config_path = os.path.join(BATCH_TMP_DIR, f"{key}.yml")
-    write_config(run, config_path, _batch_group)
+    write_config(run, config_path, group)
 
     start = time.time()
     try:
@@ -346,7 +363,7 @@ def execute_single_run(run):
         return (key, "failed", elapsed, str(e))
 
 
-def run_parallel(runs, max_workers, dry_run=False):
+def run_parallel(runs, max_workers, group, dry_run=False):
     """Execute runs in parallel using ProcessPoolExecutor."""
     progress = load_progress()
     n_done = 0
@@ -362,13 +379,13 @@ def run_parallel(runs, max_workers, dry_run=False):
             print(f"  [{i+1:>4d}/{total}] {key}  "
                   f"E={E_MeV:.0f} MeV  L={run['x_initial']:.2f}  "
                   f"alpha={run['pitch_deg']:.0f} deg")
-        return
+        return 0, 0
 
     # Submit all runs to the pool
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_to_run = {}
         for run in runs:
-            future = executor.submit(execute_single_run, run)
+            future = executor.submit(execute_single_run, run, group)
             future_to_run[future] = run
 
         try:
@@ -411,7 +428,7 @@ def run_parallel(runs, max_workers, dry_run=False):
     return n_done, n_fail
 
 
-def run_sequential(runs, dry_run=False):
+def run_sequential(runs, group, dry_run=False):
     """Execute runs one at a time (original behavior)."""
     progress = load_progress()
     n_done = 0
@@ -429,7 +446,7 @@ def run_sequential(runs, dry_run=False):
             if dry_run:
                 continue
 
-            key, status, elapsed, err = execute_single_run(run)
+            key, status, elapsed, err = execute_single_run(run, group)
 
             if status == "completed":
                 print(f"         ok completed in {elapsed:.1f} min")
@@ -458,8 +475,6 @@ def run_sequential(runs, dry_run=False):
 
 
 def main():
-    global _batch_group
-
     parser = argparse.ArgumentParser(
         description="Batch parameter sweep runner for dipoleb.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -470,23 +485,23 @@ Examples:
   %(prog)s --workers 4                        Cap to 4 workers
   %(prog)s --adaptive                         Use adaptive PS stepping
   %(prog)s --resume                           Skip cells already completed
-  %(prog)s --single E1e+04_L5.00_P30.0        Run one specific cell
+  %(prog)s --single E1.0e+04_L5.00_P30.0      Run one specific cell
         """)
-    parser.add_argument("--phase", type=int, default=1, choices=[1, 2, 3, 4],
-                        help="Which proton sweep phase to run (default: 1). "
-                             "Phase 1 = the method-comparison table "
-                             "(4 energies × 2 pitches at L=5 = 8 cells). "
-                             "Phases 2-4 reserved for future extensions. "
-                             "All phases share group 'proton'.")
+    parser.add_argument("--phase", type=int, default=1, choices=[1, 2],
+                        help="Which e/p sweep phase to run (default: 1). "
+                             "Phase 1 = protons (4 energies × 2 pitches at "
+                             "L=5 = 8 cells); Phase 2 = electrons. Each phase "
+                             "has its own group (protons / electrons).")
     # NOTE: --group intentionally removed. Output group is fixed by
-    # DEFAULT_GROUPS[phase] in this runner so proton runs always land in
-    # data/dipoleb/proton/ (not the walt folder, which the walt runner owns).
-    # Default to (n_cores - 1) so the machine stays responsive without
-    # requiring the user to look up their core count.
-    _default_workers = max(1, (os.cpu_count() or 2) - 1)
+    # DEFAULT_GROUPS[phase] in this runner so e/p runs always land in
+    # data/dipoleb/protons/ or data/dipoleb/electrons/ (not the walt folder,
+    # which the walt runner owns).
+    # Default to (n_cores - 2), detected automatically, so the machine stays
+    # responsive without the user having to look up their core count.
+    _default_workers = max(1, (os.cpu_count() or 2) - 2)
     parser.add_argument("--workers", type=int, default=_default_workers,
                         help=f"Number of parallel workers "
-                             f"(default: n_cores-1 = {_default_workers} on this machine). "
+                             f"(default: auto = n_cores-2 = {_default_workers} on this machine). "
                              f"Pass 1 to disable parallelism.")
     parser.add_argument("--adaptive", action="store_true",
                         help="Use adaptive PS stepping (default: fixed-step).")
@@ -495,15 +510,17 @@ Examples:
     parser.add_argument("--resume", action="store_true",
                         help="Skip runs already completed in previous session")
     parser.add_argument("--single", type=str, default=None,
-                        help="Run a single case by key, e.g. 'E1e+07_L2.00_P89.0'")
+                        help="Run a single case by key, e.g. 'E1.0e+07_L2.00_P89.0'")
     parser.add_argument("--rerun-chaotic", action="store_true",
                         help="Read the consolidated CSV, find runs flagged as chaotic, "
                              "and re-run them with adaptive stepping.")
     args = parser.parse_args()
 
+    # Fail fast on stale per-cell solver skips before doing any work.
+    validate_skip_solvers()
+
     # ── Resolve group name (always from DEFAULT_GROUPS — no CLI override) ──
     group = DEFAULT_GROUPS[args.phase]
-    _batch_group = group
     print(f"Output destination: data/dipoleb/{group}/")
 
     # ── Rerun-chaotic mode ─────────────────────────────────────────
@@ -548,7 +565,7 @@ Examples:
     print(f"{'='*65}")
     print(f"  {mode_label}  [{stepping_label}]  group: {group}")
     print(f"  Runs: {len(runs)}   Workers: {args.workers}")
-    print(f"  Energies (eV): {[f'{e:.0e}' for e in sorted(set(r['energy_eV'] for r in runs))]}")
+    print(f"  Energies (eV): {[f'{e:.1e}' for e in sorted(set(r['energy_eV'] for r in runs))]}")
     print(f"  L-shells: {sorted(set(r['x_initial'] for r in runs))}")
     print(f"  Pitch angles: {sorted(set(r['pitch_deg'] for r in runs))}")
     print(f"{'='*65}")
@@ -568,9 +585,9 @@ Examples:
 
     # Execute
     if args.workers > 1:
-        n_done, n_fail = run_parallel(runs, args.workers, dry_run=args.dry_run)
+        n_done, n_fail = run_parallel(runs, args.workers, group, dry_run=args.dry_run)
     else:
-        n_done, n_fail = run_sequential(runs, dry_run=args.dry_run)
+        n_done, n_fail = run_sequential(runs, group, dry_run=args.dry_run)
 
     if args.dry_run:
         return

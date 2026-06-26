@@ -171,9 +171,11 @@ def compute_mu_deviation_rk(
         mu_win = compute_mu_rk(solution[:, i0:i1].T)
 
     mudrift = np.abs(mu_win - mu0) / mu0
+    mu_ratio = mu_win / mu0          # instantaneous mu, normalized (shape plot)
     t = (i0 + np.arange(mudrift.size, dtype=ul.npfloat)) * dt * time_factor
 
-    return {"t": t, "mudrift": mudrift, "mu0": mu0}
+    return {"t": t, "mudrift": mudrift, "mu0": mu0,
+            "mu_ratio": mu_ratio}
 
 
 # ===================================================================
@@ -243,16 +245,19 @@ def compute_mu_deviation_ps(
 
     mu_ps = compute_mu_ps(y_ps_win)
     mudrift = np.abs(mu_ps - mu0_ps) / mu0_ps
+    mu_ratio = mu_ps / mu0_ps        # instantaneous mu, normalized (shape plot)
 
     dt_ps_store = ps_step * ps_store_stride
     t_store = np.arange(j0, j1, dtype=ul.npfloat) * dt_ps_store
     moment_stride = max(1, len(mu_ps) // max_plot_points)
     t_plot = t_store[::moment_stride] * time_factor
     mudrift_plot = mudrift[::moment_stride]
+    mu_ratio_plot = mu_ratio[::moment_stride]
 
     return {
         "t":              t_plot,
         "mudrift":        mudrift,
         "mudrift_plot":   mudrift_plot,
+        "mu_ratio_plot":  mu_ratio_plot,
         "ps_order_label": ps_order_label,
     }

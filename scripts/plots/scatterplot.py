@@ -10,17 +10,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from ps_method.utils import plt_config, sparse_labels
 
 # === Load CSV ===
-csv_path = "proton_summary_results.csv"
+# Defaults preserve the original behavior; env vars allow batch regeneration
+# (e.g. SUMMARY_CSV=electron_summary_results.csv SCATTER_METRIC=energy ...).
+csv_path = os.environ.get("SUMMARY_CSV", "proton_summary_results.csv")
 df = pd.read_csv(csv_path)
 plt_config(scale=1)
 
-# === Toggle electron/proton  and mu/E data ===
-USE_ELECTRON = False  # True for electrons, False for protons
-USE_MU = True   # True for Δμ, False for ΔE
+# === Toggle electron/proton ===
+USE_ELECTRON = os.environ.get("USE_ELECTRON", "0") in ("1", "True", "true")  # True for electrons
 
+# === Toggle which metric to plot ===
+#   "mu"     — legacy instantaneous |Δμ|/μ₀ (ripple- and gyrophase-dependent;
+#              good methods pile up at the oscillation floor and 30°/90° split
+#              is a reference artifact — do NOT use this to rank).
+#   "energy" — |ΔE|/E₀.
+METRIC = os.environ.get("SCATTER_METRIC", "energy")
 
-# === Toggle which error to plot ===
-if USE_MU:
+if METRIC == "mu":
     ERR_COLUMN = "errMu_mean"
     YLABEL = r"$|\Delta \mu|/\mu_\emptyset$"
     suffix = "_mu"
@@ -125,9 +131,24 @@ ax.yaxis.set_minor_formatter(NullFormatter())
 ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))
 ax.grid(True, which="both", linestyle="--", linewidth=0.7, alpha=0.7)
 
+# Y-axis limits.
+if METRIC == "mu":
+    # Fixed, shared range so proton and electron mu plots are on the SAME
+    # scale and directly comparable. This also clips the catastrophic RK4
+    # 30° failures (|Δμ|/μ₀ ~ 1e24–1e25) off the top instead of letting them
+    # squash every well-behaved method into a thin band. Bottom 1e-4 keeps the
+    # smallest electron PS points (~3e-4) visible.
+    ax.set_ylim(1e-4, 1e3)
+elif USE_ELECTRON:
+    # Other electron metrics: add headroom at the top so the upper-right
+    # legend clears the RK45 data instead of overlapping it (legend stays put).
+    _ymin, _ymax = ax.get_ylim()
+    ax.set_ylim(_ymin, _ymax * 1000)
+
 
 # === Legend (custom order, circle markers, no lines) ===
-method_order = ["RK45", "RK4", "RKG", "PS"]
+# Electrons don't run RKG, so drop it from the electron legend.
+method_order = ["RK45", "RK4", "PS"] if USE_ELECTRON else ["RK45", "RK4", "RKG", "PS"]
 method_handles = [
     Line2D([0], [0], marker="o", linestyle="None",
            markerfacecolor=color_map[m], markeredgecolor=color_map[m],
