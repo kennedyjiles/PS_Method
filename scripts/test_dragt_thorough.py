@@ -1,17 +1,17 @@
 """
 Thorough validation of corrected Dragt ↔ SI conversions.
 
-Tests:
+Tests (numbered to match the TEST blocks below):
   1. Round-trip: Dragt → SI → dipoleb sim → Dragt (protons, wide energy range)
   2. Round-trip: SI → dipoleb sim → Dragt → SI (electrons)
-  3. Verify γ₁ relation (Dragt eq 2.20): γ₁⁴ = (1/16)(qM/(γm))²Γ⁴
-  4. Verify W₀ = 1/(4γ₁²)  (eq 2.22)
-  5. Verify dimensionless potential V = ½(1/ρ - ρ/r³)² at equator (eq 2.17)
-  6. Verify energy equation ρ̇² + ż² + (1/ρ - ρ/r³)² = W₀² (eq 2.52)
-  7. Non-relativistic limit: γ→1, formulas reduce to simple v = W₀·v_scale
-  8. Ultra-relativistic limit: check no overflow/NaN
-  9. Consistency: compute_w0_squared ↔ compute_params ↔ dragt.py forward
-  10. Verify P_φ = -1 at thalweg ρ=1 (paper's normalization property)
+  3. γ₁ relation (Dragt eq 2.20 & 2.22): (γv/v_scale)² = W₀²
+  4. Energy equation (eq 2.52) at equator: ρ̇² + ż² + v_φ² = W₀²
+  5. P_φ = -1 at thalweg ρ=1 (paper's normalization property)
+  6. Non-relativistic limit: γ→1, speed → W₀·v_scale
+  7. Ultra-relativistic regime: no overflow/NaN
+  8. compute_params matches manual calculation
+  9. compute_w0_squared consistency across energy range
+  10. Boundary condition W₀² < P_φ⁴/16 for trapped orbits
 """
 import numpy as np
 import sys, os

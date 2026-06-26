@@ -1,9 +1,19 @@
+"""
+Bounce/drift period vs energy plot, by L-shell (Walt-style).
+
+Reads a hand-assembled table (L_energy_table_p.csv) of period vs energy for
+each method/L, melts the per-energy columns to long form, and plots period
+vs energy on log-log axes — PS-method curves colored by L, analytical overlaid
+dashed-black. Output PNG auto-named from the CSV. One helper + main:
+
+    parse_energy_label — "10^6 eV" -> 1e6
+    main               — load, reshape, and render the plot
+"""
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import LogLocator
 from matplotlib.lines import Line2D
-from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))

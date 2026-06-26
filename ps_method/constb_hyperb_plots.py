@@ -14,6 +14,7 @@ High-level plots:
     slice_3d         — sliced 3D trajectory
     ke_error_multi   — multi-PS-order KE error comparison
     trajectory_error — position error vs analytical (constb only)
+    trajectory_error_multi — multi-PS-order position error vs analytical (constb only)
 """
 
 import numpy as np

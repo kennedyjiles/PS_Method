@@ -128,10 +128,11 @@ def compute_mu_deviation_rk(
     Returns
     -------
     dict with keys:
-        "t"       : 1D time array in gyroperiods
-        "mudrift" : 1D relative mu deviation array
-        "mu0"     : float, initial magnetic moment (normalized units —
-                    see compute_mu_rk doc).
+        "t"        : 1D time array in gyroperiods
+        "mudrift"  : 1D relative mu deviation array
+        "mu0"      : float, initial magnetic moment (normalized units —
+                     see compute_mu_rk doc).
+        "mu_ratio" : 1D mu/mu0 (instantaneous normalized moment, for shape plot)
     """
     window_steps = int(round(n_gyro * n_steps_per_gyro))
     i0, i1 = _gyro_window_indices(gyro_window, steps, window_steps)
@@ -220,6 +221,7 @@ def compute_mu_deviation_ps(
         "t"              : 1D time array in gyroperiods (decimated for plotting)
         "mudrift"        : 1D full mu deviation array
         "mudrift_plot"   : 1D decimated mu deviation for plotting
+        "mu_ratio_plot"  : 1D decimated mu/mu0 for the shape plot
         "ps_order_label" : int, plot label (mean PS order) from h5 attrs
     """
     window_steps = n_gyro * n_steps_per_gyro

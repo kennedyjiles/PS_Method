@@ -1,5 +1,5 @@
 """
-constb_physics.py — Physics kernels for charged particle motion in a
+constb_physics.py — Physics for charged particle motion in a
                     uniform (constant) magnetic field.
 
 Three solvers are provided:
@@ -7,7 +7,8 @@ Three solvers are provided:
   • analytical    – Exact solution to system of equations.
   • lorentz_force – RHS function for scipy / RK4 integrators (dp/dt = qv × B).
 
-All functions are compiled with @maybe_njit (skipped when float128 is active).
+ps_integrate and lorentz_force are compiled with @maybe_njit (skipped when
+float128 is active); analytical runs as plain NumPy (vectorized over time).
 """
 
 import numpy as np

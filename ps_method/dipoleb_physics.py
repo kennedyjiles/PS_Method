@@ -5,7 +5,8 @@ Core solvers:
     lorentz_force                — dipole Lorentz force (numba-compiled)
     ps_integrate                 — power series integrator (chunked, streamed to h5)
     hamiltonian_rhs              — Hamilton's equations for symplectic integrator
-    rkgl4_hamiltonian_step       — single implicit Gauss-Legendre step (s=2, order 4)
+    rkgl4_hamiltonian_step_fp    — single Gauss-Legendre step (s=2, order 4), fixed-point solver (active)
+    rkgl4_hamiltonian_step       — same step via Newton/finite-diff Jacobian (retained for reference, not called)
     rkgl4_hamiltonian            — full symplectic integration loop
 
 Vector potential:
@@ -226,7 +227,7 @@ def vector_potential(r):
 @ul.maybe_njit
 def hamiltonian_rhs(t, d, charge_sign):
     # t is required by the solver's RHS call signature (solve_ivp /
-    # rkgl4_hamiltonian_step); unused here.
+    # rkgl4_hamiltonian_step_fp); unused here.
     x, y, z = d[0], d[1], d[2]
     px, py, pz = d[3], d[4], d[5]
 

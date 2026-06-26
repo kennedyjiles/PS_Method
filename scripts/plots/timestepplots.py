@@ -1,3 +1,13 @@
+"""
+Work-precision bubble plot from a hand-assembled CSV (Book2.csv).
+
+Reads a CSV containing one or more "steps per gyro / error / wall_clock"
+column blocks (one per method: RK4, PS-adaptive, PS16), located by scanning
+for the 'steps per gyro' header row, and plots |ΔE|/E₀ vs wall-clock time as
+a scatter where bubble size encodes steps-per-gyro. One function:
+
+    generate_performance_plot — parse the CSV blocks and render the plot
+"""
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines

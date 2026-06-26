@@ -1,3 +1,9 @@
+"""
+Quick HDF5 inspector — prints the group/dataset tree with shapes, dtypes,
+and attributes for a run h5 file. Read-only.
+
+    inspect_hdf5 — open a file and recursively print its structure
+"""
 import h5py
 import sys
 

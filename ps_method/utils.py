@@ -7,6 +7,10 @@ Numba:
 Solver:
     rk4_fixed_step              — classical 4th-order Runge-Kutta integrator
 
+PS order labels:
+    ps_order_label_from_attrs   — integer PS-order label from h5 attrs (mean, fallback max)
+    ps_order_label_from_orders  — integer PS-order label from an in-memory orders array
+
 Plotting:
     f64                         — float128 → float64 conversion for matplotlib
     plt_config                  — global matplotlib rcParams (fonts, DPI)

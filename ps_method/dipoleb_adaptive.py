@@ -17,6 +17,7 @@ State management:
 
 Adaptive stepping:
     _local_dt_from_B      — compute dt from local |B| for a target steps-per-gyroperiod
+    _use_fast_path        — True if the fixed ps_step is fine for the local |B| (else go adaptive)
     _ps_adaptive_chunk    — process N output grid points with adaptive substeps
 
 Entry point:
@@ -421,12 +422,11 @@ def run_ps_streaming_adaptive(
                 total_substeps += this_chunk
                 fast_chunks += 1
 
-                # update live state from batch output
-                cur_state[:6] = sol_chunk[:6, -1].copy()
-                _tether_aux(cur_state)
+                # update live state from batch output (ps_integrate already
+                # tethers the aux rows [6:17] each step, so take them as-is)
                 cur_state[:] = sol_chunk[:, -1]
 
-                # safety: if _tether_aux produced NaN/Inf (near-origin pass),
+                # safety: if the batch endpoint is NaN/Inf (near-origin pass),
                 # revert to pre-chunk state and redo in adaptive mode
                 if not np.all(np.isfinite(cur_state)):
                     cur_state[:6] = sol_chunk[:6, 0].copy()

@@ -1,7 +1,19 @@
+"""
+Runtime-vs-error scatter plot (bubble size = particle energy) per solver.
+
+Reads a per-particle summary_results CSV (built by build_summary_results.py)
+and plots conservation error vs runtime for each method, with energies encoded
+as bubble sizes and pitch angles as fill/ring styles. Input file and metric are
+selected via environment variables.
+
+Usage:
+    python scatterplot.py
+    SUMMARY_CSV=electron_summary_results.csv USE_ELECTRON=1 python scatterplot.py
+    SCATTER_METRIC=mu python scatterplot.py        # default metric is energy
+"""
 import pandas as pd
 import matplotlib.pyplot as plt
 import re
-import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 import os
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter

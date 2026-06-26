@@ -49,7 +49,7 @@ def now_str():
   return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def now(string=False):
+def now():
   from datetime import datetime
   now = datetime.now()
   return now.hour, now.minute, now.second

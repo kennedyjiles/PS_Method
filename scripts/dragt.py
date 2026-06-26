@@ -1,3 +1,17 @@
+"""
+Dragt-units → physical calculator.
+
+Given Dragt dimensionless inputs (W0², ρ, ρ̇) at an L-shell, computes the
+physical launch conditions: kinetic energy, speed, pitch/phi angles, gyroradius,
+gyroperiod, and bounce period, plus the x_initial to paste into the simulator.
+The inverse of si_to_dragt.py. Inputs are CLI-overridable (see --help);
+defaults reproduce the paper cases.
+
+Usage:
+    python scripts/dragt.py
+    python scripts/dragt.py --L-shell 4 --rho 1.07
+    python scripts/dragt.py --particle electron --wo-squared 0.01
+"""
 import numpy as np
 import argparse
 

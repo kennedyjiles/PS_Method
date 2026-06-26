@@ -14,7 +14,6 @@ import time
 import tempfile
 import datetime
 import h5py
-import numpy as np
 
 
 def collect_datasets(group, prefix=""):

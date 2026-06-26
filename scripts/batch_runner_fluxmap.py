@@ -259,14 +259,6 @@ def run_key(run):
     return f"E{run['energy_eV']:.1e}_L{run['x_initial']:.2f}_P{run['pitch_deg']:.1f}"
 
 
-def _deep_merge(base, override):
-    for k, v in override.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _deep_merge(base[k], v)
-        else:
-            base[k] = v
-
-
 def write_config(run, config_path):
     """Write a minimal per-worker YAML that overrides base.yml."""
     cfg = {

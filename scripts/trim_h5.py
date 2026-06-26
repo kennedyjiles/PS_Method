@@ -39,55 +39,6 @@ def get_ps_timing(ps_grp):
     return dt, store_stride, dt_store, n_cols
 
 
-def get_norm_time_factor(f):
-    """Get the normalization factor (seconds per normalized time unit)
-    from the h5 metadata.  Returns norm_time in seconds."""
-    # Try meta group first (always present after append_results)
-    if "meta" in f and "norm_time" in f["meta"].attrs:
-        return float(f["meta"].attrs["norm_time"])
-    # Fall back to params_json
-    if "params_json" in f.attrs:
-        params = json.loads(f.attrs["params_json"])
-        if "norm_time" in params:
-            return float(params["norm_time"])
-    return None
-
-
-def seconds_to_columns(window_s, norm_time_s, dt_store_norm):
-    """Convert a physical time window (seconds) to a column count.
-
-    Parameters
-    ----------
-    window_s : float
-        Desired window in physical seconds.
-    norm_time_s : float
-        Physical duration of the full simulation in seconds.
-    dt_store_norm : float
-        Normalized time between stored columns.
-
-    Returns
-    -------
-    n_cols : int
-        Number of stored columns that span the requested window.
-    """
-    # norm_time attr is total normalized time for the full run.
-    # But we need the *factor*: seconds_per_normalized_unit.
-    # From dipoleb.py: physical_time = norm_time * tau_time
-    # where tau_time = mass / (q * B0).
-    # But we don't need tau_time explicitly — we have:
-    #   total_physical_seconds = norm_time_s  (meta/physical_time)
-    #   total_normalized_time  = n_cols_total * dt_store_norm
-    # So: tau_factor = total_physical_seconds / total_normalized_time
-    #     window_normalized = window_s / tau_factor
-    #     n_cols = window_normalized / dt_store_norm
-    # Simplifying:
-    #     n_cols = window_s / (total_physical_seconds / n_cols_total)
-    #            = window_s * n_cols_total / total_physical_seconds
-    # But we need total_physical_seconds and n_cols_total passed in.
-    # We handle this in the caller.
-    raise NotImplementedError("Use seconds_to_columns_direct instead")
-
-
 def write_trimmed(src_path, dst_path, ps_grp_src, col_start, col_end,
                   window_s, end_label, f_src, physical_time=None):
     """Write a trimmed h5 file containing columns [col_start, col_end).
@@ -369,16 +320,11 @@ def main():
         if "meta" in f and "physical_time" in f["meta"].attrs:
             physical_time = float(f["meta"].attrs["physical_time"])
 
-        norm_time = None
-        if "meta" in f and "norm_time" in f["meta"].attrs:
-            norm_time = float(f["meta"].attrs["norm_time"])
-
         if physical_time is None:
             # Try to get from params
             if "params_json" in f.attrs:
                 params = json.loads(f.attrs["params_json"])
                 physical_time = params.get("physical_time")
-                norm_time = params.get("norm_time")
 
         if physical_time is None or physical_time <= 0:
             print("Error: cannot determine physical_time from h5 metadata.")

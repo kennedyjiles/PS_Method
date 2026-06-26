@@ -24,6 +24,9 @@ Conservation:
     pphi_error           — P_phi relative error vs time
     mu_deviation         — magnetic moment conservation error vs time
     mu_shape             — instantaneous magnetic moment μ/μ₀ vs time (shape)
+
+Internal helpers:
+    _log_envelope        — per-log-bin upper envelope for readable log-log curves
 """
 
 import numpy as np
@@ -213,7 +216,6 @@ def slice_3d(
     ax.set_xlim(-plotbounds, plotbounds)
     ax.set_ylim(-plotbounds, plotbounds)
     ax.set_zlim(-plotbounds, plotbounds)
-    ax.legend(loc="upper right")
     ax.grid(True)
 
     ax.set_xlabel(r'$x$')

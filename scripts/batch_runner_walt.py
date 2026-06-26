@@ -36,7 +36,6 @@ import subprocess
 import time
 import yaml
 import pandas as pd
-import numpy as np
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 

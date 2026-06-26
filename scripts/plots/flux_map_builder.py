@@ -432,7 +432,6 @@ def build_dwell_from_store(orbit_store, rho_edges, z_edges, spectral_index,
     pitches_used  = set()
     L_shells_used = set()
 
-    n_lost_skipped = 0
     for orb in orbit_store:
         E     = orb.get("energy_eV")
         pitch = orb.get("pitch_deg")
@@ -440,7 +439,6 @@ def build_dwell_from_store(orbit_store, rho_edges, z_edges, spectral_index,
 
         # Drop orbits that ever hit the atmosphere (stably-trapped-only map)
         if exclude_lost and orb.get("hit_atmosphere", False):
-            n_lost_skipped += 1
             continue
 
         # Energy filters
@@ -579,10 +577,6 @@ def plot_dwell_map(dwell_2d, rho_edges, z_edges, save_path=None, title="",
     # White background
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
-
-    # Bin centers for contours
-    rho_centers = 0.5 * (rho_edges[:-1] + rho_edges[1:])
-    z_centers   = 0.5 * (z_edges[:-1] + z_edges[1:])
 
     # Rescale so the peak value matches a target (cosmetic only — does not
     # turn the map into a physical density)

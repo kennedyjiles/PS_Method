@@ -16,17 +16,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
 
 csv_path = sys.argv[1] if len(sys.argv) > 1 else "master_simulation_log.csv"
 # on_bad_lines='warn' skips rows whose column count doesn't match the header,
 # printing a warning so we know which rows were dropped.  Defensive: a single
 # corrupt row shouldn't prevent the whole plot from rendering.
 df = pd.read_csv(csv_path, on_bad_lines='warn')
-df["energy_MeV"] = df["energy_eV"] / 1e6
 df["L"] = df["L_eff"].round(2)
 df["eps_plot"] = df["eps_max"].clip(upper=5.0)
-df["mu_max_err_plot"] = df["mu_max_err"].clip(lower=1e-3, upper=10.0)
 
 # ── Remove L=1 ──
 df = df[df["L"] > 1.0].copy()

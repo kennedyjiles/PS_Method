@@ -1,8 +1,17 @@
+"""
+Trajectory animation from an h5 run — 2D (x–y) and 3D (x–y–z).
+
+Loads the PS trajectory (and RK4, reserved for a planned side-by-side
+comparison) from a hardcoded h5 file and renders two FuncAnimation videos
+(trajectory_2d.mp4, trajectory_3d_fullgyro.mp4) on a dark background.
+Edit FILE_PATH / DECIMATION at the top to point at a run. (INTEGRATOR is a
+leftover knob from the commented-out single-solver load; the active load
+hardcodes ps/y and rk4/y.)
+"""
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from mpl_toolkits.mplot3d import Axes3D
 
 # --- Configuration ---
 plt.style.use('dark_background') 

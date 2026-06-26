@@ -18,7 +18,7 @@ from ps_method.dipoleb_dragt_analysis import compute_w0_squared
 
 RE = 6378137.0; B0 = 3.12e-5; M = B0*RE**3
 q = 1.602176634e-19; m_p = 1.67262192595e-27; m_e = 9.1093837139e-31
-c = 299792458.0; m0c2_p = 938.27208943e6; m0c2_e = 0.51099895e6
+c = 299792458.0; m0c2_p = 938.27208943e6
 evtoj = 1.602176634e-19
 
 print("="*90)

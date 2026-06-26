@@ -1,10 +1,15 @@
 """
 Kinetic energy and P_phi conservation diagnostics for dipole trajectories.
 
-    _compute_energy_ps_chunked    — KE error from h5 in chunks
     compute_ke_errors            — KE errors for all enabled solvers
-    compute_pphi_error_chunked   — P_phi error from h5 in chunks (PS-only)
     compute_pphi_errors          — P_phi errors for all enabled solvers
+
+Internal helpers:
+    _vector_potential_batch      — vectorized dipole A for an (N,3) position array
+    log_spaced_indices           — log-spaced sample indices (plot-only decimation)
+    _compute_energy_ps_chunked   — KE error from chunked PS h5 (uniform + log sampling)
+    _pphi_from_xyz_v             — canonical P_phi from position/velocity
+    _pphi_drift                  — relative (or absolute) P_phi drift
 """
 
 import numpy as np
@@ -131,94 +136,6 @@ def _compute_energy_ps_chunked(
         return t_plot[:k], drift_plot[:k], t_log[:kl], drift_log[:kl]
     return t_plot[:k], drift_plot[:k]
 
-
-# ===================================================================
-# Compute Canonical Angular Momentum (in normalized units, not Dragt)
-# ===================================================================
-
-def compute_pphi_error_chunked(
-    cache_path, y0, charge_sign, ps_step, time_factor,
-    chunk_cols=1_000_000, max_plot_points=500_000,
-):
-    """
-    Compute the relative (or absolute) error of canonical angular momentum
-    P_phi from chunked PS h5 data.
-
-    Parameters
-    ----------
-    cache_path : str
-        Path to the PS h5 file.
-    y0 : array_like
-        Initial 17-element state vector (compact h5 rows expanded).
-        Needs positions (0-2) and velocities (3-5).
-    charge_sign : float
-        +1 for proton, -1 for electron.
-    ps_step : float
-        PS step size (normalized time units).
-    time_factor : float
-        Conversion factor from normalized time to gyroperiods (1/T_gyro).
-    chunk_cols : int
-        Number of columns to read per h5 chunk.
-    max_plot_points : int
-        Target max points for the decimated output arrays.
-
-    Returns
-    -------
-    dict with keys:
-        "t_gyro"        : 1D array, time in gyroperiods (decimated)
-        "rel_error_log" : 1D array, error with zeros replaced by 1e-16
-        "max_err"       : float, global max error
-        "P_phi_initial" : float, initial canonical angular momentum
-        "ylabel"        : str, appropriate axis label
-    """
-    # --- Initial P_phi ---
-    rho0  = np.sqrt(y0[0]**2 + y0[1]**2)
-    r0    = np.sqrt(y0[0]**2 + y0[1]**2 + y0[2]**2)
-    vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
-    P_phi_initial = (rho0 * vphi0) - charge_sign * (rho0**2 / r0**3)
-
-    # --- Chunked read ---
-    with h5py.File(cache_path, "r") as h5:
-        ds = h5["ps"]["y"]
-        N = ds.shape[1]
-        dec = max(1, N // max_plot_points)
-        err_dec = []
-        max_err = 0.0
-
-        for i0 in range(0, N, chunk_cols):
-            i1 = min(i0 + chunk_cols, N)
-            ch = ds[:6, i0:i1]
-            rho = np.sqrt(ch[0]**2 + ch[1]**2)
-            r   = np.sqrt(ch[0]**2 + ch[1]**2 + ch[2]**2)
-            vp  = (ch[0]*ch[4] - ch[1]*ch[3]) / rho
-            pp  = (rho * vp) - charge_sign * (rho**2 / r**3)
-
-            if P_phi_initial == 0:
-                err = np.abs(pp)
-            else:
-                err = np.abs((pp - P_phi_initial) / P_phi_initial)
-
-            cm = float(np.max(err))
-            if cm > max_err:
-                max_err = cm
-
-            err_dec.append(err[::dec])
-            del ch, rho, r, vp, pp, err
-
-    rel_error = np.concatenate(err_dec)
-    rel_error_log = np.where(rel_error == 0, 1e-16, rel_error)
-    t_gyro = ps_step * np.arange(len(rel_error_log), dtype=ul.npfloat) * dec * time_factor
-
-    ylabel = (r"Absolute Error $|\Delta P_\phi|$" if P_phi_initial == 0
-              else r"Relative Error $|(P_\phi - P_{\phi,0}) / P_{\phi,0}|$")
-
-    return {
-        "t_gyro":        t_gyro,
-        "rel_error_log": rel_error_log,
-        "max_err":       max_err,
-        "P_phi_initial": P_phi_initial,
-        "ylabel":        ylabel,
-    }
 
 
 # ------------------------------------------------------------------
@@ -390,13 +307,13 @@ def compute_ke_errors(
     # rel_drift_ps = UNIFORM decimation -> feeds the summary tail (unchanged).
     # (t_ps_log, drift_ps_log) = LOG-spaced -> plot only, so the early decades
     # of τ/T are visible. Both are collected in one h5 pass.
-    rel_drift_ps = t_ps_plot = None
+    rel_drift_ps = None
     t_ps_log = drift_ps_log = None
     if USE_PS:
         with h5py.File(cache_path, "r") as ps_h5:
             ps_y_h5 = ps_h5["ps"]["y"]
             log_idx = log_spaced_indices(ps_y_h5.shape[1], max_plot_points)
-            t_ps_plot, rel_drift_ps, t_ps_log, drift_ps_log = _compute_energy_ps_chunked(
+            _, rel_drift_ps, t_ps_log, drift_ps_log = _compute_energy_ps_chunked(
                 ps_y_h5=ps_y_h5,
                 e0_ps=e0_ps,
                 dt_ps_store=ps_step * (ps_decimate if ps_decimate > 1 else 1),
@@ -542,7 +459,7 @@ def compute_pphi_errors(
     # rel_pphi_ps = UNIFORM decimation -> summary tail (unchanged). The
     # (t_pphi_log, drift_pphi_log) pair is LOG-spaced -> plot only, collected
     # in the same h5 pass so the early decades of τ/T are visible.
-    rel_pphi_ps = t_ps_plot = None
+    rel_pphi_ps = None
     t_pphi_log = drift_pphi_log = None
     P_phi_initial_ps = None
     ylabel_ps = None
@@ -576,8 +493,6 @@ def compute_pphi_errors(
                     t_log.append(sel)
                 del ch, pp, err
         rel_pphi_ps = np.concatenate(err_dec)
-        t_ps_plot = (np.arange(len(rel_pphi_ps), dtype=ul.npfloat)
-                     * dt_ps_store * energy_stride)
         drift_pphi_log = np.concatenate(err_log)
         t_pphi_log = np.concatenate(t_log).astype(ul.npfloat) * dt_ps_store
         ylabel_ps = (r"$|\Delta P_\phi|$" if P_phi_initial_ps == 0

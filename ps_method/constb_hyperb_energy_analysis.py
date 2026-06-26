@@ -15,17 +15,15 @@ two  = ul.npfloat(2.0)
 
 @ul.maybe_njit
 def energy_drift(vx, vy, vz):
-    """KE drift |KE - KE[0]| / KE[0], njit'd. Assumes unit mass (the mass
-    factor cancels in the ratio anyway)."""
     KE = half * (vx**two + vy**two + vz**two)
     return np.abs(KE - KE[0]) / KE[0]
 
 def energy_drift_pure(vx, vy, vz):
-    """Same as energy_drift but no JIT — works with float128."""
     KE = 0.5 * (vx**2 + vy**2 + vz**2)
     return np.abs(KE - KE[0]) / KE[0]
 
 def extract_v(sol):
+    """Pull the velocity rows (vx, vy, vz) from a (>=6, N) solution array."""
     return sol[3], sol[4], sol[5]
 
 def trajectory_error_xy(sol, x_ref, y_ref, scale):
