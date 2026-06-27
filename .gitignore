@@ -12,7 +12,7 @@ data/
 *.json.bak
 *.log
 *.docx
-/data/*
+data
 
 #ymls
 dragt.yml
