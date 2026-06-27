@@ -1,0 +1,26 @@
+# ===================================================================
+# Paper 3 — 100 keV proton, -15° pitch, delta=200 km, B0=10 nT
+# ===================================================================
+particle: proton
+energy_eV: 100.0e3
+pitch_deg: -15.0
+delta: 200
+y_initial_si: 2.0            # 0.01 * delta
+
+solvers:
+  rk4: true
+  rk45: true
+
+plotting:
+  titles: false
+  full_plot: true
+  skip_rk4_slice: true
+
+external_h5:
+  root: data/hyperb/paper3/_rawdata/ 
+  a:
+    enabled: false
+    file: c9c638_full.h5
+  b:
+    enabled: false
+    file: null

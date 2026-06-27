@@ -6,10 +6,18 @@ __pycache__/
 *.h5
 master_simulation_log.csv
 outputs/
-
-# Runtime/temp files
+data/
+*.npz
+*.json
+*.json.bak
 *.log
-utility_scripts/batch_flux_progress.json
+*.docx
+/data/
+
+#ymls
+dragt.yml
+configs/dipoleb/protons/*
+configs/dipoleb/electrons/*
 
 # Images (generated)
 *.png
@@ -17,8 +25,16 @@ utility_scripts/batch_flux_progress.json
 # Archive
 Archive/
 
-# Old/removed files
-timestep.py
-test.py
-functions/functions_library_dipole2.py
-functions/functions_library_dipole\ OG\ DONT\ TOUCH.py
+timestepplots.py
+testrun.yml
+*_corrupt.py
+.claude/
+batch_tmp/
+
+# DELETE later  
+flux_map_builder.py
+launch*
+trappedbands.py
+Book2*
+build_summary_results.py
+timestepplots.py

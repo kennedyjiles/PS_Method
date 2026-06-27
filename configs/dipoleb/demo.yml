@@ -1,0 +1,17 @@
+# ===================================================================
+# Demo run — paper2 physics at reduced gyroperiods for quick test
+# ===================================================================
+
+particle: electron
+gyroperiods: 550
+
+solvers:
+  rk4: true
+  rk45: true
+
+plotting:
+  titles: true
+  slice_mode: first
+  n_gyro: 75
+
+window_time: 11.6

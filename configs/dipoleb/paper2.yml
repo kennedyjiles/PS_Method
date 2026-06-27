@@ -1,0 +1,19 @@
+# ===================================================================
+# Paper 2 — 100 MeV electron, 60° pitch, 5 R_E
+# ===================================================================
+
+particle: electron
+
+solvers:
+  rk4: true
+  rk45: true
+  rkg: true
+
+gyroperiods: 1.5e5
+# total_steps: 1.0e7
+
+plotting:
+  titles: true
+  n_gyro: 75
+
+window_time: 11.6

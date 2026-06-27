@@ -1,0 +1,21 @@
+# ===================================================================
+# Paper 1 — 10 keV electron, 75° pitch, delta=500 km, B0=10 nT
+# (matches base.yml physics; only solver / plotting / external_h5 overrides)
+# ===================================================================
+solvers:
+  rk4: true
+  rk45: true
+
+plotting:
+  titles: false
+  full_plot: true
+  slice_ylim_top: 0.7
+
+external_h5:
+  root: "data/hyperb/paper1/_rawdata/"
+  a:
+    enabled: false
+    file: 2585d3_full.h5
+  b:
+    enabled: false
+    file: null

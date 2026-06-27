@@ -1,0 +1,9 @@
+# ===================================================================
+# Demo run — paper1 physics at reduced gyroperiods for quick test
+# ===================================================================
+
+gyroperiods: 100
+
+solvers:
+  rk4: true
+  rk45: true

@@ -1,0 +1,30 @@
+# ===================================================================
+# Paper 3 — paper1 physics with mismatched step sizes
+#           PS takes huge steps, RK4 takes tiny steps
+# ===================================================================
+
+energy_eV: 100.0e3
+pitch_deg: 30.0
+
+solvers:
+  rk4: true
+  rkg: true
+
+ps_order: 16
+
+# Manually override step sizes (not computed from steps_per_gyro)
+step_overrides:
+  ps: 54.0
+  rk4: 0.5
+
+# These are informational — the step overrides take precedence
+steps_per_gyro:
+  ps: 14.5
+  rk4: 1570.8
+  rkg: 100
+
+# norm_time set explicitly (not from gyroperiods × T_gyro)
+# Original expression: 6206.0 * 4 / 0.00033464094804535314
+norm_time_override: 74180999.50110008
+
+window_time: 6209.0

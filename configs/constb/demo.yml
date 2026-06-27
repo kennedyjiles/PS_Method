@@ -1,0 +1,11 @@
+# ===================================================================
+# Demo run — electron variant of base, reduced steps for speed
+# ===================================================================
+
+particle: electron
+
+read_data: false
+
+steps_per_gyro:
+  ps: 10
+  rk4: 10

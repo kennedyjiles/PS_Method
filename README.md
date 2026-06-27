@@ -1,30 +1,48 @@
-# Parker–Sochacki Method: Charged-Particle Motion in Magnetic Fields
+# Parker–Sochacki Power Series Method: Charged-Particle Motion in Magnetic Fields
 
 ## Overview
-This repository contains a suite of Python codes developed to compare the **Parker–Sochacki (PS) power-series integration method** against several **Runge–Kutta-based solvers** (fixed-step fourth order (RK4), adaptive Dormand-Prince (RK45), and the symplectic application of the Gauss-Lagrange Runge-Kutta (RKG)) for charged-particle motion in various magnetic-field configurations, demonstrating the PS method achieves superior energy conservation.
 
-The project was developed as part of graduate research at the Physics and Astronomy Department at **George Mason University**. This repository accompanies the research paper *”High-Accuracy Numerical Solutions of Particle Motion in Static Magnetic Fields,”* 2026, by H. Jiles and R. Weigel ([arXiv:2604.20876](https://doi.org/10.48550/arXiv.2604.20876)), providing simulation codes and analysis scripts used in the study.
+This repository contains the simulation codes and analysis tools that compare the
+**Parker–Sochacki power series (PS) integration method** against several
+**Runge–Kutta-based solvers** — fixed-step fourth-order (RK4), adaptive Dormand–Prince
+(RK45), and the symplectic two-stage Gauss–Legendre Runge–Kutta (RKG) — for
+charged-particle motion in static magnetic fields. Across three field configurations of
+increasing complexity, the PS method achieves **4–13 orders of magnitude** better
+kinetic-energy conservation than the RK methods over long integrations.
 
-The repository also includes ongoing thesis work applying the PS method to the **Dragt–Störmer problem** - full Lorentz-orbit trapping of high-energy particles in a dipole magnetic field - extending the integrator with adaptive time stepping, Dragt (1965) diagnostics, Michel (1980) phase-space analysis, and AP-8-style flux mapping (see [Dragt–Störmer Analysis](#dragtstörmer-analysis-in-progress) below).
+The work was developed in the **Space Weather Lab, Department of Physics and Astronomy,
+George Mason University**. This repository accompanies:
 
-> **Note:** The Dragt–Störmer analysis tools (batch runner, flux map builder, Michel phase portraits, adaptive integrator, and associated utilities) are part of active thesis research and are under ongoing development. Interfaces, parameter defaults, and output formats may change as the work progresses.
+> H. Jiles and R. Weigel, *"High-Accuracy Numerical Solutions of Particle Motion in
+> Static Magnetic Fields,"* 2026.
+> [arXiv:2604.20876](https://doi.org/10.48550/arXiv.2604.20876)
 
-Three benchmark problems are included:
-- **`constB.py`** - Uniform magnetic field: 
-```math
-\mathbf{B}=B_0\mathbf{\hat{z}}
-```
-- **`hyperB.py`** - Hyperbolic tangent field (1-D current-sheet analog): 
-```math
-\mathbf{B}= B_0 \tanh(y/\gamma)\mathbf{\hat{z}}
-```
-- **`dipoleB.py`** - Dipole magnetic field (Earth's dipole analog): 
-```math
-\mathbf{B(r)}=\frac{\mu_0}{4\pi}\left[\frac{3\mathbf{r(m\cdot r)}}{r^5}-\frac{\mathbf{m}}{r^3}\right]
-```
+Three benchmark problems are included (in order of increasing complexity):
 
-Each of these drivers can be run in **demo** or **paper** modes, depending on whether a fast diagnostic or full-scale reproduction of the paper results is desired.
+- **`constb.py`** — Uniform field:  $\mathbf{B}=B_0\,\hat{\mathbf{z}}$
+- **`hyperb.py`** — Hyperbolic-tangent field (Harris current-sheet analog):  $\mathbf{B}=B_0\tanh(y/\delta)\,\hat{\mathbf{z}}$
+- **`dipoleb.py`** — Dipole field (Earth's dipole analog):  $\mathbf{B(r)}=\dfrac{3(\mathbf{m}\cdot\hat{\mathbf{r}})\hat{\mathbf{r}}-\mathbf{m}}{r^3}$
 
+---
+
+## ⚠️ What is in the paper vs. ongoing research
+
+This codebase contains **both** the published paper material **and** active, unpublished
+thesis research. Please be clear about the distinction:
+
+| | In the published paper | Ongoing research (NOT in the paper) |
+|---|---|---|
+| **Scope** | PS vs RK accuracy/stability benchmarks in three static fields | Applications of full-orbit PS trajectories to radiation-belt physics |
+| **Drivers / configs** | `constb.py`, `hyperb.py`, `dipoleb.py` with the `paper*` configs | `dipoleb.py` adaptive mode + Dragt diagnostics |
+| **Batch reproductions** | `scripts/batch_runner_eandp.py` (method-comparison tables)<br>`scripts/batch_runner_walt.py` (bounce/drift period tables) | `scripts/batch_runner_fluxmap.py` (dwell-occupancy sweeps) |
+| **Analysis / plots** | energy & momentum error, trajectories, bounce/drift periods | dwell-time maps, Dragt–Störmer / Dragt–Finn chaos, Poincaré sections, Walt ε–L stability |
+
+The paper itself notes (Sec. 6.2.1) that *"although we do not consider applications of
+improved numerical methods for particle trajectory calculations in this work, this is an
+active area of research."* The **dwell-time map** and **Dragt–Störmer/Finn** tools below
+fall under that ongoing work — they are usable and documented, but their interfaces,
+defaults, and outputs may change. See [Ongoing Research](#ongoing-research-not-in-the-paper)
+at the end.
 
 ---
 
@@ -32,71 +50,61 @@ Each of these drivers can be run in **demo** or **paper** modes, depending on wh
 
 ```
 .
-├── constB.py                   # Main simulation driver (uniform field)
-├── hyperB.py                   # Main simulation driver (hyperbolic/current-sheet field)
-├── dipoleB.py                  # Main simulation driver (dipole field, fixed step)
-├── dipoleB_adp.py              # Dipole driver with adaptive PS time stepping
+├── run.py                       # Unified entry point (dispatches to the right driver)
+├── constb.py                    # Driver — uniform field
+├── hyperb.py                    # Driver — hyperbolic / current-sheet field
+├── dipoleb.py                   # Driver — dipole field (fixed + adaptive step)
 │
-├── functions/
-│   ├── functions_library_constB.py
-│   ├── functions_library_hyper.py
-│   ├── functions_library_dipole.py      # PS dipole integrator (fixed step, streaming)
-│   ├── functions_library_dipole_adp.py     # PS dipole integrator (adaptive step, streaming)
-│   ├── functions_library_dragt.py       # Dragt diagnostics (W₀², P_φ, adiabaticity, Poincaré)
-│   ├── functions_library_universal.py   # Shared numerical + plotting utilities
-│   └── functions_library_universal_chunk.py  # Chunked energy/mu computation for large runs
+├── configs/                     # YAML run configurations (the "run modes")
+│   ├── config_loader.py         #   loads a run yml, merges with base.yml, validates
+│   ├── constb/                  #   base.yml, demo.yml, paper.yml, ...
+│   ├── hyperb/                  #   base.yml, demo.yml, paper1..paper4.yml, ...
+│   └── dipoleb/                 #   base.yml, demo.yml, paper1..paper3.yml, electrons/, protons/, ...
 │
-├── utility_scripts/
-│   ├── batch_flux_runner.py    # Batch parameter sweep runner (energy, L, pitch angle phases)
-│   ├── flux_map_builder.py     # AP-8-style meridian flux map from batch h5 trajectories
-│   ├── michel_phase_portrait.py # Michel (1971/1980) phase portraits (α vs φ at equatorial crossings)
-│   ├── si_to_dragt.py          # Convert SI initial conditions to Dragt dimensionless units
-│   ├── dragt.py                # Standalone Dragt orbit integration
-│   ├── inspect_hdf5.py         # Inspect h5 data files
-│   ├── project_setup.py        # Shared imports, logger, constants
-│   ├── logger_util.py          # Logging configuration
-│   ├── run_at_night.py         # Batch runner for overnight parameter sweeps
-│   ├── walt_diagnostics_v3.py  # Walt stability diagram: ε vs L with Dragt classification
-│   ├── walt_diagnostics_v2.py  # Multi-panel Walt diagnostic plots
-│   ├── test_dragt_roundtrip.py # SI ↔ Dragt unit conversion tests
-│   └── test_dragt_thorough.py  # Extended Dragt parameter validation
+├── ps_method/                   # Core library (importable package)
+│   ├── constants.py             #   shared physical constants (q_e, m_e, m_p, RE, B_0)
+│   ├── constb_physics.py        #   PS / analytical / Lorentz kernels — uniform field
+│   ├── hyperb_physics.py        #   PS / Lorentz kernels — hyperbolic field
+│   ├── dipoleb_physics.py       #   PS dipole integrator (fixed step, streaming) + RKG
+│   ├── dipoleb_adaptive.py      #   adaptive-step PS dipole integrator (streaming)
+│   ├── constb_hyperb_energy_analysis.py  # KE drift (constb/hyperb)
+│   ├── dipoleb_energy_analysis.py        # KE + P_phi drift (dipole, chunked)
+│   ├── dipoleb_moment_analysis.py        # magnetic-moment μ diagnostics (dipole)
+│   ├── dipoleb_bouncedrift_analysis.py   # bounce/drift period detection (dipole)
+│   ├── dipoleb_dragt_analysis.py         # Dragt (1965) diagnostics — RESEARCH
+│   ├── constb_hyperb_plots.py / dipoleb_plots.py   # plotting
+│   ├── utils.py                 #   shared numerical + plotting utilities, RK4
+│   └── writers.py               #   HDF5 I/O, run hashing, summaries, master CSV
 │
-├── test_particles/
-│   ├── constB_testparticles.py
-│   ├── hyperB_testparticles.py
-│   └── dipoleB_testparticles.py
+├── scripts/                     # Stand-alone tools (not imported by the drivers)
+│   ├── batch_runner_eandp.py    #   PAPER: proton/electron method-comparison sweeps
+│   ├── batch_runner_walt.py     #   PAPER: electron/proton bounce–drift period sweeps
+│   ├── batch_runner_fluxmap.py  #   RESEARCH: dwell-occupancy parameter sweeps
+│   ├── dragt.py / si_to_dragt.py            # RESEARCH: Dragt-unit conversions
+│   ├── test_dragt_roundtrip.py / test_dragt_thorough.py  # Dragt-unit validation tests
+│   ├── inspect_hdf5.py / trim_h5.py / benchmark_compression.py  # h5 utilities
+│   ├── run_at_night.py          #   pause/resume a long run within a time window
+│   └── plots/                   #   post-processing figure scripts
+│       ├── scatterplot.py / build_summary_results.py  # method-comparison plots (paper)
+│       ├── trappedbands.py / flux_map_builder.py / launch_fate_map.py  # RESEARCH
+│       ├── waltplot.py / timestepplots.py             # supplementary plots
+│       └── animate.py / animate_merged.py             # trajectory animations
 │
-├── misc_plots/                 # Additional plotting and post-processing scripts
-├── USER_MANUAL_batch_tools.txt # User manual for batch runner, flux map, and Michel scripts
-├── ps_method.yml               # Conda environment specification
+├── data/                        # Created on first run — all outputs land here
+├── ps_method.yml                # Conda environment specification
 └── README.md
 ```
 
+> **Note:** This layout reflects the current, refactored codebase (lowercase drivers,
+> YAML configs, an importable `ps_method/` package, and `data/` outputs). Earlier
+> versions used a different structure (`functions/`, `utility_scripts/`,
+> `test_particles/*.py`, `outputs/`); those names are obsolete.
+
 ---
 
-## Installation and Environment Setup
+## Installation
 
-### Option 1 - Virtual environment with pip
-```bash
-git clone https://github.com/kennedyjiles/PS_Method.git
-cd PS_Method
-
-# Create and activate a local virtual environment
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install exact versions used for the paper
-pip install numpy==1.21.5 scipy==1.9.1 matplotlib==3.5.2 \
-            pandas==1.4.4 h5py==3.7.0 numba==0.56.3
-```
-Alternatively, to use the latest available versions: 
-```bash
-pip install numpy scipy matplotlib pandas h5py numba
-```
-Results may vary slightly between versions and hardware, specifically for plots showing errors near machine precision and the use of `float128` or `longdouble`. 
-
-### Option 2 - Conda
-To exactly replicate the environment used for the paper:
+### Conda (recommended)
 
 ```bash
 git clone https://github.com/kennedyjiles/PS_Method.git
@@ -105,331 +113,276 @@ conda env create -f ps_method.yml
 conda activate ps_method
 ```
 
-### **Key dependencies**
+### Key dependencies
 
-| Package | Version used (paper) |
-|----------|----------------------|
-| Python   | 3.9.13 |
-| NumPy    | 1.21.5 |
-| SciPy    | 1.9.1 |
-| Matplotlib | 3.5.2 |
-| Pandas   | 1.4.4 |
-| h5py     | 3.7.0 |
-| Numba    | 0.56.3 |
+| Package | Version (`ps_method.yml`) |
+|---------|---------------------------|
+| Python | 3.12 |
+| NumPy | 2.1 |
+| SciPy | 1.16 |
+| Matplotlib | 3.10 |
+| pandas | 3.0 |
+| h5py | 3.14 |
+| Numba | 0.61 |
+| PyYAML | 6.0 |
+| psutil | (used only by `scripts/run_at_night.py`) |
 
-> **Note:**  
-> The versions listed above reproduce the exact results and figures from the paper.  
-> Later versions of these libraries generally work but may yield small numerical differences in precision- or tolerance-limited plots.
+### pip alternative
 
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install numpy scipy matplotlib pandas h5py numba pyyaml psutil
+```
 
+> **Precision note:** Plots that probe errors near machine precision, and runs that use
+> `float128` / `longdouble`, can differ slightly across library versions and hardware.
+> The relative ordering of the methods (PS ≪ RK) is robust; the exact floor of a
+> near-machine-precision curve may shift.
 
 ---
-
 
 ## Running Simulations
 
-Each of the three main simulation drivers (`constB.py`, `hyperB.py`, `dipoleB.py`) can be executed directly from the repository root:
+The unified entry point is **`run.py`**. A run is defined by a **YAML config** under
+`configs/<field>/`. The two convenient invocation styles:
 
 ```bash
-python constB.py
-python hyperB.py
-python dipoleB.py
+# Shorthand:  python run.py <field> <config-name>
+python run.py constb demo
+python run.py hyperb demo
+python run.py dipoleb demo
+
+# Explicit config path
+python run.py configs/dipoleb/demo.yml
 ```
 
-By default, **all scripts are run in `demo` mode**. The default settings produce short, lightweight simulations suitable for quick verification and visualization.
+You can also call a driver directly (`python dipoleb.py demo`) — it resolves
+`configs/dipoleb/demo.yml` the same way.
 
-At the top of each main driver file, a small configuration block defines the **run mode**, with a note on available modes (multiple `paper` modes are available for hyperb.py and dipoleb.py i.e., `paper1`, `paper2`, etc.). To switch between modes, update this block or supply a command-line argument. The main driver file (e.g., `dipoleB.py`) determines which configuration to execute (`demo` or `paper`) and calls the corresponding setup and integration routines.
+### Run modes (configs)
 
-Each **test particle file** (e.g., `constB_testparticles.py`, `hyperB_testparticles.py`, and `dipoleB_testparticles.py`) defines the initial particle parameters (position, velocity, charge-to-mass ratio, kinetic energy, etc.) and integration settings (time step, number of steps, maximum PS order, tolerances, etc.). These parameters are passed to the solver functions in the corresponding field-specific library. 
+Every field has a `base.yml` (full default parameter set) plus thin override configs that
+merge on top of it:
 
-The dipole analysis involved a significant number of simulations. For reproducibility, only the configurations corresponding to the representative simulations in the paper’s text are included. Appendix-level datasets can be generated by altering the parameters in the **test particle files** or by adding new run modes. However, the datapoints and scripts are provided in `misc_plots/` for reference and use.
+| Config | Purpose |
+|--------|---------|
+| `demo` | Quick verification — a short run (seconds) to check setup and visualize trajectories. **Default.** |
+| `paper`, `paper1`, `paper2`, … | Full-scale reproductions of specific paper figures (minutes to hours). |
+| `manual_template` | Template for replotting a cached `.h5` without re-running solvers. |
 
-### Run modes
-| Mode | Purpose | Description |
-|------|----------|-------------|
-| `demo` | Quick verification | Runs a shorter simulation of the high-order PS expansion vs. RK methods to verify correct setup and visualize particle trajectories. Ideal for testing configurations and generating quick diagnostic plots (typically seconds).|
-| `paper` | Full simulation | Runs full simulation using the same high-order PS expansion to evaluate energy conservation and numerical stability over longer time durations. This mode reproduces the long-timescale results presented in the paper and can take several minutes in `float64` precision.|
+To create a custom run, copy a config (e.g. `configs/dipoleb/demo.yml`) and edit the
+physics fields (`energy_eV`, `pitch_deg`, `x_initial`, `particle`, `gyroperiods`, …).
+See [`configs/dipoleb/base.yml`](configs/dipoleb/base.yml) for the full set of options and
+inline documentation.
 
-Example (inside a driver script):
-```python
-run = "demo"    # options: "demo", "paper1", "paper2", "paper3", or "paper4"
+### Replotting from cached data
+
+Once a run has written its `.h5`, you can regenerate plots without re-integrating:
+
+```bash
+python run.py data/dipoleb/demo/demo.yml          # data/ path auto-triggers replot mode
+python run.py configs/dipoleb/manual_template.yml --replot
 ```
 
 ---
 
-## Example Command-Line Usage
+## Reproducing the Paper Figures
 
-### 1. Constant Magnetic Field
-Quick demo:
-```bash
-python constB.py
-```
-Simulating the trajectory of a 100 eV electron for about 10 gyroperiods in constant magnetic field. Expected outputs are saved under `outputs/outputs_demo/` with trajectory and error summaries.
+After setting up the environment, run the commands below. Approximate `float64` runtimes
+are noted; `float128` (`use_float128: true` in the config) reproduces the
+extended-precision curves and takes substantially longer.
 
-### 2. Hyperbolic Magnetic Field
-Reproduce full paper dataset:
-```bash
-python hyperB.py paper2
-```
-Full simulation an 10 keV electron near a 1-D current sheet with a half-thickness of 500 km. Expected outputs are saved under `outputs/outputs_paper/` with trajectory slice and error summaries.
+### Uniform field — Section 4
 
-### 3. Dipole Magnetic Field
-Quick demo:
-```bash
-python dipoleB.py 
-```
-Short demo of 100 keV electron in Earth's dipole magnetic field located at a distance of 5 Earth Radii. Expected outputs are saved under `outputs/outputs_demo/` with trajectory and error summaries.
+| Command | Figure | Physics |
+|---------|--------|---------|
+| `python run.py constb paper` | Fig. 1 | 100 eV electron, 10⁵ gyroperiods |
 
-Reproduce full paper dataset:
-```bash
-python dipoleB.py paper2
-```
-Full simulation of a 100 keV electron in Earth's dipole magnetic field located at a distance of 5 Earth Radii, exhibiting characteristic bounce and drift motions. Expected outputs are saved under `outputs/outputs_paper/` with trajectory slice and error summaries.
+### Hyperbolic / current-sheet field — Section 5
+
+| Command | Figure | Physics |
+|---------|--------|---------|
+| `python run.py hyperb paper1` | Fig. 2 | 10 keV e⁻, α=75°, δ=500 km (mild gradient) |
+| `python run.py hyperb paper2` | Fig. 3 | 10 keV e⁻, α=75°, δ=50 km (strong gradient) |
+| `python run.py hyperb paper3` | Fig. 4 | 100 keV proton, α=−15°, δ=200 km |
+| `python run.py hyperb paper4` | Fig. 5 | same as paper1 but PS uses a 10× larger step (coarse-step convergence demo) |
+
+### Dipole field — Section 6
+
+| Command | Figure(s) | Physics |
+|---------|-----------|---------|
+| `python run.py dipoleb paper1` | Figs. 6, 7, 8 | 100 keV proton, α=30°, L=5 R_E (PS/RK45/RKG) |
+| `python run.py dipoleb paper2` | Figs. 10, 11, 12 | 100 MeV electron, α=60°, L=5 R_E |
+| `python run.py dipoleb paper3` | Fig. 14 | error-matched comparison: PS (order 16, Δτ=54) vs RK4 (Δτ=0.5) vs RKG |
+
+> Each paper run writes trajectory plots, relative kinetic-energy (and, for the dipole,
+> P_φ and μ) error plots, and a summary `.txt` into its output folder
+> (see [Output](#output-and-post-processing)). The dipole runs are the longest (≈15–20 min
+> each in `float64`).
 
 ---
 
-## Precision and Truncation Control
+## Reproducing the Paper Appendices
 
-### Floating-point precision
-By default, all scripts are set to use `float64`. For the uniform field (`constB`) and hyperbolic field (`hyperB`) cases, precision can be changed globally using the `USE_FLOAT128` toggle inside the **test particle file**:
-- `USE_FLOAT128=False`- defaults to `float64`, fast and sufficient for most simulations. Recommended for most uses.
-- `USE_FLOAT128=True` - engages `float128` or `longdouble` extended precision for analyzing numerical gains if available, long run times. Not recommended for general use.
+The appendix datasets are large parameter sweeps. Two batch runners reproduce them; each
+launches many `dipoleb.py` runs in parallel and consolidates the results into a single
+`master_simulation_log.csv` per group.
 
-When using `float128`, make sure your platform supports it (Linux/macOS only; Windows typically maps it to `longdouble`).
+### Method-comparison tables (Appendices A.2 / A.3; Figs. 8, 12)
 
-> **Note:** The `float128` option is currently only functional for the `constB` and `hyperB` cases. The dipole integrators (`dipoleB`, `dipoleB_adp`) use `float64` exclusively. 
+`scripts/batch_runner_eandp.py` runs the proton and electron four-method (PS/RK4/RK45/RKG)
+comparison grid at L=5 used for the dipole accuracy/runtime tables and bubble plots.
 
-### Adaptive PS-order truncation
-The Parker–Sochacki expansion is truncated dynamically based on term magnitude:
-- The **PS order** increases until consecutive term contributions drop below a chosen tolerance.
-- Tolerances can be set to machine epsilon (`np.finfo(npfloat).eps`) or a user-defined threshold (e.g., `1e-35`).
-- This adaptive termination ensures efficient convergence without compromising accuracy.
+```bash
+# Phase 1 = protons (10 keV, 100 keV, 1 MeV, 10 MeV at 90° and 30°)
+python scripts/batch_runner_eandp.py --phase 1
+
+# Phase 2 = electrons (50 keV, 1 MeV, 100 MeV, 150 MeV at 90° and 60°)
+python scripts/batch_runner_eandp.py --phase 2
+
+python scripts/batch_runner_eandp.py --phase 1 --dry-run   # preview the run plan
+python scripts/batch_runner_eandp.py --phase 1 --resume    # skip already-completed cells
+```
+
+Outputs land in `data/dipoleb/protons/` and `data/dipoleb/electrons/`. Then build the
+summary tables and the runtime-vs-error scatter plots (Figs. 8 / 12):
+
+```bash
+python scripts/plots/build_summary_results.py              # → *_summary_results.csv
+python scripts/plots/scatterplot.py                        # proton plot (default)
+SUMMARY_CSV=electron_summary_results.csv USE_ELECTRON=1 python scripts/plots/scatterplot.py
+```
+
+### Bounce / drift period tables (Appendices A.4 / A.5; Figs. 9, 13)
+
+`scripts/batch_runner_walt.py` runs the long integrations used to measure characteristic
+bounce and drift periods across energy and L-shell, compared against the analytical
+guiding-center approximations (Walt). These are PS-derived and appear in the paper.
+
+```bash
+python scripts/batch_runner_walt.py --phase 1
+python scripts/batch_runner_walt.py --phase 1 --dry-run
+```
+
+> **Note:** `batch_runner_eandp.py` and `batch_runner_walt.py` currently share one
+> progress file (`scripts/batch_progress.json`). Run them one group at a time, or clear
+> the file between unrelated sweeps.
 
 ---
 
 ## Output and Post-Processing
 
-Upon first running, a simulation will create an `outputs/` directory in the working directory with subdirectories organized by run type:
+On first run a `data/` directory is created. Outputs are organized by field and config:
 
 ```
-outputs/
-├── outputs_demo/              # Demo-mode runs
-├── outputs_paper/             # Paper-mode runs
-│   ├── ConstB/
-│   ├── hyperB/
-│   ├── dipole/
-│   ├── protons/
-│   ├── electrons/
-│   └── master_simulation_log.csv
-├── outputs_rawdata/           # Raw h5 trajectory data
-├── outputs_extended_runs/     # Extended-duration simulations
-├── outputs_giant_runs/        # Large-scale parameter sweeps
-├── outputs_giant_RKG_PS/      # RKG vs PS comparison runs
-├── dragt/                     # Dragt–Störmer analysis outputs
-├── walt/                      # Walt stability diagram outputs
-└── paper/                     # Additional paper figures
+data/
+└── <field>/                     # constb | hyperb | dipoleb
+    └── <config-or-group>/       # demo, paper1, protons, electrons, fluxmap_10mev, ...
+        ├── <hash>_*.png         # trajectory, slice, and error plots
+        ├── <hash>_summary.txt   # initial conditions, per-method runtimes, error stats
+        ├── master_simulation_log.csv   # (dipole) parameters + Dragt diagnostics per run
+        └── _rawdata/
+            └── <hash>_full.h5   # raw streamed trajectory (if write_data: true)
 ```
 
-These directories typically include:
-- 2-D and/or 3-D trajectory plots (`.png`), either full trajectories and slices of the final orbits for trajectory comparison
-- Plots of relative kinetic error calculations (`.png`) 
-- A summary of the simulation such as initial conditions, run time by method, time step size, etc. (`.txt`)
-- For dipole simulations, a `master_simulation_log.csv` records parameter sets and Dragt diagnostics across runs
-- Dipole runs create per-run subfolders (named by run hash) containing plots and the summary `.txt`; raw `.h5` data is stored separately in the run storage directory
+Each run's identity is a hash of its physics parameters, so re-running with the same
+physics reuses the cached `.h5` (set `read_data: true`). Caution: a single long dipole
+run can produce a multi-GB `.h5`.
 
-Hyperbolic and dipole simulations have the ability to write the raw data to an Hierarchical Data Format 5 file, h5, this can be toggled on with `WRITE_DATA=True` in the **test particle scripts**. This option will automatically create a folder:
-```
-outputs/outputs_rawdata/
-```
-These files can then be accessed to re-create plots and perform additional analysis by the `READ_DATA=True` toggle in the test particles scripts. Both `WRITE_DATA` and `READ_DATA` are set to `False` by default. Caution should be exercised using these options as a single simulation can generate up to 2GB of data. The `h5` files can be inspected with the `inspect_hdf5.py` script:
+### HDF5 storage format
 
-```
-python utility_scripts/inspect_hdf5.py outputs/outputs_rawdata/run_d7e387cd8e81f8a9.h5
-```
+The dipole integrators stream to disk during integration. The `ps/y` dataset stores **9
+rows** per time step:
 
-Supplementary analysis and comparison figures are stored under **`misc_plots/`**, along with scripts that generate the additional publication figures for the dipole simulations and analyses.
-
-### HDF5 Storage Format
-
-The dipole integrators stream trajectory data to h5 files during integration. The stored dataset `ps/y` contains 9 rows per time step:
-
-| Indices | Contents |
-|---------|----------|
+| Rows | Contents |
+|------|----------|
 | 0–2 | Position (x, y, z) in R_E |
-| 3–5 | Velocity (vx, vy, vz) in dimensionless units |
-| 6–8 | Magnetic field (Bx, By, Bz) in dimensionless units |
+| 3–5 | Velocity (vx, vy, vz), dimensionless |
+| 6–8 | Magnetic field (Bx, By, Bz), dimensionless |
 
-The 8 internal PS auxiliary variables used during series computation are not saved to disk, as they are never needed by post-processing tools. The `save_rows` attribute on the `ps` group identifies the format. Orders used by the PS series at each step are stored in a separate `ps/orders` dataset. To inspect the contents of any h5 file:
+The 8 internal PS auxiliary variables (r², a, b, c, d, e, f, g) are **not** saved — they
+are only needed during integration. PS orders used per step are stored in `ps/orders`.
+Inspect any file with:
 
 ```bash
-python utility_scripts/inspect_hdf5.py outputs/outputs_rawdata/run_d7e387cd8e81f8a9.h5
+python scripts/inspect_hdf5.py data/dipoleb/demo/_rawdata/<hash>_full.h5
 ```
 
 ---
 
-## Reproducing Paper Figures
+## Precision and Truncation Control
 
-After setting up the environment as described in the **Installation and Environment Setup**, execute the following:
-```python
-python constB.py paper # wait several seconds
-python hyperB.py paper1 # wait a few minutes
-python hyperB.py paper2 # wait a few minutes
-python hyperB.py paper3 # wait 5-10 minutes
-python hyperB.py paper4 # wait a few minutes
-python dipoleB.py paper1 # wait approximately 15-20 minutes
-python dipoleB.py paper2 # wait approximately 15-20 minutes
-python dipoleB.py paper3 # wait a few minutes
-```
-This produces the main `float64` figures from the report. See **Floating-point precision** section on how to turn on `float128` or `longdouble` in each of the **test particle** scripts and repeat the above commands. Note that it will take several hours to reproduce these figures and assumes your system is capable of executing.
-
-As noted, the dipole analysis involved a significant number of simulations. For reproducibility, only the configurations corresponding to the representative simulations in the paper’s text are included. Datasets from Appendix can be generated by altering the parameters in the **test particle files** or by adding new run modes. However, the datapoints and scripts are provided in `misc_plots/` for reference and use.
+- **Floating point.** Runs default to `float64`. Set `use_float128: true` in a config to
+  engage extended precision (`float128` / `longdouble`) for the `constb` and `hyperb`
+  cases — useful only for studying the error floor, and much slower. **The dipole
+  integrator runs in `float64` only.** (`float128` requires platform support; Windows
+  typically maps it to `longdouble`.)
+- **Adaptive PS order.** The PS series is truncated dynamically: each step adds orders
+  until the largest relative term contribution falls below a tolerance (machine epsilon by
+  default, or a user value). This gives efficient convergence without sacrificing accuracy.
 
 ---
 
-## Running Custom Dipole Simulations
+## Ongoing Research (NOT in the paper)
 
-The dipole test particle file (`test_particles/dipoleB_testparticles.py`) serves as the central configuration for both the fixed-step (`dipoleB.py`) and adaptive (`dipoleB_adp.py`) drivers. To run a custom simulation, add a new run mode to the `load_params()` function with your desired parameters.
+> These tools apply the full-orbit PS dipole integrator to radiation-belt physics. They are
+> part of **active thesis work** and are under development — interfaces, defaults, and
+> output formats may change. They are documented here for collaborators; happy to discuss.
 
-### Adding a New Run Mode
+### Dragt–Störmer / Dragt–Finn full-orbit trapping
 
-Inside `test_particles/dipoleB_testparticles.py`, add a new `elif` block to `load_params()`. The physics parameters control the simulation; the plotting parameters control visualization only and do not affect the trajectory data or h5 file creation.
+Dragt (1965) and Dragt & Finn (1976) showed that dipole trapping is governed by two exact
+invariants — energy *W₀²* and canonical angular momentum *P_φ* — with a trapping boundary
+*W₀²* < *P_φ⁴/16*, valid even when the adiabaticity parameter ε = r_g·|∇B|/B exceeds unity
+and the magnetic moment μ is no longer conserved.
 
-```python
-elif run == "my_run":
-    output_folder = "outputs/my_analysis"
-    os.makedirs(output_folder, exist_ok=True)
+- **`dipoleb.py` adaptive mode** (`ps_adaptive`/`solvers.adaptive` in the config) — hybrid
+  fixed/adaptive PS stepping that subdivides by local |B| in steep-gradient regions, with
+  NaN/Inf rollback and atmosphere-impact detection (`ps_method/dipoleb_adaptive.py`).
+- **Dragt diagnostics** (`ps_method/dipoleb_dragt_analysis.py`) — computes *W₀²*, *P_φ*,
+  trapping boundary (CLOSED/OPEN), orbit character (REGULAR/CHAOTIC, Dragt 1965 eq. 6.1),
+  adiabaticity ε(t), Poincaré surfaces of section, and meridian-plane projections. Written
+  to each run's summary and the `master_simulation_log.csv`.
+- **Dragt-unit conversions** — `scripts/dragt.py` (Dragt → physical) and
+  `scripts/si_to_dragt.py` (physical → Dragt), validated by
+  `scripts/test_dragt_roundtrip.py` and `scripts/test_dragt_thorough.py`.
+- **Walt ε–L stability diagrams** — `scripts/plots/trappedbands.py` plots ε vs L-shell with
+  trapped / atmosphere / untrapped zones and REGULAR/CHAOTIC classification, from a
+  `master_simulation_log.csv`.
 
-    READ_DATA  = True     # load from cache if a matching h5 exists
-    WRITE_DATA = True     # save trajectory to h5
+### Dwell-time (occupancy) maps
 
-    # --- integrator selection ---
-    USE_RK45 = False      # include RK45 comparison
-    USE_RK4  = False      # include RK4 comparison
-    USE_RKG  = False      # include RKG comparison (protons only)
-    USE_PS   = True       # Parker-Sochacki integrator
-    PS_decimate = 1       # save every Nth step (1 = all)
-    PS_CHUNKING = True    # stream to disk in chunks
-
-    # --- physics parameters ---
-    pitch_deg   = npfloat(60.0)       # equatorial pitch angle (degrees)
-    phi_deg     = npfloat(0.0)        # initial gyrophase (degrees)
-    x_initial   = npfloat(3.0)       # launch L-shell (R_E)
-    y_initial   = npfloat(0)
-    z_initial   = npfloat(0)
-    KE_particle = npfloat(10e6)       # kinetic energy (eV)
-    mass_si     = m_p                 # m_p for protons, m_e for electrons
-
-    T_gyro = 2.0 * np.pi * (x_initial**3)
-
-    N_STEPS_PER_GYRO_rk4 = 65
-    N_STEPS_PER_GYRO_ps  = 65
-    N_STEPS_PER_GYRO_rkg = 65
-    rk4_step = npfloat(round(T_gyro / N_STEPS_PER_GYRO_rk4, 1))
-    ps_step  = npfloat(round(T_gyro / N_STEPS_PER_GYRO_ps, 1))
-    rkg_step = npfloat(round(T_gyro / N_STEPS_PER_GYRO_rkg, 1))
-
-    gyroperiods = 1e4
-    norm_time   = npfloat(gyroperiods) * T_gyro
-
-    # --- plotting parameters (do not affect h5 data) ---
-    USE_PLOT_TITLES = True
-    USE_FULL_PLOT   = True
-    window_time  = npfloat(11.6)
-    slice_mode   = "last"
-    N_GYRO       = 50
-    gyro_window  = "last"
-
-    USE_EXTERNAL_H5_ps   = False
-    USE_EXTERNAL_H5_rk4  = False
-    USE_EXTERNAL_H5_rk45 = False
-    USE_EXTERNAL_H5_rkg  = False
-    external_h5_ps   = "outputs_rawdata/"
-    external_h5_rk4  = "outputs_rawdata/"
-    external_h5_rk45 = "outputs_rawdata/"
-    external_h5_rkg  = "outputs_rawdata/"
-```
-
-Then execute with either driver:
+A meridian-plane map of where trapped orbits spend their time — a step toward
+AP-8-style belt-occupancy maps. **This is a dwell-time occupancy map, not a calibrated
+omnidirectional flux** (the toroidal Jacobian and a true pitch-angle integration are not
+applied).
 
 ```bash
-# Fixed-step PS integrator
-python dipoleB.py my_run
+# 1. Sweep a fine L grid at one or more energies (writes h5 trajectories)
+python scripts/batch_runner_fluxmap.py 10mev
+python scripts/batch_runner_fluxmap.py all --resume
 
-# Adaptive PS integrator (recommended for high energy or low pitch angle)
-python dipoleB_adp.py my_run
+# 2. Build the meridian dwell map from the h5 trajectories
+python scripts/plots/flux_map_builder.py --group fluxmap_10mev
+python scripts/plots/flux_map_builder.py --group fluxmap_all --per-energy
+
+# Optional: launch-fate map (trapped / lost / escaped) from a master CSV
+python scripts/plots/launch_fate_map.py data/dipoleb/fluxmap_all/master_simulation_log.csv --pitch 90
 ```
-
-Both drivers call `load_params()` from the same test particle file, so the same run mode works with either. Use `dipoleB_adp.py` when the adiabaticity parameter ε is large (high energy, large L, or low pitch angle) - the adaptive stepper will automatically adjust the time step based on the local magnetic field strength.
-
-### Key Parameters
-
-The h5 file identity is determined by the physics parameters (energy, position, pitch angle, mass, step size). Changing only plotting parameters will reuse the same cached h5 file. The main parameters to adjust are `KE_particle` (in eV), `x_initial` (the L-shell in R_E), `pitch_deg`, `mass_si` (use `m_p` for protons or `m_e` for electrons), and `gyroperiods` (duration of the simulation in units of the characteristic gyroperiod at the equator).
-
-Setting `WRITE_DATA = True` saves the trajectory to `outputs/outputs_rawdata/`. Setting `READ_DATA = True` will load from a previously saved h5 if one exists with matching parameters, skipping re-integration. Set `USE_FULL_PLOT = True` to generate all diagnostic plots including trajectory slices, Poincaré sections, and Dragt invariant monitoring.
-
----
-
-## Dragt–Störmer Analysis (In Progress)
-
-This section describes ongoing thesis work extending the PS dipole integrator to study the **Dragt–Störmer problem**: the full Lorentz-orbit dynamics of high-energy trapped particles in an axisymmetric dipole magnetic field, where the guiding-center approximation (GCA) breaks down.
-
-### Background
-
-Dragt (1965) showed that charged-particle trapping in a dipole is governed by two exact invariants - total energy *E* and canonical angular momentum *P*_φ - independent of adiabatic invariance. The dimensionless energy *W*₀² and the trapping boundary *W*₀² < *P*_φ⁴/16 determine whether an orbit is topologically confined, even when the adiabaticity parameter ε = *r*_g · |∇*B*|/*B* exceeds unity and the first adiabatic invariant μ is no longer conserved.
-
-Michel (1980) extended this analysis to show that the phase-space topology of trapped particles contains islands of permanent stability (KAM islands) around elliptic fixed points, explaining why particles with high pitch angles near 90° can remain trapped indefinitely even in the non-adiabatic regime.
-
-### Adaptive PS Time Stepping (dipoleB_adp)
-
-`dipoleB_adp.py` extends the fixed-step `dipoleB.py` driver with an **adaptive PS time stepper** (`functions_library_dipole_adp.py`). The adaptive integrator uses a hybrid approach: a fast path with fixed time step for regions where the PS series converges easily, and a slow path that computes the local gyroperiod from |B| and subdivides accordingly (200 steps per local gyroperiod) when the field gradient is steep. The integrator automatically switches between paths based on PS series order convergence.
-
-Key features include NaN/Inf guards (rollback to pre-chunk state if the auxiliary tether variables diverge), atmosphere impact detection (flags when the orbit radius drops below 1 R_E), and streaming-to-disk via HDF5. Both integrators save only position, velocity, and B-field components to h5 (9 channels), omitting the 8 internal PS auxiliary variables (r², a, b, c, d, e, f, g) that are only needed during integration. This reduces file sizes by ~47% compared to saving the full 17-element state vector.
-
-### Dragt Diagnostics
-
-Both `dipoleB.py` and `dipoleB_adp.py` compute and log the following Dragt diagnostics for each simulation run:
-
-- *W*₀² (dimensionless energy) and *P*_φ (canonical angular momentum) from initial conditions
-- Trapping boundary status: CLOSED (*W*₀² < *P*_φ⁴/16) or OPEN
-- Orbit character: REGULAR (*W*₀² < 0.012μ²) or CHAOTIC, following Dragt (1965) eq. 6.1
-- Adiabaticity parameter ε(t) - initial, mean, and maximum values
-- Atmosphere impact flag (orbit radius < 1 R_E)
-- Dragt Poincaré surface of section at z = 0 (ρ vs ρ̇ in Dragt dimensionless units)
-- Meridian-plane trajectory (ρ vs z in Dragt units)
-- Gyrophase vs magnetic moment scatter at equatorial crossings
-
-These diagnostics are written to each run's summary `.txt` file and appended to `master_simulation_log.csv` for cross-run analysis.
-
-The diagnostic functions live in `functions/functions_library_dragt.py`, which provides `compute_dragt_params`, `compute_dragt_boundary`, `compute_z_crossings`, `compute_gyrophase_mu`, `calculate_adiabaticity`, and the `DragtMonitor` class for per-step conservation monitoring during integration.
-
-> **Note on units:** The canonical angular momentum conservation plots use the paper's dimensionless normalization (position in R_E, velocity normalized to initial speed), not Dragt's dimensionless unit system. The Poincaré surfaces of section and meridian-plane trajectories are in Dragt units.
-
-### Walt Stability Diagrams
-
-`walt_diagnostics_v3.py` generates ε vs L-shell stability diagrams from `master_simulation_log.csv`, with three horizontal zone bands (trapped 20+ years, trapped but hits atmosphere, untrapped) and Dragt REGULAR/CHAOTIC point classification. Energy series are connected by faint lines and labeled. Zone boundaries auto-adjust from the data.
-
-```bash
-python utility_scripts/walt_diagnostics_v3.py master_simulation_log.csv
-```
-
-### Unit Conversion
-
-`utility_scripts/si_to_dragt.py` converts SI initial conditions (energy in keV, L-shell, pitch angle, gyrophase) to the Dragt dimensionless system and back, handling the degenerate φ = 0 case with a linear-equation branch. Roundtrip tests are in `utility_scripts/test_dragt_roundtrip.py` and `utility_scripts/test_dragt_thorough.py`.
-
-### Prototype Scripts
-
-The `utility_scripts/` directory also contains several prototype scripts for ongoing research that do not affect the core simulation code. These include a batch parameter sweep runner (`batch_flux_runner.py`), a flux map builder (`flux_map_builder.py`), and a Michel phase portrait generator (`michel_phase_portrait.py`). See `USER_MANUAL_batch_tools.txt` for usage details. These scripts are under active development and may change.
-
-### References
-
-- Dragt, A. J. (1965). Trapped orbits in a magnetic dipole field. *Reviews of Geophysics*, 3(2), 255–298.
-- Dragt, A. J., & Finn, J. M. (1976). Insolubility of trapped particle motion in a magnetic dipole field. *Journal of Geophysical Research*, 81(13), 2327–2340.
-- Michel, F. C. (1980). Permanent magnetic trapping. *Journal of Geophysical Research*, 85(A2), 557–562.
 
 ---
 
 ## Citation
-If you use this code or build upon it in your research, please cite:
 
-> H. Jiles and R. Weigel, *”High-Accuracy Numerical Solutions of Particle Motion in Static Magnetic Fields,”* 2026. [arXiv:2604.20876](https://doi.org/10.48550/arXiv.2604.20876)
+If you use this code, please cite:
 
+> H. Jiles and R. Weigel, *"High-Accuracy Numerical Solutions of Particle Motion in Static
+> Magnetic Fields,"* 2026. [arXiv:2604.20876](https://doi.org/10.48550/arXiv.2604.20876)
+
+### Key references
+
+- Dragt, A. J. (1965). Trapped orbits in a magnetic dipole field. *Reviews of Geophysics*, 3(2), 255–298.
+- Dragt, A. J., & Finn, J. M. (1976). Insolubility of trapped particle motion in a magnetic dipole field. *J. Geophys. Res.*, 81(13), 2327–2340.
+- Parker, G., & Sochacki, J. (1996). Implementing the Picard iteration. *Neural, Parallel, and Scientific Computations*, 4, 97–112.
+- Northrop, T. G. (1963). Adiabatic charged-particle motion. *Reviews of Geophysics*, 1(3), 283–304.
