@@ -1167,7 +1167,7 @@ def main(cfg_path, replot=False):
         rk45_data=_ke["ke_rk45"], rkg_data=_ke["ke_rkg"],
         ext_ps_data=_ke["ke_ext_ps"], ext_rk4_data=_ke["ke_ext_rk4"],
         ext_rk45_data=_ke["ke_ext_rk45"], ext_rkg_data=_ke["ke_ext_rkg"],
-        envelope=True,   # True = plot max-per-bin upper envelope (cleaner RKG band)
+        envelope=False,   # True = plot max-per-bin upper envelope (cleaner RKG band)
     )
 
     if DEBUG:
