@@ -6,7 +6,7 @@ energy_eV: 100.0e3
 pitch_deg: 30.0
 
 solvers:
-  rk4: true
+  rk4: false
   rk45: true
   rkg: true
 
