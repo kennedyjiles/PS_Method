@@ -49,6 +49,9 @@ _NON_HASH_KEYS = {
     # output / IO / runtime
     "output_root", "read_data", "write_data",
     "manual_h5_path", "ps_chunk_steps",
+    # checkpointing granularity — pure I/O, same physics regardless of value,
+    # so a segmented run shares its hash with the equivalent single run.
+    "ps_segment_gyroperiods",
     # post-processing only — operates on the trajectory, doesn't change it
     "user_min_phase", "bounce_drift", "r_atmosphere",
     # warning thresholds — don't affect output values
@@ -406,6 +409,20 @@ def copy_config_to_output(cfg_path, output_folder, cfg=None):
     for k in _bottom:
         if k in merged:
             ordered[k] = merged[k]
+
+    # Was this a segmented (checkpointed) run? If so the header documents how to
+    # manual-load one segment vs. the full stitched VDS. Derived purely from the
+    # config (gyroperiod ranges are exact); values may be YAML-1.1 strings.
+    def _as_float(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+    _seg_gp = _as_float(merged.get("ps_segment_gyroperiods", 0)) or 0.0
+    _gp = _as_float(merged.get("gyroperiods"))
+    _segmented = _seg_gp > 0 and _gp is not None and _seg_gp < _gp
+    _nseg = int(np.ceil(_gp / _seg_gp)) if _segmented else 0
+
     with open(dest, "w") as f:
         f.write(f"# Fully merged config — generated from {os.path.basename(cfg_path)}\n")
         f.write(f"# Re-run with: python run.py {dest}\n")
@@ -419,7 +436,31 @@ def copy_config_to_output(cfg_path, output_folder, cfg=None):
         f.write(f"#   2. Edit any plotting / solvers fields you want to change.\n")
         f.write(f"#      e.g. solvers.rk4: false suppresses RK4 from plots without\n")
         f.write(f"#      triggering a fresh solver run.\n")
-        f.write(f"#   3. Re-run with the same command above.\n\n")
+        f.write(f"#   3. Re-run with the same command above.\n")
+        if _segmented:
+            # e.g. 1e+09 -> 1e9, 1e+10 -> 1e10 (match the yml's own style)
+            _fmt = lambda v: (f"{v:g}".replace("e+0", "e").replace("e+", "e")
+                              .replace("e-0", "e-"))
+            _segrel = f"../_rawdata/{stem}_seg"
+            f.write(f"#\n")
+            f.write(f"# --- This run is SEGMENTED ({_nseg} checkpoint segments) ---\n")
+            f.write(f"# Load the FULL run (all segments stitched via VDS) — the normal replot:\n")
+            f.write(f"#   manual_h5_path: {relative_h5}\n")
+            f.write(f"# Load a SINGLE segment k (000–{_nseg - 1:03d}), each spanning "
+                    f"{_fmt(_seg_gp)} gyroperiods:\n")
+            f.write(f"#   manual_h5_path: {_segrel}000.h5   "
+                    f"# gyroperiods 0–{_fmt(min(_seg_gp, _gp))}\n")
+            if _nseg > 2:
+                f.write(f"#                  {_segrel}001.h5   "
+                        f"# gyroperiods {_fmt(_seg_gp)}–{_fmt(2 * _seg_gp)}\n")
+                f.write(f"#                  ...\n")
+            if _nseg > 1:
+                f.write(f"#                  {_segrel}{_nseg - 1:03d}.h5   "
+                        f"# gyroperiods {_fmt((_nseg - 1) * _seg_gp)}–{_fmt(_gp)} "
+                        f"(last; may be shorter)\n")
+            f.write(f"# NOTE: a single-segment plot's time axis currently starts at 0\n")
+            f.write(f"#       (relative); the full VDS load is on the correct global axis.\n")
+        f.write("\n")
         yaml.dump(ordered, f, default_flow_style=False, sort_keys=False)
 
     print(f"Config copied → {dest}")
@@ -751,6 +792,12 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         # Optional overrides
         "ps_order":        cfg["ps_order"],
         "ps_chunk_steps":  int(cfg["ps_chunk_steps"]),
+        # Segmented-checkpoint granularity, expressed as PS steps per segment.
+        # 0 = disabled. Derived from gyroperiods so the yml stays in physical
+        # units; the driver tiles [0, steps_ps] with a shorter final segment.
+        "ps_segment_gyroperiods": float(cfg.get("ps_segment_gyroperiods", 0) or 0),
+        "ps_segment_steps": int(round(
+            float(cfg.get("ps_segment_gyroperiods", 0) or 0) * spg["ps"])),
         "rtol_rk45":       cfg["rtol_rk45"],
         "atol_rk45":       cfg["atol_rk45"],
         "user_min_phase":  cfg["user_min_phase"],

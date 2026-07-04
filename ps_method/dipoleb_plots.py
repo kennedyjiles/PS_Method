@@ -90,13 +90,13 @@ def full_2d(
     fig, ax = plt.subplots(figsize=(10, 8))
 
     if USE_RK45:
-        ax.plot(solution_rk45.y[0], solution_rk45.y[1], label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+        ax.plot(solution_rk45.y[0], solution_rk45.y[1], label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"], linewidth=0.5)
     if USE_RK4:
-        ax.plot(solution_rk4[0], solution_rk4[1], label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+        ax.plot(solution_rk4[0], solution_rk4[1], label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"], linewidth=0.5)
     if USE_RKG:
-        ax.plot(solution_rkg[:, 0], solution_rkg[:, 1], label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+        ax.plot(solution_rkg[:, 0], solution_rkg[:, 1], label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"], linewidth=0.5)
     if USE_PS:
-        ax.plot(x_ps_plot, y_ps_plot, label=f"PS{ps_order_label}", alpha=0.7, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
+        ax.plot(x_ps_plot, y_ps_plot, label=f"PS{ps_order_label}", alpha=0.7, color=COLORS["ps"], linestyle=LINESTYLES["ps"], linewidth=0.5)
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
@@ -129,13 +129,13 @@ def full_3d(
     ax = fig.add_subplot(111, projection='3d')
 
     if USE_RK45:
-        ax.plot(solution_rk45.y[0], solution_rk45.y[1], solution_rk45.y[2], label="RK45", color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+        ax.plot(solution_rk45.y[0], solution_rk45.y[1], solution_rk45.y[2], label="RK45", color=COLORS["rk45"], linestyle=LINESTYLES["rk45"], linewidth=0.5)
     if USE_RK4:
-        ax.plot(solution_rk4[0], solution_rk4[1], solution_rk4[2], label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+        ax.plot(solution_rk4[0], solution_rk4[1], solution_rk4[2], label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"], linewidth=0.5)
     if USE_RKG:
-        ax.plot(solution_rkg[:, 0], solution_rkg[:, 1], solution_rkg[:, 2], label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+        ax.plot(solution_rkg[:, 0], solution_rkg[:, 1], solution_rkg[:, 2], label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"], linewidth=0.5)
     if USE_PS:
-        ax.plot(x_ps_plot, y_ps_plot, z_ps_plot, label=f"PS{ps_order_label}", alpha=0.7, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
+        ax.plot(x_ps_plot, y_ps_plot, z_ps_plot, label=f"PS{ps_order_label}", alpha=0.7, color=COLORS["ps"], linestyle=LINESTYLES["ps"], linewidth=0.5)
 
     ax.set_xlim(-plotbounds, plotbounds)
     ax.set_ylim(-plotbounds, plotbounds)
@@ -168,13 +168,13 @@ def slice_2d(
     fig, ax = plt.subplots(figsize=(10, 7))
 
     if USE_RK45:
-        ax.plot(rk45_x_slice, rk45_y_slice, label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+        ax.plot(rk45_x_slice, rk45_y_slice, label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"], linewidth=0.5)
     if USE_RK4:
-        ax.plot(rk4_x_slice, rk4_y_slice, label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+        ax.plot(rk4_x_slice, rk4_y_slice, label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"], linewidth=0.5)
     if USE_RKG:
-        ax.plot(rkg_x_slice, rkg_y_slice, label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+        ax.plot(rkg_x_slice, rkg_y_slice, label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"], linewidth=0.5)
     if USE_PS:
-        ax.plot(ps_x_slice, ps_y_slice, label=f"PS{ps_order_label}", alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"])
+        ax.plot(ps_x_slice, ps_y_slice, label=f"PS{ps_order_label}", alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"], linewidth=0.5)
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")

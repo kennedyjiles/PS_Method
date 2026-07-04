@@ -38,6 +38,8 @@ Dipoleb-only extras:
 
 import os
 import gc
+import re
+import glob
 import json
 import hashlib
 
@@ -94,6 +96,204 @@ def stem_from_h5(h5_path):
     if s.endswith("_full"):
         s = s[:-len("_full")]
     return s
+
+
+# ---------------------------------------------------------------------------
+# Segmented-checkpoint runs (see run_ps_streaming_with_decimation + driver)
+# ---------------------------------------------------------------------------
+# A long run is split into fixed-size segments, each written to its own
+# cleanly-closed <hash>_segNNN.h5 (via a .building temp + atomic rename), then
+# stitched into <hash>_full.h5 as an HDF5 Virtual Dataset. A crash costs at
+# most the current segment; relaunching resumes from the last committed one.
+
+def seg_path_for(hash_str, seg_index, output_folder):
+    """Path for one checkpoint segment: <hash>_seg{NNN}.h5."""
+    return os.path.join(output_folder, f"{hash_str}_seg{int(seg_index):03d}.h5")
+
+
+def find_committed_segments(hash_str, output_folder):
+    """Return sorted [(index, path)] of cleanly-committed segment files.
+
+    A segment counts as committed only if it opens AND carries the
+    ``ps/end_state`` handoff dataset. Half-written ``.building`` temps and
+    crash-truncated files are skipped, so resume always restarts from the
+    last fully-flushed boundary.
+    """
+    pattern = os.path.join(output_folder, f"{hash_str}_seg*.h5")
+    rx = re.compile(rf"{re.escape(hash_str)}_seg(\d+)\.h5$")
+    out = []
+    for path in glob.glob(pattern):
+        m = rx.search(os.path.basename(path))
+        if not m:
+            continue
+        try:
+            with h5py.File(path, "r") as f:
+                if "ps/end_state" not in f:
+                    continue
+        except OSError:
+            continue  # unreadable / truncated → treat as not committed
+        out.append((int(m.group(1)), path))
+    out.sort()
+    return out
+
+
+def contiguous_committed_segments(hash_str, output_folder):
+    """Committed segments forming the unbroken prefix 0, 1, 2, … (stops at the
+    first gap).
+
+    Deleting any segment — trailing or middle — shortens this prefix, so resume
+    refills from the gap and the VDS never stitches around a hole. Orphan
+    segments past a gap are ignored (and get overwritten when the run refills).
+    """
+    by_idx = dict(find_committed_segments(hash_str, output_folder))
+    out = []
+    k = 0
+    while k in by_idx:
+        out.append((k, by_idx[k]))
+        k += 1
+    return out
+
+
+def vds_has_missing_sources(h5_path):
+    """True iff *h5_path* is a VDS whose backing segment files are (partly) gone.
+
+    A VDS silently returns fill-value (0) for absent source files, so a dangling
+    stitch reads as corrupt-but-valid data (all-zero position columns → r=0 →
+    NaNs downstream). Callers use this to refuse to trust such a file. Returns
+    False for non-VDS files, unreadable files, or fully-intact VDSes.
+    """
+    if not os.path.exists(h5_path):
+        return False
+    folder = os.path.dirname(os.path.abspath(h5_path))
+    try:
+        with h5py.File(h5_path, "r") as f:
+            if "ps/y" not in f or not f["ps/y"].is_virtual:
+                return False
+            for vs in f["ps/y"].virtual_sources():
+                fn = vs.file_name
+                if os.path.isabs(fn) and os.path.exists(fn):
+                    continue
+                if not os.path.exists(os.path.join(folder, os.path.basename(fn))):
+                    return True
+    except (OSError, KeyError, RuntimeError):
+        return False
+    return False
+
+
+def clear_building_segments(hash_str, output_folder):
+    """Delete stray ``*.building`` temps left by a crashed segment/VDS write."""
+    for pat in (f"{hash_str}_seg*.h5.building", f"{hash_str}_full.h5.building"):
+        for path in glob.glob(os.path.join(output_folder, pat)):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def build_vds(hash_str, output_folder, verify_chain=True):
+    """(Re)build <hash>_full.h5 as a Virtual Dataset over committed segments.
+
+    The virtual ``ps/y`` / ``ps/orders`` datasets concatenate each segment's
+    data along the time axis, so existing readers open <hash>_full.h5 and slice
+    it exactly as a single-file run. Physics attrs are copied from the first
+    segment; run-level stats (max_ps, mean_ps, hit_*) are aggregated.
+
+    Source paths are stored as basenames (folder-relative) so the run folder
+    stays movable. Refuses to overwrite a real (non-virtual) <hash>_full.h5 so
+    a segmented test can never clobber a pre-existing single-file dataset.
+
+    Returns the VDS path, or None if there are no committed segments.
+    """
+    # Only the unbroken 0,1,2,… prefix — never stitch around a missing segment.
+    segs = contiguous_committed_segments(hash_str, output_folder)
+    if not segs:
+        return None
+
+    n_save = y_dtype = o_dtype = base_attrs = None
+    cols = []                     # (basename, ncols) per segment, in order
+    total_cols = 0
+    last_end_index = 0
+    agg = dict(max_ps=0, sum_orders=0, count_orders=0, total_steps=0,
+               hit_atmosphere=False, hit_atm_step=-1, hit_atm_r=0.0)
+    prev_end = None
+    for idx, path in segs:
+        with h5py.File(path, "r") as f:
+            ps = f["ps"]
+            c = ps["y"].shape[1]
+            if base_attrs is None:
+                n_save = ps["y"].shape[0]
+                y_dtype = ps["y"].dtype
+                o_dtype = ps["orders"].dtype
+                base_attrs = dict(ps.attrs)
+            start_state = ps["start_state"][()]
+            end_state = ps["end_state"][()]
+            if verify_chain and prev_end is not None and not np.array_equal(prev_end, start_state):
+                raise RuntimeError(
+                    f"broken checkpoint chain: segment {idx} start_state does "
+                    f"not match the previous segment's end_state")
+            prev_end = end_state
+            last_end_index = int(ps.attrs.get("end_global_index", last_end_index))
+            agg["max_ps"] = max(agg["max_ps"], int(ps.attrs.get("max_ps", 0)))
+            agg["sum_orders"]   += int(ps.attrs.get("sum_orders", 0))
+            agg["count_orders"] += int(ps.attrs.get("count_orders", 0))
+            agg["total_steps"]  += int(ps.attrs.get("steps", 0))
+            if bool(ps.attrs.get("hit_atmosphere", False)):
+                s = int(ps.attrs.get("hit_atm_step", -1))
+                r = float(ps.attrs.get("hit_atm_r", 0.0))
+                if not agg["hit_atmosphere"]:
+                    agg.update(hit_atmosphere=True, hit_atm_step=s, hit_atm_r=r)
+                else:
+                    agg["hit_atm_step"] = min(agg["hit_atm_step"], s)
+                    agg["hit_atm_r"]    = min(agg["hit_atm_r"], r)
+        cols.append((os.path.basename(path), c))
+        total_cols += c
+
+    full = h5_path_for(hash_str, output_folder)
+    if os.path.exists(full):
+        try:
+            with h5py.File(full, "r") as f:
+                if "ps/y" in f and not f["ps/y"].is_virtual:
+                    raise RuntimeError(
+                        f"refusing to overwrite non-virtual {os.path.basename(full)} "
+                        f"(a real single-file run already lives there)")
+        except OSError:
+            pass  # unreadable existing file → safe to replace
+
+    y_layout = h5py.VirtualLayout(shape=(n_save, total_cols), dtype=y_dtype)
+    o_layout = h5py.VirtualLayout(shape=(total_cols,), dtype=o_dtype)
+    col = 0
+    for base, c in cols:
+        y_layout[:, col:col + c] = h5py.VirtualSource(base, "ps/y", shape=(n_save, c))
+        o_layout[col:col + c]    = h5py.VirtualSource(base, "ps/orders", shape=(c,))
+        col += c
+
+    # per-segment-only attrs that would be misleading on the stitched file
+    for k in ("segment_index", "start_global_index", "end_global_index"):
+        base_attrs.pop(k, None)
+
+    tmp = full + ".building"
+    with h5py.File(tmp, "w") as f:
+        ps = f.create_group("ps")
+        for k, v in base_attrs.items():
+            ps.attrs[k] = v
+        ps.attrs["t0"]                 = 0.0
+        ps.attrs["steps"]              = int(agg["total_steps"])
+        ps.attrs["max_ps"]             = int(agg["max_ps"])
+        ps.attrs["mean_ps"]            = (agg["sum_orders"] / agg["count_orders"]
+                                          if agg["count_orders"] > 0 else 0.0)
+        ps.attrs["sum_orders"]         = int(agg["sum_orders"])
+        ps.attrs["count_orders"]       = int(agg["count_orders"])
+        ps.attrs["hit_atmosphere"]     = agg["hit_atmosphere"]
+        ps.attrs["hit_atm_step"]       = agg["hit_atm_step"]
+        ps.attrs["hit_atm_r"]          = agg["hit_atm_r"]
+        ps.attrs["segmented"]          = True
+        ps.attrs["n_segments"]         = len(segs)
+        ps.attrs["start_global_index"] = 0
+        ps.attrs["end_global_index"]   = int(last_end_index)
+        ps.create_virtual_dataset("y", y_layout)
+        ps.create_virtual_dataset("orders", o_layout)
+    os.replace(tmp, full)
+    return full
 
 
 def build_filename(output_folder, stem, figure_tag, ext="png"):

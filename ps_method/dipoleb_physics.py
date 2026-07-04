@@ -453,12 +453,22 @@ def run_ps_streaming_with_decimation(
     user_min_phase,
     dragt_monitor=None,
     r_atmosphere=1.0,
+    global_index_start=0,
+    total_steps=None,
+    segment_index=None,
 ):
     start_time_ps = time.time()
 
+    # In segmented (checkpointed) runs this call integrates one segment of a
+    # longer trajectory: it starts at global step `global_index_start` (seeded
+    # with the previous segment's end_state) and `total_steps` is the whole
+    # run's step count. The defaults reproduce single-run behaviour exactly.
+    if total_steps is None:
+        total_steps = steps_ps
+
     cur_state = initial_pos_vel_ps.copy()
     remaining = steps_ps
-    global_index = 0
+    global_index = global_index_start
     max_ps = 0
     sum_orders = 0      # for mean over kept (output-grid) orders
     count_orders = 0
@@ -481,7 +491,9 @@ def run_ps_streaming_with_decimation(
         ps_grp.attrs["minphase"] = ul.npfloat(user_min_phase)
         ps_grp.attrs["E0"]       = float(e0_ps)
         ps_grp.attrs["mu0"]      = float(mu0_ps)
-        ps_grp.attrs["t0"]       = 0.0
+        # t0 is derived from the global step clock: dt * first-step index.
+        # For a single run global_index_start == 0, so this stays 0.0.
+        ps_grp.attrs["t0"]       = ul.npfloat(ps_step) * np.int64(global_index_start)
         # Row layout: [x,y,z, vx,vy,vz, Bx,By,Bz]
         ps_grp.attrs["save_rows"] = "pos_vel_B"
         ps_grp.attrs["n_save"]    = wr.n_save
@@ -532,7 +544,7 @@ def run_ps_streaming_with_decimation(
             if decimate <= 1:
                 keep = np.ones_like(idx_eff, dtype=bool)
             else:
-                keep = (idx_eff % decimate == 0) | (idx_eff == steps_ps)
+                keep = (idx_eff % decimate == 0) | (idx_eff == total_steps)
 
             sol_keep = sol_eff[:, keep]
             orders_keep = orders_eff[keep]
@@ -573,9 +585,27 @@ def run_ps_streaming_with_decimation(
         if write_data:
             ps_grp.attrs["max_ps"] = max_ps
             ps_grp.attrs["mean_ps"] = (sum_orders / count_orders) if count_orders > 0 else 0.0
+            # sum/count kept so the VDS can aggregate a true cross-segment mean.
+            ps_grp.attrs["sum_orders"]   = int(sum_orders)
+            ps_grp.attrs["count_orders"] = int(count_orders)
             ps_grp.attrs["hit_atmosphere"] = hit_atmosphere
             ps_grp.attrs["hit_atm_step"]   = hit_atm_step
             ps_grp.attrs["hit_atm_r"]      = hit_atm_r
+
+            # --- checkpoint handoff -------------------------------------------
+            # The only thing needed to continue the (autonomous) trajectory is
+            # the boundary state; the global step index is the exact clock.
+            # start/end states are stored as full-precision datasets (not attrs)
+            # so a restarted segment continues bit-for-bit.
+            ps_grp.attrs["start_global_index"] = int(global_index_start)
+            ps_grp.attrs["end_global_index"]   = int(global_index)
+            ps_grp.attrs["total_steps"]        = int(total_steps)
+            if segment_index is not None:
+                ps_grp.attrs["segment_index"]  = int(segment_index)
+            ps_grp.create_dataset(
+                "start_state", data=np.asarray(initial_pos_vel_ps, dtype=ul.npfloat))
+            ps_grp.create_dataset(
+                "end_state", data=np.asarray(cur_state, dtype=ul.npfloat))
 
         elapsed_ps = time.time() - start_time_ps
 

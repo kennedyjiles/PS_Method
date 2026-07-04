@@ -1,0 +1,40 @@
+# ===================================================================
+# Dragt — high-energy proton with relativistic L_eff
+# (energy_eV / pitch_deg / particle inherited from base.yml)
+# ===================================================================
+
+pitch_deg: 30.0
+energy_eV: 550.0e6       
+gyroperiods: 1.0e10
+use_gyroradius_L_correction: false
+
+ps_decimate: 2            # save every Nth PS step (1 = save all)
+
+
+# output_root: /Volumes/Extreme SSD
+output_root: /Volumes/Jiles_thesi
+read_data: true                # scan for cached runs and load from disk
+
+solvers:
+  adaptive: false
+
+plotting:
+  titles: true
+  slice_mode: last
+  gyro_window: last
+  n_gyro: 50
+
+window_time: 4.0
+
+
+ps_order: 350   # just above adaptive order_high (300); higher only wastes
+                 # compute on rejected steps — accepted orders never exceed 300
+steps_per_gyro:
+  ps: 15            # fixed: 20 steps per EQUATORIAL gyro  (currently 10)
+ps_adaptive:
+  order_low: 20     # unchanged — "too easy, grow the step" trigger
+  order_high: 300   # unchanged — accuracy ceiling / reject-and-shrink trigger
+  grow_factor: 1.5  # unchanged
+  shrink_factor: 0.5 # unchanged
+  steps_per_local_gyro: 20   # was 200  ← the 10× cost driver
+  min_fast_path_N: 15        # was 100  ← hand off the moment fixed drops below 20/local-gyro

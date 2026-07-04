@@ -41,6 +41,82 @@ from ps_method.constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
 from configs.config_loader import load_config, compute_derived_dipoleb as compute_derived, copy_config_to_output, physics_hash
 
 
+def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
+                     initial_pos_vel, dp, wr):
+    """Run PS as a sequence of cleanly-closed checkpoint segments.
+
+    Each segment integrates ``seg_steps`` PS steps (the last one shorter),
+    writing ``<hash>_segNNN.h5`` via a ``.building`` temp + atomic rename, then
+    ``<hash>_full.h5`` is (re)built as a VDS over all committed segments.
+
+    On (re)launch this resumes from the last committed segment's exact
+    ``end_state``, so a crash costs at most one segment. Because the VDS is only
+    written once every segment is done, a crashed run leaves no ``_full.h5`` and
+    the driver's read-cache short-circuit won't mistake a partial run for a
+    finished one — it re-enters here and resumes.
+
+    Returns ``(max_ps, elapsed_seconds)`` like the single-run path.
+    """
+    import math
+    n_segments = math.ceil(steps_ps / seg_steps)
+
+    wr.clear_building_segments(hash_str, run_storage)
+    # Contiguous prefix only: a deleted segment (trailing OR middle) shortens it,
+    # so we refill from the gap; orphan segments past it get overwritten.
+    committed = wr.contiguous_committed_segments(hash_str, run_storage)
+
+    cur_state = initial_pos_vel
+    start_seg = 0
+    if committed:
+        last_idx, last_path = committed[-1]
+        with h5py.File(last_path, "r") as f:
+            cur_state = f["ps/end_state"][()]
+            resumed_index = int(f["ps"].attrs["end_global_index"])
+        start_seg = last_idx + 1
+        expected = min(start_seg * seg_steps, steps_ps)
+        if resumed_index != expected:
+            raise RuntimeError(
+                f"resume mismatch: committed segment {last_idx} ends at global "
+                f"step {resumed_index:,}, expected {expected:,} — refusing to "
+                f"continue from an inconsistent checkpoint")
+        print(f"  Resuming: {last_idx + 1}/{n_segments} segments committed, "
+              f"continuing at global step {resumed_index:,}/{steps_ps:,}\n")
+
+    t_start = time.time()
+    for seg in range(start_seg, n_segments):
+        seg_global_start = seg * seg_steps
+        this_seg_steps = min(seg_steps, steps_ps - seg_global_start)
+        seg_final = wr.seg_path_for(hash_str, seg, run_storage)
+        seg_build = seg_final + ".building"
+
+        args = dict(base_args)
+        args.update(
+            cache_path=seg_build,
+            initial_pos_vel_ps=cur_state,
+            steps_ps=this_seg_steps,
+            global_index_start=seg_global_start,
+            total_steps=steps_ps,
+            segment_index=seg,
+        )
+        print(f"  --- PS segment {seg + 1}/{n_segments} "
+              f"(global steps {seg_global_start:,}–{seg_global_start + this_seg_steps:,}) ---")
+        dp.run_ps_streaming_with_decimation(**args)
+        os.replace(seg_build, seg_final)   # atomic commit of the segment
+
+        with h5py.File(seg_final, "r") as f:
+            cur_state = f["ps/end_state"][()]
+
+    # Stitch only once all segments exist, so a partial run has no _full.h5.
+    full = wr.build_vds(hash_str, run_storage)
+    elapsed = time.time() - t_start
+
+    max_ps = 0
+    if full is not None:
+        with h5py.File(full, "r") as f:
+            max_ps = int(f["ps"].attrs.get("max_ps", 0))
+    return max_ps, elapsed
+
+
 def main(cfg_path, replot=False):
     """Run a dipole-B simulation from a YAML config file path.
 
@@ -483,7 +559,14 @@ def main(cfg_path, replot=False):
     """
     if not USE_MANUAL_FILE:
         cache_path = wr.h5_path_for(physics_hash(cfg), run_storage)
-        if os.path.exists(cache_path) and READ_DATA:
+        # A stitched (VDS) cache whose segment files were deleted would silently
+        # read back zeros. Detect that and ignore the cache so the run resumes
+        # and rebuilds instead of loading corrupt data.
+        _stale_vds = os.path.exists(cache_path) and wr.vds_has_missing_sources(cache_path)
+        if _stale_vds:
+            print(f"  Stale VDS: {os.path.basename(cache_path)} references missing "
+                  f"segment files — ignoring cache and resuming the run.\n")
+        if os.path.exists(cache_path) and READ_DATA and not _stale_vds:
             print(f"Found existing results: {os.path.basename(cache_path)} — loading.\n")
 
             with h5py.File(cache_path, "r") as cached:
@@ -690,7 +773,16 @@ def main(cfg_path, replot=False):
                     )
                     max_ps, elapsed_ps = run_ps_streaming_adaptive(**_stream_args)
                 else:
-                    max_ps, elapsed_ps = dp.run_ps_streaming_with_decimation(**_stream_args)
+                    # Segmented checkpointing when ps_segment_gyroperiods is set
+                    # (and smaller than the whole run); otherwise the original
+                    # single-file streaming path, byte-for-byte unchanged.
+                    _seg_steps = params.get("ps_segment_steps", 0) or 0
+                    if _seg_steps and _seg_steps < steps_ps:
+                        max_ps, elapsed_ps = _run_ps_segments(
+                            _stream_args, physics_hash(cfg), run_storage,
+                            steps_ps, _seg_steps, initial_pos_vel, dp, wr)
+                    else:
+                        max_ps, elapsed_ps = dp.run_ps_streaming_with_decimation(**_stream_args)
                 dragt_mon.summary()
                 end_time_ps = time.time()
 

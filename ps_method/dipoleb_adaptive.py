@@ -33,6 +33,7 @@ from . import dipoleb_physics as dp
 from . import writers as wr
 from . import utils as ul
 
+_one    = ul.npfloat(1.0)
 _two    = ul.npfloat(2.0)
 _three  = ul.npfloat(3.0)
 _two5   = ul.npfloat(2.5)
@@ -59,9 +60,9 @@ def _tether_aux(state):
     xv, yv, zv   = state[0], state[1], state[2]
     vxv, vyv, vzv = state[3], state[4], state[5]
 
-    r2 = xv**_two + yv**_two + zv**_two
-    a  = r2**(-_two5)
-    b  = _two * zv**_two - xv**_two - yv**_two
+    r2 = xv*xv + yv*yv + zv*zv
+    a  = _one / (r2 * r2 * np.sqrt(r2))
+    b  = _two * zv*zv - xv*xv - yv*yv
     cv = yv * zv
     d  = xv * zv
     e  = b * vyv - _three * cv * vzv
@@ -172,16 +173,13 @@ def _ps_adaptive_chunk(
                 tol, charge_sign, dt_actual,
             )
 
-            # ---- find first bad step ----
+            # ---- find first bad step (vectorized) ----
             # Same quality bar as the fast path: reject if order > order_high
             batch_orders = orders_batch[1:n_sub + 1]
-            first_bad = -1                          # -1 means all good
-            for kk in range(n_sub):
-                if (batch_orders[kk] >= ps_order or
-                        batch_orders[kk] > order_high or
-                        not np.all(np.isfinite(sol_batch[:6, kk + 1]))):
-                    first_bad = kk
-                    break
+            bad = (batch_orders >= ps_order) | (batch_orders > order_high)
+            bad |= ~np.isfinite(sol_batch[:6, 1:n_sub + 1]).all(axis=0)
+            nz = np.flatnonzero(bad)
+            first_bad = int(nz[0]) if nz.size else -1  # -1 means all good
 
             if first_bad >= 0:
                 # ---- some steps failed ----
