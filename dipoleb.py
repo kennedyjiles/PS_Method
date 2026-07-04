@@ -41,8 +41,45 @@ from ps_method.constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
 from configs.config_loader import load_config, compute_derived_dipoleb as compute_derived, copy_config_to_output, physics_hash
 
 
+def _stamp_segment_summary(seg_build_path, summary_stub, hash_str, seg_index,
+                           seg_steps, total_steps, seg_elapsed):
+    """Write a per-segment ``summary_json`` onto a segment file.
+
+    Makes each ``<hash>_segNNN.h5`` manually loadable on its own
+    (``manual_h5_path``), which requires the run-identity summary that
+    otherwise only lands on ``<hash>_full.h5`` at run end.
+
+    Safety properties:
+      * Called on the ``.building`` temp BEFORE the atomic commit — committed
+        segment files are never reopened for write, and a crash mid-stamp only
+        loses a temp that would be discarded anyway.
+      * Root-level attr ONLY. Nothing is added to the ``ps`` group attrs,
+        because build_vds copies those onto the stitched _full.h5 and a stray
+        per-segment attr there would contaminate it.
+
+    Span-dependent meta fields (gyroperiods, norm_time, physical_time) are
+    scaled to the segment's share of the run; ``ps.steps``/``max_ps`` are the
+    segment's own. The time axis of a lone segment still starts at 0
+    (relative), matching the trimmed-file convention.
+    """
+    import copy as _copy
+    s = _copy.deepcopy(summary_stub)
+    frac = seg_steps / float(total_steps)
+    meta = s["meta"]
+    meta["stem"] = f"{hash_str}_seg{seg_index:03d}"
+    for k in ("gyroperiods", "norm_time", "physical_time"):
+        if meta.get(k):
+            meta[k] = float(meta[k]) * frac
+    meta["timing"] = {"ps": float(seg_elapsed)}
+    meta["segment_index"] = int(seg_index)          # provenance
+    with h5py.File(seg_build_path, "a") as f:
+        s["ps"]["steps"] = int(seg_steps)
+        s["ps"]["max_ps"] = int(f["ps"].attrs.get("max_ps", 0))
+        f.attrs["summary_json"] = json.dumps(s)
+
+
 def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
-                     initial_pos_vel, dp, wr):
+                     initial_pos_vel, dp, wr, run_fn, summary_stub=None):
     """Run PS as a sequence of cleanly-closed checkpoint segments.
 
     Each segment integrates ``seg_steps`` PS steps (the last one shorter),
@@ -100,11 +137,28 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
         )
         print(f"  --- PS segment {seg + 1}/{n_segments} "
               f"(global steps {seg_global_start:,}–{seg_global_start + this_seg_steps:,}) ---")
-        dp.run_ps_streaming_with_decimation(**args)
+        _t_seg = time.time()
+        run_fn(**args)
+        # Stamp per-segment identity summary on the temp BEFORE committing, so
+        # the atomic rename publishes data + summary together (and committed
+        # files are never reopened for write).
+        if summary_stub is not None:
+            _stamp_segment_summary(seg_build, summary_stub, hash_str, seg,
+                                   this_seg_steps, steps_ps,
+                                   time.time() - _t_seg)
         os.replace(seg_build, seg_final)   # atomic commit of the segment
 
         with h5py.File(seg_final, "r") as f:
             cur_state = f["ps/end_state"][()]
+            _end_gi = int(f["ps"].attrs["end_global_index"])
+
+        # Adaptive integration can halt early (PS series can't converge at
+        # dt_min). If a segment stops short of its target, don't fabricate the
+        # remaining segments — stitch what we have and stop.
+        if _end_gi < seg_global_start + this_seg_steps:
+            print(f"  Segment {seg} halted at global step {_end_gi:,} "
+                  f"(target {seg_global_start + this_seg_steps:,}) — stopping run.\n")
+            break
 
     # Stitch only once all segments exist, so a partial run has no _full.h5.
     full = wr.build_vds(hash_str, run_storage)
@@ -201,6 +255,9 @@ def main(cfg_path, replot=False):
     READ_DATA       = params["READ_DATA"]
     if replot:
         READ_DATA = True
+    # Data-only: write the h5 then stop before plotting/analysis. Ignored when
+    # replotting (the whole point of a replot is to (re)make the figures).
+    DATA_ONLY       = bool(params.get("data_only", False)) and not replot
     USE_RK45        = params["USE_RK45"]
     USE_RK4         = params["USE_RK4"]
     USE_RKG         = params["USE_RKG"]
@@ -762,6 +819,8 @@ def main(cfg_path, replot=False):
                     dragt_monitor=dragt_mon,
                     r_atmosphere=r_atmosphere,
                 )
+                # Pick the streaming function; both the adaptive and fixed-step
+                # paths support segmented checkpointing identically.
                 if USE_ADAPTIVE:
                     _stream_args.update(
                         order_low=ps_adaptive["order_low"],
@@ -771,18 +830,71 @@ def main(cfg_path, replot=False):
                         steps_per_local_gyro=ps_adaptive["steps_per_local_gyro"],
                         min_fast_path_N=ps_adaptive["min_fast_path_N"],
                     )
-                    max_ps, elapsed_ps = run_ps_streaming_adaptive(**_stream_args)
+                    _run_fn = run_ps_streaming_adaptive
                 else:
-                    # Segmented checkpointing when ps_segment_gyroperiods is set
-                    # (and smaller than the whole run); otherwise the original
-                    # single-file streaming path, byte-for-byte unchanged.
-                    _seg_steps = params.get("ps_segment_steps", 0) or 0
-                    if _seg_steps and _seg_steps < steps_ps:
-                        max_ps, elapsed_ps = _run_ps_segments(
-                            _stream_args, physics_hash(cfg), run_storage,
-                            steps_ps, _seg_steps, initial_pos_vel, dp, wr)
-                    else:
-                        max_ps, elapsed_ps = dp.run_ps_streaming_with_decimation(**_stream_args)
+                    _run_fn = dp.run_ps_streaming_with_decimation
+
+                # Segmented checkpointing when ps_segment_gyroperiods is set (and
+                # smaller than the whole run); otherwise the original single-file
+                # streaming path, byte-for-byte unchanged.
+                _seg_steps = params.get("ps_segment_steps", 0) or 0
+                if _seg_steps and _seg_steps < steps_ps:
+                    # Identity stub stamped (per-segment-patched) onto each
+                    # segment so it can be manual-loaded standalone. Mirrors the
+                    # run-end summary dict below (keep the two in sync); values
+                    # coerced to plain Python types (stamp json.dumps has no
+                    # numpy encoder). RK blocks are disabled — a lone segment
+                    # carries PS data only, whatever else the run computed.
+                    _summary_stub = {
+                        "meta": {
+                            "stem": wr.stem_from_h5(cache_path),
+                            "particle": particle_type,
+                            "mass_si": float(mass_si),
+                            "q_e": float(q_e),
+                            "energy_eV": float(ke_particle),
+                            "pitch_deg": float(pitch_deg),
+                            "phi_deg": float(phi_deg),
+                            "x0": float(x_initial),
+                            "y0": float(y_initial),
+                            "z0": float(z_initial),
+                            "B0_T": float(B_0),
+                            "gyroperiods": float(gyroperiods),
+                            "norm_time": float(norm_time),
+                            "physical_time": float(physical_time),
+                            "percent_c": float(v_si / spdlight),
+                            "charge_sign": float(charge_sign),
+                            "dtype": npfloat.__name__,
+                            "tau0": float(tau_time),
+                            "T_gyro": float(T_gyro),
+                            "timing": {},
+                        },
+                        "ps": {
+                            "enabled": True,
+                            "dt": float(ps_step),
+                            "steps": int(steps_ps),
+                            "streaming": True,
+                            "ordercap": int(ps_order),
+                            "max_ps": None,
+                            "chunksize": int(ps_chunk_steps),
+                            "decimate": int(ps_decimate),
+                            "numberstepspergyro": int(n_steps_per_gyro_ps),
+                            "E0": float(e0_ps),
+                            "mu0": float(mu0_ps),
+                            "minphase": float(user_min_phase),
+                            "tol": float(tol_local),
+                        },
+                        "rk4":  {"enabled": False, "dt": None, "steps": None,
+                                 "numberstepspergyro": None},
+                        "rk45": {"enabled": False, "rtol": None, "atol": None},
+                        "rkg":  {"enabled": False, "dt": None, "steps": None,
+                                 "numberstepspergyro": None},
+                    }
+                    max_ps, elapsed_ps = _run_ps_segments(
+                        _stream_args, physics_hash(cfg), run_storage,
+                        steps_ps, _seg_steps, initial_pos_vel, dp, wr, _run_fn,
+                        summary_stub=_summary_stub)
+                else:
+                    max_ps, elapsed_ps = _run_fn(**_stream_args)
                 dragt_mon.summary()
                 end_time_ps = time.time()
 
@@ -1076,7 +1188,10 @@ def main(cfg_path, replot=False):
                 ps_order_mean = float(ps_grp.attrs["mean_ps"])
             ps_order_max = int(ps_grp.attrs["max_ps"]) if "max_ps" in ps_grp.attrs else None
 
-            if USE_FULL_PLOT:
+            # Skip the strided trajectory read under data_only — it's only for
+            # plots we won't make, and reading through a (possibly moved) VDS is
+            # exactly what data_only exists to avoid. Attrs above are cheap/safe.
+            if USE_FULL_PLOT and not DATA_ONLY:
                 ps_y_h5 = ps_grp["y"]
                 x_ps_plot = ps_y_h5[0, ::stride]
                 y_ps_plot = ps_y_h5[1, ::stride]
@@ -1133,6 +1248,15 @@ def main(cfg_path, replot=False):
 
     # --- Copy config YAML to run folder (with git hash) ---
     copy_config_to_output(cfg_path, run_folder, cfg=cfg)
+
+    # --- Data-only: h5/VDS + provenance config are written; stop before any
+    # plotting or trajectory read-back. Replot later (this copied yml already
+    # has manual_h5_path guidance) once the segments are reassembled. ---
+    if DATA_ONLY:
+        print(f"\n{'='*60}\ndata_only: trajectory written, skipping all plots/analysis.\n"
+              f"  Replot later with: python run.py {os.path.join(run_folder, os.path.basename(cfg_path))}\n"
+              f"{'='*60}\n")
+        return
 
     # =====================================================
     # ============== Full Trajectory Plots ================

@@ -78,6 +78,11 @@ ps_chunk_steps: 10000     # number of PS steps per h5 streaming chunk
 # 0 (or >= total gyroperiods) = disabled → single <hash>_full.h5 as before.
 ps_segment_gyroperiods: 0   # gyroperiods per segment (0 = no segmentation)
 
+# Data-only: write the h5 (segments + VDS) + provenance config, then stop —
+# no plots or trajectory analysis. For long production runs; replot later
+# from the copied yml once the segments are reassembled.
+data_only: false
+
 # --- RK45 Tolerances ---
 rtol_rk45: 1.0e-8         # RK45 relative tolerance
 atol_rk45: 1.0e-10        # RK45 absolute tolerance

@@ -306,6 +306,10 @@ def run_ps_streaming_adaptive(
     max_retries=20,
     steps_per_local_gyro=200,
     min_fast_path_N=10,
+    # ---- segmented checkpointing ----
+    global_index_start=0,
+    total_steps=None,
+    segment_index=None,
 ):
     """
     Hybrid PS integration: uses the original fast ps_integrate when the
@@ -317,13 +321,22 @@ def run_ps_streaming_adaptive(
     n_state = 17
     # wr.SAVE_ROWS and wr.n_save come from writers
 
+    # Segmented (checkpointed) runs: this call integrates one segment starting
+    # at global step `global_index_start`, seeded with the previous segment's
+    # end_state. The adaptive dt is recomputed from the local B field every
+    # step, so — like the fixed-step path — the only state needed to continue
+    # is the 6-vector pos/vel; dt does not carry across the boundary. Defaults
+    # reproduce the single-run behaviour exactly.
+    if total_steps is None:
+        total_steps = steps_ps
+
     # --- build initial 17-element state ---
     cur_state = np.zeros(n_state, dtype=ul.npfloat)
     cur_state[0:6] = initial_pos_vel_ps
     _tether_aux(cur_state)
 
     remaining    = steps_ps
-    global_index = 0
+    global_index = global_index_start
     max_ps_global = 0
     sum_orders   = 0     # for mean over kept (output-grid) orders
     count_orders = 0
@@ -341,8 +354,8 @@ def run_ps_streaming_adaptive(
     hit_atm_r       = 0.0
     # r_atmosphere is in R_E; configurable via yaml (default 1.0 = surface)
 
-    # --- internal time ---
-    t_internal = ul.npfloat(0.0)
+    # --- internal time (autonomous field: labels output only, not the physics) ---
+    t_internal = ul.npfloat(ps_step) * np.int64(global_index_start)
 
     # --- h5 setup (identical to original) ---
     if write_data:
@@ -359,7 +372,7 @@ def run_ps_streaming_adaptive(
         ps_grp.attrs["minphase"]         = ul.npfloat(user_min_phase)
         ps_grp.attrs["E0"]              = float(e0_ps)
         ps_grp.attrs["mu0"]             = float(mu0_ps)
-        ps_grp.attrs["t0"]              = 0.0
+        ps_grp.attrs["t0"]              = ul.npfloat(ps_step) * np.int64(global_index_start)
         ps_grp.attrs["adaptive"]         = True
         ps_grp.attrs["order_low"]        = order_low
         ps_grp.attrs["order_high"]       = order_high
@@ -482,7 +495,7 @@ def run_ps_streaming_adaptive(
             if decimate <= 1:
                 keep = np.ones_like(idx_eff, dtype=bool)
             else:
-                keep = (idx_eff % decimate == 0) | (idx_eff == steps_ps)
+                keep = (idx_eff % decimate == 0) | (idx_eff == total_steps)
 
             sol_keep    = sol_eff[:, keep]
             orders_keep = orders_eff[keep]
@@ -520,11 +533,26 @@ def run_ps_streaming_adaptive(
         if write_data:
             ps_grp.attrs["max_ps"]           = max_ps_global
             ps_grp.attrs["mean_ps"]          = mean_ps
+            ps_grp.attrs["sum_orders"]       = int(sum_orders)
+            ps_grp.attrs["count_orders"]     = int(count_orders)
             ps_grp.attrs["total_substeps"]   = total_substeps
             ps_grp.attrs["total_rejections"] = total_rejections
             ps_grp.attrs["hit_atmosphere"]   = hit_atmosphere
             ps_grp.attrs["hit_atm_step"]     = hit_atm_step
             ps_grp.attrs["hit_atm_r"]        = hit_atm_r
+
+            # --- checkpoint handoff (see run_ps_streaming_with_decimation) ---
+            # Only the 6-vector pos/vel is needed to continue; end_global_index
+            # may be < the target if the run halted (PS series can't converge).
+            ps_grp.attrs["start_global_index"] = int(global_index_start)
+            ps_grp.attrs["end_global_index"]   = int(global_index)
+            ps_grp.attrs["total_steps"]        = int(total_steps)
+            if segment_index is not None:
+                ps_grp.attrs["segment_index"]  = int(segment_index)
+            ps_grp.create_dataset(
+                "start_state", data=np.asarray(initial_pos_vel_ps, dtype=ul.npfloat))
+            ps_grp.create_dataset(
+                "end_state", data=np.asarray(cur_state[:6], dtype=ul.npfloat))
 
         completed_steps = global_index
         elapsed_ps = time.time() - start_time_ps

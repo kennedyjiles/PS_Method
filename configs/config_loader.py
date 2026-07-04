@@ -52,6 +52,9 @@ _NON_HASH_KEYS = {
     # checkpointing granularity — pure I/O, same physics regardless of value,
     # so a segmented run shares its hash with the equivalent single run.
     "ps_segment_gyroperiods",
+    # data-only mode — writes the h5 then stops before plotting/analysis;
+    # doesn't affect the trajectory, so it shares the normal run's hash.
+    "data_only",
     # post-processing only — operates on the trajectory, doesn't change it
     "user_min_phase", "bounce_drift", "r_atmosphere",
     # warning thresholds — don't affect output values
@@ -798,6 +801,9 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         "ps_segment_gyroperiods": float(cfg.get("ps_segment_gyroperiods", 0) or 0),
         "ps_segment_steps": int(round(
             float(cfg.get("ps_segment_gyroperiods", 0) or 0) * spg["ps"])),
+        # Data-only: write the h5/VDS + provenance config, then stop before any
+        # plotting or trajectory-reading analysis.
+        "data_only": bool(cfg.get("data_only", False)),
         "rtol_rk45":       cfg["rtol_rk45"],
         "atol_rk45":       cfg["atol_rk45"],
         "user_min_phase":  cfg["user_min_phase"],
