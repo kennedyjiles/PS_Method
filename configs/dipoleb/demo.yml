@@ -4,6 +4,7 @@
 
 particle: electron
 gyroperiods: 550
+phi_deg: 90.0
 
 solvers:
   rk4: true

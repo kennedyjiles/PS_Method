@@ -51,7 +51,8 @@ def lorentz_force(t, d, charge_sign):
     return np.array([vx, vy, vz, ax, ay, az], dtype=ul.npfloat)
 
 @ul.maybe_njit
-def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelta):
+def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelta,
+                 warn=True):
     n_total = 17
     state_history = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
 
@@ -199,7 +200,11 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
         if max_contrib > tol:
             n_unconverged += 1
 
-    if n_unconverged > 0:
+    # In fixed-step runs unconverged steps enter the output, so this is a real
+    # accuracy alarm. Adaptive probe calls pass warn=False: their unconverged
+    # steps are rejected by the quality mask (orders >= cap) and never reach
+    # the output — rejections are reported in the adaptive summary instead.
+    if warn and n_unconverged > 0:
         print("  [dipoleb ps_integrate] WARNING:", n_unconverged, "/", steps_ps,
               "steps hit ps_order=", ps_order, "without reaching tol=", tol)
 

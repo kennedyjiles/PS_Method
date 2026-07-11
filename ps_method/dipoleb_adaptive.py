@@ -85,6 +85,37 @@ def _tether_aux(state):
 # ===========================================================
 # ============== Adaptive Stepping ===========================
 # ===========================================================
+def _tether_aux_block(block):
+    """Vectorized _tether_aux over a (17, K) block of states, in place.
+
+    Same formulas applied elementwise, so each column is bit-identical to a
+    scalar _tether_aux call on it.
+    """
+    xv, yv, zv    = block[0], block[1], block[2]
+    vxv, vyv, vzv = block[3], block[4], block[5]
+
+    r2 = xv*xv + yv*yv + zv*zv
+    a  = _one / (r2 * r2 * np.sqrt(r2))
+    b  = _two * zv*zv - xv*xv - yv*yv
+    cv = yv * zv
+    d  = xv * zv
+    e  = b * vyv - _three * cv * vzv
+    f  = _three * d * vzv  - b * vxv
+    g  = _three * cv * vxv - _three * d * vyv
+
+    block[6]  = r2
+    block[7]  = a
+    block[8]  = b
+    block[9]  = cv
+    block[10] = d
+    block[11] = -e
+    block[12] = -f
+    block[13] = -g
+    block[14] = -_three * a * d
+    block[15] = -_three * a * cv
+    block[16] = -a * b
+
+
 def _local_dt_from_B(state, steps_per_local_gyro, dt_min, dt_max):
     """Compute dt from local |B| so we take a fixed number of steps
     per local gyroperiod.  tau_local = 2*pi / |B|  (normalised units
@@ -111,6 +142,162 @@ def _use_fast_path(state, ps_step, min_N):
     return effective_N >= min_N
 
 
+# How far (in local gyroperiods) one batched call may run before dt_B is
+# refreshed from the local field. The order/finiteness check still guards
+# every substep, so a batch that outruns a strengthening field is caught and
+# retried from the good prefix — this only sets the refresh cadence.
+_BATCH_LOCAL_GYROS = 4
+
+
+def _ps_adaptive_interval(
+    probe_order, cur_state, tol, charge_sign, ps_step,
+    dt_min, dt_max,
+    order_low, order_high, grow_factor, shrink_factor, max_retries,
+    steps_per_local_gyro, max_substeps,
+    t_remaining, dt_override, t_msg,
+):
+    """Finish ONE output interval with adaptive substeps (scalar path).
+
+    Near-verbatim port of the original per-interval loop. The batched path in
+    _ps_adaptive_chunk handles whole intervals; this handles the cases it
+    can't: deep-well intervals (n_sub > max_substeps) and the remainder of a
+    partially-completed interval after a batched-call failure.
+
+    Mutates cur_state in place. Returns
+    (last_order, max_ps, substeps, rejections, dt_last, t_left, halted);
+    t_left is the uncovered time when halted (0.0 otherwise).
+    """
+    MAX_SUB   = max_substeps
+    last_order = 0
+    max_ps     = 0
+    substeps   = 0
+    rejections = 0
+    retries    = 0       # consecutive zero-progress failures
+    dt_use     = ps_step
+
+    while t_remaining > dt_min * 0.01:
+        # ---- choose dt ----
+        dt_B = _local_dt_from_B(cur_state, steps_per_local_gyro,
+                                 dt_min, dt_max)
+        if dt_override > 0.0:
+            # dt_override may be from shrinking (after zero-progress failure)
+            # or from growing (after easy batch).  Either way, cap at dt_B
+            # so we never exceed what the local field suggests.
+            dt_use = min(dt_override, dt_B)
+        else:
+            dt_use = dt_B              # fresh from local |B|
+
+        # ---- compute batch size (capped) ----
+        n_sub = max(1, int(np.ceil(t_remaining / dt_use)))
+        if n_sub > MAX_SUB:
+            n_sub = MAX_SUB
+            dt_actual = ul.npfloat(dt_use)   # keep the desired dt; don't cover all t_remaining
+        else:
+            dt_actual = ul.npfloat(t_remaining / n_sub)   # exact coverage
+
+        # ---- ONE Numba call ----
+        # warn=False: this is a probe — unconverged steps are rejected by the
+        # bad-mask below and never reach the output, so the ps_integrate
+        # accuracy warning would be pure log noise here.
+        sol_batch, orders_batch = dp.ps_integrate(
+            probe_order, n_sub, cur_state[:6].copy(),
+            tol, charge_sign, dt_actual, warn=False,
+        )
+
+        # ---- find first bad step (vectorized) ----
+        # Same quality bar as the fast path: reject if order > order_high
+        batch_orders = orders_batch[1:n_sub + 1]
+        bad = (batch_orders >= probe_order) | (batch_orders > order_high)
+        bad |= ~np.isfinite(sol_batch[:6, 1:n_sub + 1]).all(axis=0)
+        nz = np.flatnonzero(bad)
+        first_bad = int(nz[0]) if nz.size else -1  # -1 means all good
+
+        if first_bad >= 0:
+            # ---- some steps failed ----
+            if first_bad > 0:
+                # accept the good prefix
+                cur_state[:] = sol_batch[:, first_bad]
+                _tether_aux(cur_state)
+                # safety: if prefix endpoint is NaN/Inf, back up one more step
+                if not np.all(np.isfinite(cur_state)):
+                    if first_bad > 1:
+                        cur_state[:] = sol_batch[:, first_bad - 1]
+                        _tether_aux(cur_state)
+                        first_bad -= 1
+                    else:
+                        # even the first step is bad — treat as zero progress
+                        cur_state[:] = sol_batch[:, 0]
+                        _tether_aux(cur_state)
+                        dt_override = max(float(dt_actual) * shrink_factor, dt_min)
+                        retries += 1
+                        rejections += 1
+                        continue
+                t_remaining -= first_bad * float(dt_actual)
+                substeps    += first_bad
+                good_max = int(batch_orders[:first_bad].max())
+                if good_max > max_ps:
+                    max_ps = good_max
+                last_order = int(batch_orders[first_bad - 1])
+                # progress was made → fresh dt_B next time
+                retries     = 0
+                dt_override = 0.0
+                rejections += 1
+                continue        # re-enter loop: dt_B recomputed at new position
+
+            else:
+                # first_bad == 0: zero progress
+                retries    += 1
+                rejections += 1
+                if retries > max_retries:
+                    warnings.warn(
+                        f"Adaptive PS: {max_retries} retries with "
+                        f"zero progress (order={int(batch_orders[0])}) "
+                        f"at t={float(t_msg + ps_step - t_remaining):.4f}, "
+                        f"dt={float(dt_actual):.6e}. HALTING.",
+                        RuntimeWarning, stacklevel=2,
+                    )
+                    return (last_order, max_ps, substeps, rejections,
+                            dt_use, t_remaining, True)
+                # shrink dt and retry at same position
+                dt_override = max(float(dt_actual) * shrink_factor, dt_min)
+                continue
+
+        # ---- whole batch accepted ----
+        cur_state[:] = sol_batch[:, -1]
+        _tether_aux(cur_state)
+
+        # safety: if state went NaN/Inf (near-origin pass), shrink and retry
+        if not np.all(np.isfinite(cur_state)):
+            # revert to the last known good state (start of this batch)
+            cur_state[:] = sol_batch[:, 0]
+            _tether_aux(cur_state)
+            dt_override = max(float(dt_actual) * shrink_factor, dt_min)
+            rejections += 1
+            continue
+
+        batch_max = int(batch_orders.max())
+        if batch_max > max_ps:
+            max_ps = batch_max
+        last_order   = int(batch_orders[-1])
+        substeps    += n_sub
+        t_remaining -= n_sub * float(dt_actual)    # may not be zero if cap was active
+        if t_remaining < dt_min * 0.01:
+            t_remaining = 0.0                      # clean exit
+        retries      = 0
+
+        # ---- growth logic: if batch was easy, try a larger dt next time ----
+        # If the highest order in the batch was below order_low, the series
+        # converged quickly and we can afford a bigger step.  Apply grow_factor
+        # but cap at dt_B (the local-B suggestion) so we don't overshoot.
+        if batch_max < order_low:
+            grown_dt = min(float(dt_actual) * grow_factor, float(dt_max))
+            dt_override = grown_dt   # use this on next iteration instead of dt_B
+        else:
+            dt_override  = 0.0       # reset: let dt_B decide
+
+    return (last_order, max_ps, substeps, rejections, dt_use, 0.0, False)
+
+
 def _ps_adaptive_chunk(
     ps_order, n_output, cur_state, tol, charge_sign, ps_step,
     dt_min, dt_max,
@@ -121,18 +308,28 @@ def _ps_adaptive_chunk(
 ):
     """
     Process n_output grid points with adaptive substeps.
-    BATCHED: for each output point, compute n_sub from local |B| and call
-    ps_integrate once.  If a step diverges mid-batch, accept the good prefix,
-    recompute dt_B at the new position, and retry the remainder.
 
-    Key design rules to prevent hangs:
-      - n_sub is capped at max_substeps to prevent memory/time explosions
-      - After accepting a good prefix (first_bad > 0), retries resets to 0
-        so dt_B is recomputed fresh at the new position
-      - Only first_bad == 0 (zero progress) counts as a retry toward max_retries
+    BATCHED across output intervals: with dt sized from the local |B|, up to
+    _BATCH_LOCAL_GYROS local gyroperiods' worth of whole intervals go into ONE
+    ps_integrate call, and the output grid points are sliced from every
+    n_sub-th column. With a fixed dt the step sequence is identical to
+    per-interval calls, so this changes call overhead, not physics; dt_B is
+    refreshed every batch (and after any failure) instead of every interval.
+    Intervals the batch can't take whole — deep-well ones needing
+    n_sub > max_substeps, or the remainder of an interval after a mid-batch
+    failure — fall back to the original scalar loop (_ps_adaptive_interval).
+
+    Key design rules to prevent hangs (unchanged from the original):
+      - substeps per call are capped at max_substeps
+      - after accepting a good prefix, dt_B is recomputed fresh at the new
+        position; only zero-progress failures count toward max_retries
     """
     n_state = 17
-    MAX_SUB = max_substeps   # cap: never ask ps_integrate for more than this
+    MAX_SUB = max_substeps
+    # Rejected steps stop at order_high+1 instead of grinding to ps_order —
+    # any step needing more than order_high is rejected either way, so the
+    # extra orders were pure waste. Outcome-identical, cheaper rejections.
+    probe_order = min(ps_order, order_high + 1)
 
     sol_chunk    = np.zeros((n_state, n_output + 1), dtype=ul.npfloat)
     orders_chunk = np.zeros(n_output + 1, dtype=np.int32)
@@ -140,140 +337,165 @@ def _ps_adaptive_chunk(
     max_ps     = 0
     substeps   = 0
     rejections = 0
+    dt_last    = ul.npfloat(ps_step)
 
-    for jj in range(1, n_output + 1):
-        t_remaining = ps_step
-        last_order  = 0
-        retries     = 0      # consecutive zero-progress failures
-        dt_override = 0.0    # >0 means use this instead of dt_B (after a zero-progress fail)
+    _scalar_args = (probe_order, cur_state, tol, charge_sign, ps_step,
+                    dt_min, dt_max, order_low, order_high, grow_factor,
+                    shrink_factor, max_retries, steps_per_local_gyro, MAX_SUB)
 
-        while t_remaining > dt_min * 0.01:
-            # ---- choose dt ----
-            dt_B = _local_dt_from_B(cur_state, steps_per_local_gyro,
-                                     dt_min, dt_max)
-            if dt_override > 0.0:
-                # dt_override may be from shrinking (after zero-progress failure)
-                # or from growing (after easy batch).  Either way, cap at dt_B
-                # so we never exceed what the local field suggests.
-                dt_use = min(dt_override, dt_B)
-            else:
-                dt_use = dt_B              # fresh from local |B|
+    def _halt_fill(jj_from, t_left):
+        for kk in range(jj_from, n_output + 1):
+            sol_chunk[:, kk] = cur_state
+            orders_chunk[kk] = -1
+        return (sol_chunk, orders_chunk, cur_state, dt_last,
+                t_internal + (ps_step - t_left), max_ps, substeps,
+                rejections, True)
 
-            # ---- compute batch size (capped) ----
-            n_sub = max(1, int(np.ceil(t_remaining / dt_use)))
-            if n_sub > MAX_SUB:
-                n_sub = MAX_SUB
-                dt_actual = ul.npfloat(dt_use)   # keep the desired dt; don't cover all t_remaining
-            else:
-                dt_actual = ul.npfloat(t_remaining / n_sub)   # exact coverage
+    jj = 1
+    while jj <= n_output:
+        dt_B = _local_dt_from_B(cur_state, steps_per_local_gyro,
+                                 dt_min, dt_max)
+        dt_last = dt_B
+        n_sub = max(1, int(np.ceil(ps_step / dt_B)))
 
-            # ---- ONE Numba call ----
-            sol_batch, orders_batch = dp.ps_integrate(
-                ps_order, n_sub, cur_state[:6].copy(),
-                tol, charge_sign, dt_actual,
-            )
+        if n_sub > MAX_SUB:
+            # Deep well: one interval at a time via the scalar path (its
+            # MAX_SUB-capped multi-batch logic, incl. growth, applies).
+            (last_order, i_max, i_sub, i_rej, dt_last, t_left,
+             halted) = _ps_adaptive_interval(*_scalar_args,
+                                             t_remaining=ps_step,
+                                             dt_override=0.0,
+                                             t_msg=t_internal)
+            max_ps = max(max_ps, i_max)
+            substeps += i_sub
+            rejections += i_rej
+            if halted:
+                return _halt_fill(jj, t_left)
+            t_internal += ps_step
+            sol_chunk[:, jj] = cur_state
+            orders_chunk[jj] = last_order
+            jj += 1
+            continue
 
-            # ---- find first bad step (vectorized) ----
-            # Same quality bar as the fast path: reject if order > order_high
-            batch_orders = orders_batch[1:n_sub + 1]
-            bad = (batch_orders >= ps_order) | (batch_orders > order_high)
-            bad |= ~np.isfinite(sol_batch[:6, 1:n_sub + 1]).all(axis=0)
-            nz = np.flatnonzero(bad)
-            first_bad = int(nz[0]) if nz.size else -1  # -1 means all good
+        # ---- batched path: K whole intervals in ONE Numba call ----
+        budget = min(MAX_SUB, max(n_sub, _BATCH_LOCAL_GYROS * steps_per_local_gyro))
+        K = min(n_output - jj + 1, max(1, budget // n_sub))
+        total_sub = K * n_sub
+        dt_actual = ul.npfloat(ps_step / n_sub)
 
-            if first_bad >= 0:
-                # ---- some steps failed ----
-                if first_bad > 0:
-                    # accept the good prefix
-                    cur_state[:] = sol_batch[:, first_bad]
-                    _tether_aux(cur_state)
-                    # safety: if prefix endpoint is NaN/Inf, back up one more step
-                    if not np.all(np.isfinite(cur_state)):
-                        if first_bad > 1:
-                            cur_state[:] = sol_batch[:, first_bad - 1]
-                            _tether_aux(cur_state)
-                            first_bad -= 1
-                        else:
-                            # even the first step is bad — treat as zero progress
-                            cur_state[:] = sol_batch[:, 0]
-                            _tether_aux(cur_state)
-                            dt_override = max(float(dt_actual) * shrink_factor, dt_min)
-                            retries += 1
-                            rejections += 1
-                            continue
-                    t_remaining -= first_bad * float(dt_actual)
-                    substeps    += first_bad
-                    good_max = int(batch_orders[:first_bad].max())
-                    if good_max > max_ps:
-                        max_ps = good_max
-                    last_order = int(batch_orders[first_bad - 1])
-                    # progress was made → fresh dt_B next time
-                    retries     = 0
-                    dt_override = 0.0
-                    rejections += 1
-                    continue        # re-enter loop: dt_B recomputed at new position
+        sol_batch, orders_batch = dp.ps_integrate(
+            probe_order, total_sub, cur_state[:6].copy(),
+            tol, charge_sign, dt_actual, warn=False,
+        )
 
-                else:
-                    # first_bad == 0: zero progress
-                    retries    += 1
-                    rejections += 1
-                    if retries > max_retries:
-                        warnings.warn(
-                            f"Adaptive PS: {max_retries} retries with "
-                            f"zero progress (order={int(batch_orders[0])}) "
-                            f"at t={float(t_internal + ps_step - t_remaining):.4f}, "
-                            f"dt={float(dt_actual):.6e}. HALTING.",
-                            RuntimeWarning, stacklevel=2,
-                        )
-                        for kk in range(jj, n_output + 1):
-                            sol_chunk[:, kk] = cur_state
-                            orders_chunk[kk] = -1
-                        t_internal += (ps_step - t_remaining)
-                        return (sol_chunk, orders_chunk, cur_state,
-                                dt_use, t_internal, max_ps,
-                                substeps, rejections, True)
-                    # shrink dt and retry at same position
-                    dt_override = max(float(dt_actual) * shrink_factor, dt_min)
-                    continue
+        batch_orders = orders_batch[1:total_sub + 1]
+        bad = (batch_orders >= probe_order) | (batch_orders > order_high)
+        bad |= ~np.isfinite(sol_batch[:6, 1:total_sub + 1]).all(axis=0)
+        nz = np.flatnonzero(bad)
+        first_bad = int(nz[0]) if nz.size else -1
 
-            # ---- whole batch accepted ----
-            cur_state[:] = sol_batch[:, -1]
-            _tether_aux(cur_state)
-
-            # safety: if state went NaN/Inf (near-origin pass), shrink and retry
-            if not np.all(np.isfinite(cur_state)):
-                # revert to the last known good state (start of this batch)
-                cur_state[:] = sol_batch[:, 0]
-                _tether_aux(cur_state)
-                dt_override = max(float(dt_actual) * shrink_factor, dt_min)
+        if first_bad < 0:
+            # ---- whole batch good: tether the grid columns, then commit ----
+            # The scalar path stores every grid point AFTER _tether_aux (aux
+            # recomputed from pos/vel); ps_integrate's history carries
+            # series-propagated aux that differs in the last bits. Tether the
+            # sliced columns so batched output is bit-identical to scalar.
+            cols = np.arange(1, K + 1) * n_sub
+            block = sol_batch[:, cols].copy()
+            _tether_aux_block(block)
+            fin = np.isfinite(block).all(axis=0)
+            bad_col = -1 if fin.all() else int(np.flatnonzero(~fin)[0])
+            if bad_col >= 0:
+                # near-origin aux blowup at grid point jj+bad_col: commit the
+                # clean intervals before it, then finish that interval on the
+                # scalar path with a shrunk dt (original semantics).
+                if bad_col > 0:
+                    sol_chunk[:, jj:jj + bad_col] = block[:, :bad_col]
+                    orders_chunk[jj:jj + bad_col] = orders_batch[cols[:bad_col]]
+                    cur_state[:] = block[:, bad_col - 1]
+                    gm = int(batch_orders[:bad_col * n_sub].max())
+                    if gm > max_ps:
+                        max_ps = gm
+                    substeps  += bad_col * n_sub
+                    t_internal += bad_col * ps_step
+                    jj += bad_col
                 rejections += 1
+                (last_order, i_max, i_sub, i_rej, dt_last, t_left,
+                 halted) = _ps_adaptive_interval(
+                    *_scalar_args, t_remaining=ps_step,
+                    dt_override=max(float(dt_actual) * shrink_factor, dt_min),
+                    t_msg=t_internal)
+                max_ps = max(max_ps, i_max)
+                substeps += i_sub
+                rejections += i_rej
+                if halted:
+                    return _halt_fill(jj, t_left)
+                t_internal += ps_step
+                sol_chunk[:, jj] = cur_state
+                orders_chunk[jj] = last_order
+                jj += 1
                 continue
 
+            sol_chunk[:, jj:jj + K] = block
+            orders_chunk[jj:jj + K] = orders_batch[cols]
+            cur_state[:] = block[:, -1]
             batch_max = int(batch_orders.max())
             if batch_max > max_ps:
                 max_ps = batch_max
-            last_order   = int(batch_orders[-1])
-            substeps    += n_sub
-            t_remaining -= n_sub * float(dt_actual)    # may not be zero if cap was active
-            if t_remaining < dt_min * 0.01:
-                t_remaining = 0.0                      # clean exit
-            retries      = 0
+            substeps  += total_sub
+            t_internal += K * ps_step
+            jj += K
+            continue
 
-            # ---- growth logic: if batch was easy, try a larger dt next time ----
-            # If the highest order in the batch was below order_low, the series
-            # converged quickly and we can afford a bigger step.  Apply grow_factor
-            # but cap at dt_B (the local-B suggestion) so we don't overshoot.
-            if batch_max < order_low:
-                grown_dt = min(float(dt_actual) * grow_factor, float(dt_max))
-                dt_override = grown_dt   # use this on next iteration instead of dt_B
-            else:
-                dt_override  = 0.0       # reset: let dt_B decide
+        # ---- mid-batch failure: keep whole completed intervals + prefix ----
+        completed = first_bad // n_sub
+        good_end  = first_bad          # substeps 1..first_bad are good
+        if completed > 0:
+            cols = np.arange(1, completed + 1) * n_sub
+            block = sol_batch[:, cols].copy()
+            _tether_aux_block(block)       # match scalar-path stored aux
+            sol_chunk[:, jj:jj + completed] = block
+            orders_chunk[jj:jj + completed] = orders_batch[cols]
+        cur_state[:] = sol_batch[:, good_end]
+        _tether_aux(cur_state)
+        while (not np.all(np.isfinite(cur_state))
+               and good_end > completed * n_sub):
+            good_end -= 1
+            cur_state[:] = sol_batch[:, good_end]
+            _tether_aux(cur_state)
+        if good_end > 0:
+            gm = int(batch_orders[:good_end].max())
+            if gm > max_ps:
+                max_ps = gm
+        substeps   += good_end
+        rejections += 1
+        t_internal += completed * ps_step
+        jj += completed
 
+        # Finish the partially-covered interval on the scalar path. If the
+        # failure was at the interval's very first substep, enter with a
+        # shrunk dt (zero progress in this interval — original semantics);
+        # otherwise fresh dt_B at the new position.
+        partial_sub = good_end - completed * n_sub
+        t_remaining = ps_step - partial_sub * float(dt_actual)
+        entry_override = (0.0 if partial_sub > 0
+                          else max(float(dt_actual) * shrink_factor, dt_min))
+        (last_order, i_max, i_sub, i_rej, dt_last, t_left,
+         halted) = _ps_adaptive_interval(*_scalar_args,
+                                         t_remaining=t_remaining,
+                                         dt_override=entry_override,
+                                         t_msg=t_internal)
+        max_ps = max(max_ps, i_max)
+        substeps += i_sub
+        rejections += i_rej
+        if halted:
+            return _halt_fill(jj, t_left)
         t_internal += ps_step
         sol_chunk[:, jj] = cur_state
         orders_chunk[jj] = last_order
+        jj += 1
 
-    return (sol_chunk, orders_chunk, cur_state, dt_B,
+    return (sol_chunk, orders_chunk, cur_state, dt_last,
             t_internal, max_ps, substeps, rejections,
             False)
 
@@ -405,6 +627,9 @@ def run_ps_streaming_adaptive(
 
     try:
         force_adaptive = False   # set True when fast path diverges
+        # Rejected steps stop at order_high+1 instead of grinding to ps_order —
+        # any step needing more is rejected either way (outcome-identical).
+        probe_order = min(ps_order, order_high + 1)
         while remaining > 0:
             this_chunk = min(chunk_steps, remaining)
             halted = False
@@ -415,21 +640,33 @@ def run_ps_streaming_adaptive(
                 #  (ps_step is small enough for the local field)
                 # =============================================
                 sol_chunk, orders_chunk = dp.ps_integrate(
-                    ps_order, this_chunk, cur_state[:6].copy(),
-                    tol, charge_sign, ps_step,
+                    probe_order, this_chunk, cur_state[:6].copy(),
+                    tol, charge_sign, ps_step, warn=False,
                 )
 
-                chunk_max = int(orders_chunk[1:].max()) if this_chunk > 0 else 0
+                # ---- find first bad step (same quality bar as adaptive) ----
+                co = orders_chunk[1:this_chunk + 1]
+                bad = (co >= probe_order) | (co > order_high)
+                bad |= ~np.isfinite(sol_chunk[:6, 1:this_chunk + 1]).all(axis=0)
+                nz = np.flatnonzero(bad)
 
-                # check if any step hit the cap, was too hard, or produced NaN
-                has_nan = not np.all(np.isfinite(sol_chunk[:6, -1]))
-                if chunk_max >= ps_order or chunk_max > order_high or has_nan:
-                    # REDO this chunk in adaptive mode
+                if nz.size:
+                    first_bad = int(nz[0])
+                    if first_bad == 0:
+                        # nothing salvageable — redo this chunk adaptively
+                        force_adaptive = True
+                        continue
+                    # Accept the good prefix instead of discarding the whole
+                    # chunk: these steps passed the same bar a fully-accepted
+                    # fast chunk does. Adaptive takes over from the failure
+                    # point on the next loop iteration.
+                    this_chunk   = first_bad
+                    sol_chunk    = sol_chunk[:, :first_bad + 1]
+                    orders_chunk = orders_chunk[:first_bad + 1]
                     force_adaptive = True
-                    continue
+                else:
+                    force_adaptive = False
 
-                # fast path accepted — count it and clear the flag
-                force_adaptive = False
                 total_substeps += this_chunk
                 fast_chunks += 1
 
@@ -437,8 +674,9 @@ def run_ps_streaming_adaptive(
                 # tethers the aux rows [6:17] each step, so take them as-is)
                 cur_state[:] = sol_chunk[:, -1]
 
-                # safety: if the batch endpoint is NaN/Inf (near-origin pass),
-                # revert to pre-chunk state and redo in adaptive mode
+                # safety: if the accepted endpoint's aux rows are NaN/Inf
+                # (near-origin pass), revert to pre-chunk state and redo in
+                # adaptive mode (pos/vel finiteness is guaranteed by the mask)
                 if not np.all(np.isfinite(cur_state)):
                     cur_state[:6] = sol_chunk[:6, 0].copy()
                     _tether_aux(cur_state)
@@ -446,6 +684,7 @@ def run_ps_streaming_adaptive(
                     continue
 
                 t_internal += this_chunk * ps_step
+                chunk_max = int(co[:this_chunk].max()) if this_chunk > 0 else 0
                 max_ps_global = max(max_ps_global, chunk_max)
 
             else:

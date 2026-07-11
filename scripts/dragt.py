@@ -24,19 +24,22 @@ _p = argparse.ArgumentParser(description="Dragt paper input calculator")
 _p.add_argument("--particle",   type=str,   default="proton",
                 choices=["proton", "electron"],
                 help="particle species (default: proton)")
-_p.add_argument("--L-shell",    type=float, default=6.0,
+_p.add_argument("--L-shell",    type=float, default=2.0,
                 dest="L_shell",
-                help="L shell in R_E to center on (default: 6.0)")
-#.005 and .01 are the W0^2 values used in the paper, corresponding to 100 keV and 200 keV protons at L=6. We use the same W0^2 for both L_shells to isolate the effect of changing rho.
-_p.add_argument("--wo-squared", type=float, default=0.05862295,
+                help="L shell in R_E to center on (default: 2.0; sets physical scale only, not the dynamics)")
+# Paper cases (Dragt & Finn 1976). These are dimensionless Stormer-unit inputs
+# with NO intrinsic L-shell; L only sets the physical scaling (energy ~ 1/L^4).
+#   (W0^2=0.005, rho=1.070):      generic trapped orbit, surface-of-section point P (Fig. 2)
+#   (W0^2=0.01,  rho=1.11494632): hyperbolic fixed point h of the Poincare map,
+#                                 lambda=2.49 (Fig. 11, homoclinic-point evidence)
+_p.add_argument("--wo-squared", type=float, default=0.01,
                 dest="wo_squared",
-                help="W0^2 in Dragt units (default: 0.05862295; paper uses .005 and .01)")
- # 1.07 and 1.11494632 are the two rho values used in the paper, corresponding to L_shells of 6.0 and 4.0 respectively. The paper's W0^2 values of .005 and .01 correspond to 100 keV and 200 keV protons at L=6, so we use the same W0^2 for both L_shells to isolate the effect of changing rho.
+                help="W0^2 in Dragt units (default: 0.01; paper uses .005 and .01)")
 _p.add_argument("--rho-dot",    type=float, default=0.0,
                 dest="rho_dot",
                 help="rho_dot in Dragt units (default: 0.0)")
-_p.add_argument("--rho",        type=float, default=1.0,
-                help="rho in Dragt units (default: 1.0; paper uses 1.07 and 1.11494632)")
+_p.add_argument("--rho",        type=float, default=1.11494632,
+                help="rho in Dragt units (default: 1.11494632; paper uses 1.07 and 1.11494632)")
 _args = _p.parse_args()
 
 particle    = _args.particle

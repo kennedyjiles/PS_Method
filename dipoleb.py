@@ -79,7 +79,8 @@ def _stamp_segment_summary(seg_build_path, summary_stub, hash_str, seg_index,
 
 
 def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
-                     initial_pos_vel, dp, wr, run_fn, summary_stub=None):
+                     initial_pos_vel, dp, wr, run_fn, summary_stub=None,
+                     offload=False):
     """Run PS as a sequence of cleanly-closed checkpoint segments.
 
     Each segment integrates ``seg_steps`` PS steps (the last one shorter),
@@ -98,17 +99,31 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
     n_segments = math.ceil(steps_ps / seg_steps)
 
     wr.clear_building_segments(hash_str, run_storage)
-    # Contiguous prefix only: a deleted segment (trailing OR middle) shortens it,
-    # so we refill from the gap; orphan segments past it get overwritten.
-    committed = wr.contiguous_committed_segments(hash_str, run_storage)
+
+    # Resume point.  Default: the contiguous prefix from seg000 — a deleted
+    # segment (trailing OR middle) shortens it, so we refill from the gap and the
+    # local VDS never stitches around a hole.  Offload mode: the HIGHEST local
+    # segment, even if earlier ones were moved to other storage — resume only
+    # needs its end_state, and the consistency check below rejects an
+    # inconsistent/halted one. In offload mode the local VDS is NOT stitched
+    # (the full set no longer lives here); rebuild it at the destination with
+    # scripts/build_vds.py once the segments are reunited.
+    if offload:
+        latest = wr.latest_committed_segment(hash_str, run_storage)
+        resume_from = latest
+    else:
+        committed = wr.contiguous_committed_segments(hash_str, run_storage)
+        resume_from = committed[-1] if committed else None
 
     cur_state = initial_pos_vel
     start_seg = 0
-    if committed:
-        last_idx, last_path = committed[-1]
+    max_ps_seen = 0
+    if resume_from is not None:
+        last_idx, last_path = resume_from
         with h5py.File(last_path, "r") as f:
             cur_state = f["ps/end_state"][()]
             resumed_index = int(f["ps"].attrs["end_global_index"])
+            max_ps_seen = int(f["ps"].attrs.get("max_ps", 0))
         start_seg = last_idx + 1
         expected = min(start_seg * seg_steps, steps_ps)
         if resumed_index != expected:
@@ -116,8 +131,10 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
                 f"resume mismatch: committed segment {last_idx} ends at global "
                 f"step {resumed_index:,}, expected {expected:,} — refusing to "
                 f"continue from an inconsistent checkpoint")
-        print(f"  Resuming: {last_idx + 1}/{n_segments} segments committed, "
-              f"continuing at global step {resumed_index:,}/{steps_ps:,}\n")
+        _lbl = "Offload resume" if offload else "Resuming"
+        _extra = " (earlier segments assumed offloaded)" if offload else ""
+        print(f"  {_lbl}: continuing from segment {last_idx}{_extra} "
+              f"at global step {resumed_index:,}/{steps_ps:,}\n")
 
     t_start = time.time()
     for seg in range(start_seg, n_segments):
@@ -151,6 +168,7 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
         with h5py.File(seg_final, "r") as f:
             cur_state = f["ps/end_state"][()]
             _end_gi = int(f["ps"].attrs["end_global_index"])
+            max_ps_seen = max(max_ps_seen, int(f["ps"].attrs.get("max_ps", 0)))
 
         # Adaptive integration can halt early (PS series can't converge at
         # dt_min). If a segment stops short of its target, don't fabricate the
@@ -160,14 +178,21 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
                   f"(target {seg_global_start + this_seg_steps:,}) — stopping run.\n")
             break
 
-    # Stitch only once all segments exist, so a partial run has no _full.h5.
-    full = wr.build_vds(hash_str, run_storage)
     elapsed = time.time() - t_start
 
-    max_ps = 0
+    if offload:
+        # The full set no longer lives locally — don't build a holey VDS.
+        print("  Offload mode: skipping local VDS stitch. Once all segments are\n"
+              "  gathered on the destination drive, build the stitched _full.h5 with:\n"
+              f"    python scripts/build_vds.py <destination>/_rawdata\n")
+        return max_ps_seen, elapsed
+
+    # Stitch only once all segments exist, so a partial run has no _full.h5.
+    full = wr.build_vds(hash_str, run_storage)
+    max_ps = max_ps_seen
     if full is not None:
         with h5py.File(full, "r") as f:
-            max_ps = int(f["ps"].attrs.get("max_ps", 0))
+            max_ps = int(f["ps"].attrs.get("max_ps", max_ps_seen))
     return max_ps, elapsed
 
 
@@ -892,7 +917,8 @@ def main(cfg_path, replot=False):
                     max_ps, elapsed_ps = _run_ps_segments(
                         _stream_args, physics_hash(cfg), run_storage,
                         steps_ps, _seg_steps, initial_pos_vel, dp, wr, _run_fn,
-                        summary_stub=_summary_stub)
+                        summary_stub=_summary_stub,
+                        offload=bool(params.get("ps_segment_offload", False)))
                 else:
                     max_ps, elapsed_ps = _run_fn(**_stream_args)
                 dragt_mon.summary()
@@ -1404,6 +1430,7 @@ def main(cfg_path, replot=False):
     # ==================================================
     # ======== Dragt Analysis + Poincaré Plots =========
     # ==================================================
+    from functools import partial as _partial
     dragt_log, _ = df.run_section(
         x_initial, y_initial, z_initial,
         vx_initial, vy_initial, v_tau,
@@ -1412,11 +1439,11 @@ def main(cfg_path, replot=False):
         ps_step=ps_step, time_factor=time_factor,
         cache_velocity_rtol=cache_velocity_rtol,
         fig_folder=fig_folder, stem=stem,
-        poincare_func=dplt.poincare,
-        gyrophase_mu_func=dplt.gyrophase_mu,
-        polar_phase_space_func=dplt.polar_phase_space,
-        meridian_plane_func=dplt.meridian_plane,
-        adiabaticity_func=dplt.adiabaticity,
+        poincare_func=_partial(dplt.poincare, use_titles=USE_PLOT_TITLES),
+        gyrophase_mu_func=_partial(dplt.gyrophase_mu, use_titles=USE_PLOT_TITLES),
+        polar_phase_space_func=_partial(dplt.polar_phase_space, use_titles=USE_PLOT_TITLES),
+        meridian_plane_func=_partial(dplt.meridian_plane, use_titles=USE_PLOT_TITLES),
+        adiabaticity_func=_partial(dplt.adiabaticity, use_titles=USE_PLOT_TITLES),
     )
 
     # =========================================================

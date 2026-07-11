@@ -17,7 +17,7 @@ particle: proton          # "proton" or "electron"
 energy_eV: 100.0e6        # kinetic energy in eV
 pitch_deg: 60.0           # pitch angle (degrees)
 phi_deg: 0.0             # gyrophase angle (degrees)
-x_initial: 1.75            # initial x position (L-shell, in R_E)
+x_initial: 2.0            # initial x position (L-shell, in R_E)
 y_initial: 0.0            # initial y position (R_E), usually 0
 z_initial: 0.0            # initial z position (R_E), usually 0
 
@@ -76,6 +76,12 @@ ps_chunk_steps: 10000     # number of PS steps per h5 streaming chunk
 # HDF5 Virtual Dataset. A crash costs at most one segment; relaunch resumes.
 # 0 (or >= total gyroperiods) = disabled (single <hash>_full.h5 as before).
 ps_segment_gyroperiods: 0   # gyroperiods per segment (0 = no segmentation)
+
+# Offload-resume: when true, resume from the highest LOCAL segment (earlier ones
+# moved to other storage) instead of requiring the contiguous prefix from seg000,
+# and skip the local VDS stitch. For runs too big to keep or move back — rebuild
+# the stitched _full.h5 at the destination with scripts/build_vds.py afterward.
+ps_segment_offload: false
 
 # Data-only: write the h5 (segments + VDS) + provenance config, then stop —
 # no plots or trajectory analysis. For long production runs; replot later

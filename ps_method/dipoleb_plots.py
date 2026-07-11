@@ -366,7 +366,7 @@ def ke_error(
 def poincare(
     run_folder, L_shell_dragt, gamma,
     rho_bnd, rho_dot_bnd, rho_0_sim, rho_dot_0_sim,
-    crossings=None, stem="",
+    crossings=None, stem="", use_titles=True,
 ):
     """
     Poincaré surface of section at z=0 in Dragt dimensionless units.
@@ -395,9 +395,12 @@ def poincare(
         ax.plot(rho_dragt, rho_dot_dragt, 'D', markerfacecolor='none',
                 markeredgecolor=COLORS["ps"], markersize=4, label="Crossings")
 
-    ax.set_xlabel(r"$\rho$ (Dimensionless)")
-    ax.set_ylabel(r"$\dot{\rho}$ (Dimensionless)")
-    ax.set_title("Dragt Poincaré Surface of Section at z=0")
+    ax.set_xlabel(r"$\rho$")
+    ax.set_ylabel(r"$\dot{\rho}$")
+    # ax.set_xlim(0.925, 1.10)
+    # ax.set_ylim(-.1, .1)
+    if use_titles:
+        ax.set_title("Dragt Poincaré Surface of Section at z=0")
     ax.grid(True)
     ax.legend(loc="upper right", fontsize=9)
     fig.savefig(os.path.join(run_folder, f"{stem}_dragt_surface_section.png"), dpi=300)
@@ -407,14 +410,15 @@ def poincare(
 # =============================================================
 # ============== Gyrophase vs Magnetic Moment =================
 # =============================================================
-def gyrophase_mu(run_folder, gyrophase, mu_cross, stem=""):
+def gyrophase_mu(run_folder, gyrophase, mu_cross, stem="", use_titles=True):
     """Scatter plot of gyrophase vs magnetic moment at equatorial crossings."""
 
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.scatter(mu_cross, gyrophase, s=10, c='blue', alpha=0.6, edgecolors='none')
-    ax.set_xlabel(r"Magnetic Moment $\mu$ (Normalized)")
+    ax.set_xlabel(r"Magnetic Moment $\mu$")
     ax.set_ylabel(r"Gyrophase $\Phi_g$ (Degrees)")
-    ax.set_title("Gyrophase vs. Adiabatic Invariance at Equator")
+    if use_titles:
+        ax.set_title("Gyrophase vs. Adiabatic Invariance at Equator")
     ax.set_ylim(-180, 180)
     ax.grid(True)
     fig.savefig(os.path.join(run_folder, f"{stem}_phase_vs_mu.png"), dpi=300)
@@ -424,13 +428,14 @@ def gyrophase_mu(run_folder, gyrophase, mu_cross, stem=""):
 # =============================================================
 # ============== Polar Phase Space ============================
 # =============================================================
-def polar_phase_space(run_folder, gyrophase, mu_cross, stem=""):
+def polar_phase_space(run_folder, gyrophase, mu_cross, stem="", use_titles=True):
     """Polar plot of gyrophase vs magnetic moment."""
 
     gyrophase_rad = np.radians(gyrophase)
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': 'polar'})
     ax.scatter(gyrophase_rad, mu_cross, s=10, c='blue', alpha=0.6, edgecolors='none')
-    ax.set_title("Phi vs Mu", va='bottom')
+    if use_titles:
+        ax.set_title("Phi vs Mu", va='bottom')
     fig.savefig(os.path.join(run_folder, f"{stem}_polar_phase_space.png"), dpi=300)
     plt.close(fig)
 
@@ -438,15 +443,16 @@ def polar_phase_space(run_folder, gyrophase, mu_cross, stem=""):
 # =============================================================
 # ============== Meridian Plane (Dragt Fig. 3) ================
 # =============================================================
-def meridian_plane(run_folder, rho_arr, z_arr, stem=""):
+def meridian_plane(run_folder, rho_arr, z_arr, stem="", use_titles=True):
     """Trajectory in the meridian plane (rho vs z) in Dragt dimensionless units."""
 
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.plot(rho_arr, z_arr, color='blue', linewidth=0.5, alpha=0.6, label='Trajectory')
     ax.axhline(0, color='black', lw=1, ls='--', label='Equator ($z=0$)')
-    ax.set_xlabel(r"$\rho$ (Dragt Dimensionless)")
-    ax.set_ylabel(r"$z$ (Dragt Dimensionless)")
-    ax.set_title(r"Meridian Plane Comparison ")
+    ax.set_xlabel(r"$\rho$")
+    ax.set_ylabel(r"$z$")
+    if use_titles:
+        ax.set_title(r"Meridian Plane Comparison ")
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper right')
     fig.savefig(os.path.join(run_folder, f"{stem}_dragt_z_vs_rho.png"), dpi=300)
@@ -456,7 +462,8 @@ def meridian_plane(run_folder, rho_arr, z_arr, stem=""):
 # =============================================================
 # ============== Adiabaticity Parameter vs Time ===============
 # =============================================================
-def adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max, stem=""):
+def adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max, stem="",
+                 use_titles=True):
     """Adiabaticity parameter epsilon vs time (semilogy)."""
 
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -464,7 +471,8 @@ def adiabaticity(run_folder, t_arr, eps_arr, eps_initial, eps_mean, eps_max, ste
     ax.axhline(0.1, color='k', linestyle='--', linewidth=1.0, label=r"$\epsilon = 0.1$ (GC limit)")
     ax.set_xlabel(r"$\tau / T$ (Equatorial Gyroperiods)")
     ax.set_ylabel(r"$\epsilon = r_g \cdot |\nabla_\perp B| / B$")
-    ax.set_title(r"Adiabaticity Parameter $\epsilon \approx 3 r_g / r$ vs Time")
+    if use_titles:
+        ax.set_title(r"Adiabaticity Parameter $\epsilon \approx 3 r_g / r$ vs Time")
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
     print(f"(Adiabaticity parameter, <.1 stable) epsilon:\n   initial={eps_initial:.4f}, mean={eps_mean:.4f}, max={eps_max:.4f}\n")

@@ -154,6 +154,19 @@ def contiguous_committed_segments(hash_str, output_folder):
     return out
 
 
+def latest_committed_segment(hash_str, output_folder):
+    """The highest-indexed committed segment present, or None.
+
+    Unlike contiguous_committed_segments this does NOT require the earlier
+    segments to be present — it's for the 'offload as you go' workflow, where
+    completed segments are moved to other storage to free local space. Resume
+    only needs the last segment's end_state to continue, so the highest local
+    segment is a sufficient (and consistency-checked) restart point.
+    """
+    segs = find_committed_segments(hash_str, output_folder)
+    return segs[-1] if segs else None
+
+
 def vds_has_missing_sources(h5_path):
     """True iff *h5_path* is a VDS whose backing segment files are (partly) gone.
 

@@ -27,8 +27,10 @@ print("="*90)
 all_pass = True; threshold = 1e-10
 
 proton_cases = [
-    (0.005,  1.07, 0.0,  7, "Paper: L=7, W0^2=0.005"),
-    (0.01,   1.07, 0.0,  7, "Paper: L=7, W0^2=0.01"),
+    # Note: the paper's inputs are dimensionless (no L-shell); L here is our
+    # choice of physical scaling for the round-trip test.
+    (0.005,  1.07, 0.0,  7, "Paper W0^2=0.005 case, scaled at L=7"),
+    (0.01,   1.07, 0.0,  7, "Paper W0^2=0.01 case, scaled at L=7"),
     (0.005,  1.07, 0.0,  4, "Inner belt: L=4 (mildly rel.)"),
     (0.005,  1.07, 0.0,  3, "Deep inner: L=3 (rel.)"),
     (0.005,  1.07, 0.0,  2, "Very inner: L=2 (highly rel.)"),

@@ -1,0 +1,36 @@
+# ===================================================================
+# Dragt — high-energy proton with relativistic L_eff
+# (energy_eV / pitch_deg / particle inherited from base.yml)
+# ===================================================================
+
+pitch_deg: 67.61877044327187
+phi_deg: -90.0
+x_initial: 2.22989264
+energy_eV: 823.7671361795617e6
+gyroperiods: 1e6
+use_gyroradius_L_correction: false
+ps_segment_gyroperiods: 0   # gyroperiods per segment (0 = no segmentation)
+
+
+solvers:
+  adaptive: true
+
+plotting:
+  titles: true
+  slice_mode: last
+  gyro_window: last
+  n_gyro: 175
+
+window_time: 5.0
+
+ps_order: 301   # just above adaptive order_high (300); higher only wastes
+
+steps_per_gyro:
+  ps: 20            
+ps_adaptive:
+  order_low: 20     
+  order_high: 300   
+  grow_factor: 1.5  
+  shrink_factor: 0.5 
+  steps_per_local_gyro: 20   
+  min_fast_path_N: 20        
