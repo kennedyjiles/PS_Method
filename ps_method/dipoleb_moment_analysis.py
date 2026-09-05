@@ -7,7 +7,8 @@ dipoleb_moment_analysis.py — Magnetic moment diagnostics for dipole trajectori
     compute_mu_deviation_ps  — mu deviation over time (PS, chunked from h5)
 
 Internal helpers:
-    _gyro_window_indices     — index range for a gyro-window slice
+    _gyro_window_indices          — index range for a gyro-window slice
+    _equatorial_crossing_indices  — sample indices where z changes sign
 """
 
 import numpy as np
@@ -93,6 +94,44 @@ def _gyro_window_indices(gyro_window, total_steps, window_steps):
 
 
 # ===================================================================
+# ============ Equatorial-crossing helper ===========================
+# ===================================================================
+def _equatorial_crossing_indices(z):
+    """Sample indices where the orbit is on / crosses the magnetic equator (z = 0).
+
+    Two cases, combined and returned sorted:
+      1. A strict sign change between consecutive non-zero samples
+         (z[i]*z[i+1] < 0) -> index i, the sample just before the crossing.
+      2. A sample lying EXACTLY on the equator (z[i] == 0) that has a non-zero
+         neighbour -> index i. This is what marks an equatorial LAUNCH
+         (z_initial = 0), regardless of which hemisphere the particle heads
+         into first. Requiring a non-zero neighbour excludes the degenerate
+         90-degree-pitch orbit that stays at z == 0 forever (which would
+         otherwise flag every sample). An off-equator launch (z[0] != 0) is
+         never flagged.
+
+    Uses exact zero (no tolerance) on purpose: a tolerance would produce
+    false positives for near-equatorial orbits, and the launch value comes
+    straight from the config so it is exactly 0.0 when it is meant to be.
+    Sample-level accuracy (< one step); these feed plot markers only, and the
+    values taken at these indices lie exactly on the solver's own curve.
+    """
+    z = np.asarray(z, dtype=float)
+    n = z.size
+    if n < 2:
+        return np.zeros(0, dtype=np.int64)
+    s = np.sign(z)                       # -1, 0, +1  (sign(-0.0) == 0)
+    # case 1: strict crossings between non-zero samples
+    strict = np.where(s[:-1] * s[1:] < 0)[0]
+    # case 2: exact-zero samples with at least one non-zero neighbour
+    on_eq = (s == 0)
+    left_nz  = np.concatenate(([False], s[:-1] != 0))
+    right_nz = np.concatenate((s[1:] != 0, [False]))
+    exact = np.where(on_eq & (left_nz | right_nz))[0]
+    return np.unique(np.concatenate((strict, exact))).astype(np.int64)
+
+
+# ===================================================================
 # ============ Mu deviation — RK solvers (in-memory) ================
 # ===================================================================
 def compute_mu_deviation_rk(
@@ -161,6 +200,7 @@ def compute_mu_deviation_rk(
         v_win = p_win - charge_sign * A_win
         state_win = np.hstack((r_win, v_win))
         mu_win = compute_mu_rk(state_win)
+        z_win = r_win[:, 2]
     else:
         # RK4 and RK45: shape (6, N) — columns are time steps.
         # See y_initial note above (rkg branch).
@@ -170,14 +210,25 @@ def compute_mu_deviation_rk(
             state0_src = solution[:, 0:1].T
         mu0 = compute_mu_rk(state0_src)[0]
         mu_win = compute_mu_rk(solution[:, i0:i1].T)
+        z_win = solution[2, i0:i1]
 
     mudrift = np.abs(mu_win - mu0) / mu0
     mu_ratio = mu_win / mu0          # instantaneous mu, normalized (shape plot)
     t = (i0 + np.arange(mudrift.size, dtype=ul.npfloat)) * dt * time_factor
 
-    return {"t": t, "mudrift": mudrift, "mu0": mu0,
-            "mu_ratio": mu_ratio}
+    # Equatorial crossings within the window — optional markers for the
+    # mu_deviation / mu_shape figures (values sit exactly on this curve).
+    eq_idx = _equatorial_crossing_indices(z_win)
 
+    return {"t": t, "mudrift": mudrift, "mu0": mu0,
+            "mu_ratio": mu_ratio,
+            "eq_t": t[eq_idx], "eq_mudrift": mudrift[eq_idx],
+            "eq_mu_ratio": mu_ratio[eq_idx]}
+
+
+# Cap on the mu_deviation / mu_shape window, expanded to the 17-row layout.
+# Guards gyro_window: "all" on long runs; raise it if you have the RAM.
+MU_WINDOW_MAX_BYTES = 4 * 1024**3
 
 # ===================================================================
 # ============ Mu deviation — PS (chunked h5) =======================
@@ -236,12 +287,33 @@ def compute_mu_deviation_ps(
         ps_y = ps_grp["y"]
         ps_order_label = ul.ps_order_label_from_attrs(ps_grp.attrs)
         n_store = ps_y.shape[1]
+        # Absolute run-time offset: for a segment, t0 = ps_step * start_global_index
+        # so τ/T reflects the segment's position in the full run. 0.0 for a whole run.
+        t0_ps = float(ps_grp.attrs.get("t0", 0.0))
 
         j0 = max(0, min(j0, n_store))
         j1 = max(0, min(j1, n_store))
 
         if j1 <= j0:
             raise RuntimeError("Empty PS mu window (chunked)")
+
+        # The window is read at FULL resolution (the equatorial-crossing markers
+        # below rely on that) and then expanded 9 -> 17 rows, so the transient
+        # cost is ~26 rows x window x 8 bytes. With gyro_window "first"/"last"
+        # that window is n_gyro gyroperiods and stays small. gyro_window "all"
+        # sets it to the WHOLE run, which on a long segmented run is tens of GB
+        # — refuse it rather than being OOM-killed mid-plot.
+        _win_cols = j1 - j0
+        _win_bytes = _win_cols * 26 * 8
+        if _win_bytes > MU_WINDOW_MAX_BYTES:
+            raise RuntimeError(
+                f"PS mu window is {_win_cols:,} stored steps "
+                f"(~{_win_bytes / 1024**3:.1f} GB once expanded to the 17-row "
+                f"layout), over the {MU_WINDOW_MAX_BYTES / 1024**3:.1f} GB cap. "
+                f"This is the mu_deviation / mu_shape window only — the full-run "
+                f"mu error plot (compute_mu_errors) is chunked and unaffected. "
+                f"Use gyro_window 'first' or 'last' with a smaller n_gyro, or "
+                f"raise MU_WINDOW_MAX_BYTES if you really have the RAM.")
 
         y_ps_win = wr.expand_h5_to_full(ps_y[:, j0:j1])
 
@@ -250,11 +322,19 @@ def compute_mu_deviation_ps(
     mu_ratio = mu_ps / mu0_ps        # instantaneous mu, normalized (shape plot)
 
     dt_ps_store = ps_step * ps_store_stride
-    t_store = np.arange(j0, j1, dtype=ul.npfloat) * dt_ps_store
+    t_store = np.arange(j0, j1, dtype=ul.npfloat) * dt_ps_store + t0_ps
     moment_stride = max(1, len(mu_ps) // max_plot_points)
     t_plot = t_store[::moment_stride] * time_factor
-    mudrift_plot = mudrift[::moment_stride]
-    mu_ratio_plot = mu_ratio[::moment_stride]
+    # .copy() so the decimated plot arrays don't stay views onto the full-window
+    # mudrift / mu_ratio arrays — mu_ratio has no other consumer and can be
+    # freed once the shape plot has its points.
+    mudrift_plot = mudrift[::moment_stride].copy()
+    mu_ratio_plot = mu_ratio[::moment_stride].copy()
+
+    # Equatorial crossings within the window, detected at FULL window
+    # resolution (before moment_stride decimation) so the marker values sit
+    # exactly on the true curve. Optional markers for the mu figures.
+    eq_idx = _equatorial_crossing_indices(y_ps_win[2])
 
     return {
         "t":              t_plot,
@@ -262,4 +342,7 @@ def compute_mu_deviation_ps(
         "mudrift_plot":   mudrift_plot,
         "mu_ratio_plot":  mu_ratio_plot,
         "ps_order_label": ps_order_label,
+        "eq_t":           t_store[eq_idx] * time_factor,
+        "eq_mudrift":     mudrift[eq_idx],
+        "eq_mu_ratio":    mu_ratio[eq_idx],
     }

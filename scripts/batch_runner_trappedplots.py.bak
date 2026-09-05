@@ -70,33 +70,6 @@ PROGRESS_PATH = os.path.join(SCRIPT_DIR, "batch_progress_fluxmap.json")
 BATCH_TMP_DIR = os.path.join(SCRIPT_DIR, "batch_tmp")
 BASE_YML      = os.path.join(PROJECT_ROOT, "configs", "dipoleb", "base.yml")
 
-
-def _data_root():
-    """Where dipoleb.py actually writes: honours base.yml's `output_root`.
-
-    config_loader._resolve_output_paths() builds
-        <output_root>/data/dipoleb/<group>/<config-name>/
-    when output_root is set, else data/dipoleb/... relative to the cwd
-    (PROJECT_ROOT, since execute_single_run launches with cwd=PROJECT_ROOT).
-    The driver must look in the same place, or every run is reported as
-    "no_output" even though it succeeded.
-    """
-    root = None
-    try:
-        with open(BASE_YML) as f:
-            root = (yaml.safe_load(f) or {}).get("output_root")
-    except OSError:
-        pass
-    if root:
-        root = os.path.expanduser(str(root))
-        if not os.path.isabs(root):
-            root = os.path.join(PROJECT_ROOT, root)
-        return os.path.join(root, "data", "dipoleb")
-    return os.path.join(PROJECT_ROOT, "data", "dipoleb")
-
-
-DATA_ROOT = _data_root()
-
 # Default coarse L_stop for an ad-hoc --energy scan (energies in the table below
 # carry their own; a custom scan has no table entry, so it falls back to this).
 CUSTOM_L_STOP = 6.0
@@ -131,12 +104,12 @@ LATE_ADDED_COLUMNS = {"n_eq_crossings"}
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # All phases write here → one master CSV → one trappedbands plot.
-GROUP = "trapped_30"
+GROUP = "trapped_60"
 
 # Shared defaults. A phase inherits these and overrides only what it names.
 DEFAULTS = {
-    "pitch_deg":   30.0,
-    "gyroperiods": 1e2,
+    "pitch_deg":   60.0,
+    "gyroperiods": 1e6,
     "L_start":     1.5,
     "L_step":      0.1,    # coarse first-pass dL; refinement phases override this
 }
@@ -193,8 +166,7 @@ PHASES = {
     2: {"energies": ["1e9"], "L_start": 1.5, "L_stop": 3.0, "L_step": 0.1},
     3: {"energies": ["1e8"], "L_start": 3.5, "L_stop": 4.5, "L_step": 0.1},
     4: {"energies": ["1e7"], "L_start": 6.5, "L_stop": 8.5, "L_step": 0.01},
-    5: {"energies": ["1e8"], "L_start": 1.5, "L_stop": 2.3, "L_step": 0.1, "gyroperiods": 1e8},
-    6: {"energies": ["1e8"], "L_start": 2.5, "L_stop": 2.5, "L_step": 0.1, "gyroperiods": 1.2e8}
+    5: {"energies": ["1e7"], "L_start": 1.5, "L_stop": 2.6, "L_step": 0.1}
     # 3: {"energies": ["1mev"],          "L_start": 2.5, "L_stop": 2.7, "L_step": 0.02},
 }
 
@@ -288,7 +260,7 @@ def build_chaotic_rerun_list(group):
     """Read the group's master CSV and return run dicts for CHAOTIC orbits."""
     import pandas as pd
 
-    csv_path = os.path.join(DATA_ROOT, group, "master_simulation_log.csv")
+    csv_path = os.path.join(PROJECT_ROOT, "data", "dipoleb", group, "master_simulation_log.csv")
     if not os.path.exists(csv_path):
         print(f"  No master CSV at {csv_path}")
         return []
@@ -322,7 +294,7 @@ def build_chaotic_rerun_list(group):
             # happen. Adaptive stepping is mandatory here — chaotic mu
             # wandering produces deep mirror excursions (and possible
             # sub-r_atmosphere dives) that fixed steps cannot resolve.
-            "gyroperiods":      1e6,
+            "gyroperiods":      1e7,
             "group":            group,
             "use_adaptive":     True,
             "clean_before_run": True,   # wipe old fixed-step data
@@ -360,7 +332,7 @@ def _print_phase_plan():
 def _clean_group(group):
     """Wipe the group's data folder and reset the progress file (clean rebuild)."""
     import shutil
-    group_dir = os.path.join(DATA_ROOT, group)
+    group_dir = os.path.join(PROJECT_ROOT, "data", "dipoleb", group)
     if os.path.isdir(group_dir):
         shutil.rmtree(group_dir)
         print(f"  Cleaned data/dipoleb/{group}/")
@@ -405,7 +377,7 @@ def execute_single_run(run):
     """Run one dipoleb.py subprocess. Returns (key, status, elapsed_min, error)."""
     key = run_key(run)
 
-    run_folder = os.path.join(DATA_ROOT,
+    run_folder = os.path.join(PROJECT_ROOT, "data", "dipoleb",
                               run["group"], f"fm_{key}")
 
     # Clean old run folder before rerun (e.g. chaotic reruns with adaptive)
@@ -564,7 +536,7 @@ def consolidate_csv_logs(group):
     import glob
     import pandas as pd
 
-    group_dir = os.path.join(DATA_ROOT, group)
+    group_dir = os.path.join(PROJECT_ROOT, "data", "dipoleb", group)
     if not os.path.isdir(group_dir):
         print(f"  No {group}/ directory — nothing to consolidate.")
         return
@@ -655,7 +627,7 @@ def group_from_target(target):
     if not group:
         raise SystemExit(f"Could not resolve a group name from {target!r}.")
 
-    group_dir = os.path.join(DATA_ROOT, group)
+    group_dir = os.path.join(PROJECT_ROOT, "data", "dipoleb", group)
     if not os.path.isdir(group_dir):
         print(f"  Note: data/dipoleb/{group}/ does not exist yet — it will be "
               f"created when runs execute.")

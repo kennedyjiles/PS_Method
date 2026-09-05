@@ -333,15 +333,53 @@ def compute_boundary(W0_sq, P_phi, charge_sign=1):
     #   Electron (charge_sign=-1): V_eff = 0.5*(P_phi/rho - 1/rho^2)^2
     trapped = (charge_sign * P_phi < 0)
     rho_upper = (2.0 / abs(P_phi)) * 1.2 if (trapped and abs(P_phi) > 0) else 3.0
-    rho_bnd   = np.linspace(0.1, rho_upper, 5000)
 
-    V_eff = 0.5 * (P_phi / rho_bnd + charge_sign / rho_bnd**2)**2
-    valid = (W0_sq - 2.0 * V_eff) >= 0
+    def _rho_dot_sq(rho):
+        V_eff = 0.5 * (P_phi / rho + charge_sign / rho**2)**2
+        return W0_sq - 2.0 * V_eff
+
+    # The accessible well can be a tiny fraction of [0.1, rho_upper] -- for the
+    # 100 keV / L=5 demo it is ~0.5% of it, so a single uniform grid over the
+    # full range leaves only a couple dozen samples inside the well. Because
+    # rho_dot = sqrt(W0^2 - 2 V_eff) has a square-root profile at the turning
+    # points, the last surviving sample then sits at roughly a third of the peak
+    # height and the plotted boundary looks like two open arcs instead of a
+    # closed curve. Bracket the well on a coarse pass, then resample inside it.
+    rho_coarse = np.linspace(0.1, rho_upper, 20000)
+    coarse_ok  = _rho_dot_sq(rho_coarse) >= 0
+    if not np.any(coarse_ok):
+        return None, None
+
+    inside  = rho_coarse[coarse_ok]
+    lo, hi  = float(inside[0]), float(inside[-1])
+    pad     = 0.02 * (hi - lo)
+    rho_bnd = np.linspace(max(lo - pad, 1e-6), hi + pad, 5000)
+    rd_sq   = _rho_dot_sq(rho_bnd)
+    valid   = rd_sq >= 0
 
     if not np.any(valid):
         return None, None
 
-    return rho_bnd[valid], np.sqrt(W0_sq - 2.0 * V_eff[valid])
+    rho_v  = rho_bnd[valid]
+    rdot_v = np.sqrt(rd_sq[valid])
+
+    # Close the curve exactly: rd_sq is linear in rho at each turning point, so
+    # interpolating it to zero across the first/last sign change lands on the
+    # root. Without this the endpoints stop ~2% of the peak height above zero.
+    i0 = int(np.flatnonzero(valid)[0])
+    i1 = int(np.flatnonzero(valid)[-1])
+    if i0 > 0:
+        f0, f1 = rd_sq[i0 - 1], rd_sq[i0]
+        r_root = rho_bnd[i0 - 1] + (rho_bnd[i0] - rho_bnd[i0 - 1]) * (-f0) / (f1 - f0)
+        rho_v  = np.concatenate(([r_root], rho_v))
+        rdot_v = np.concatenate(([0.0], rdot_v))
+    if i1 < len(rho_bnd) - 1:
+        f0, f1 = rd_sq[i1], rd_sq[i1 + 1]
+        r_root = rho_bnd[i1] + (rho_bnd[i1 + 1] - rho_bnd[i1]) * (-f0) / (f1 - f0)
+        rho_v  = np.concatenate((rho_v, [r_root]))
+        rdot_v = np.concatenate((rdot_v, [0.0]))
+
+    return rho_v, rdot_v
 
 
 def compute_gyrophase_mu(x_cross, y_cross, vx_cross, vy_cross):
@@ -409,7 +447,17 @@ def compute_w0_squared(speed, L_shell, mass_si, q_e, M_earth=None):
 # ===================================================================
 # === Chunked Dragt Analysis (adiabaticity, meridian, crossings) ====
 # ===================================================================
-def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000_000):
+# Cap on equatorial (z=0) crossings kept for the Poincare / gyrophase figures.
+# Crossings arrive at roughly the bounce rate, so the raw count grows without
+# bound with run length (~2M in ONE 4e7-step segment). Past the cap the set is
+# thinned by 2 and the acceptance stride doubles, which keeps a uniform-in-time
+# subsample of the whole run in bounded memory - the right thing for a surface
+# of section, and far more than any figure can render.
+MAX_CROSSINGS = 200_000
+
+
+def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_000,
+                     max_crossings=MAX_CROSSINGS):
     """
     Stream through an h5 trajectory file in fixed-size chunks and compute:
       - adiabaticity parameter epsilon (decimated for plotting)
@@ -421,6 +469,10 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000
         eps_arr, t_arr, rho_arr, z_arr   — decimated arrays for plotting
         eps_initial, eps_mean, eps_max   — scalar statistics
         crossings  — tuple (rho_dragt, rho_dot_dragt, x_c, y_c, vx_c, vy_c) or None
+
+    chunk_size is deliberately modest (matching ps_chunk_steps elsewhere):
+    compute_adiabaticity builds ~20 temporaries of chunk length, so the
+    transient cost is ~20x the chunk read, not 1x.
     """
     with h5py.File(cache_path, "r") as ps_h5:
         ds = ps_h5["ps"]["y"]
@@ -440,8 +492,43 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000
         cy_list     = []
         cvx_list    = []
         cvy_list    = []
+        # cross_seen counts STRICT z sign changes only, so an equatorial launch
+        # (z_initial == 0.0) is NOT counted -- the first entry is the first
+        # RETURN to the equator. This is deliberate: the accumulation bounds in
+        # the magnetic-moment study count crossings acquired AFTER launch. Do not
+        # 'fix' this by adding an exact-zero case; _equatorial_crossing_indices in
+        # dipoleb_moment_analysis.py has one because there the launch MARKER is
+        # wanted on the mu figures. The two counts differ by one, on purpose.
+        cross_seen   = 0    # crossings encountered so far (global ordinal)
+        cross_kept   = 0    # crossings currently held in the lists
+        cross_stride = 1    # keep every cross_stride-th crossing
         prev_z      = None
         prev_state  = None
+
+        def _keep_crossings(bx, by, bvx, bvy):
+            """Append one batch of crossings, honouring the acceptance stride,
+            and thin everything by 2 if the cap is exceeded."""
+            nonlocal cross_seen, cross_kept, cross_stride
+            n_b = len(bx)
+            if n_b:
+                ordinals = cross_seen + np.arange(n_b)
+                sel = np.flatnonzero(ordinals % cross_stride == 0)
+                if len(sel):
+                    cx_list.append(bx[sel]);  cy_list.append(by[sel])
+                    cvx_list.append(bvx[sel]); cvy_list.append(bvy[sel])
+                    cross_kept += len(sel)
+                cross_seen += n_b
+
+            while cross_kept > max_crossings:
+                # Kept ordinals are the multiples of cross_stride starting at 0,
+                # so keeping every other one leaves the multiples of 2*stride —
+                # still a uniform-in-time sample, just half as dense.
+                for lst in (cx_list, cy_list, cvx_list, cvy_list):
+                    merged = np.concatenate(lst)[::2].copy()
+                    lst.clear()
+                    lst.append(merged)
+                cross_kept = len(cx_list[0])
+                cross_stride *= 2
 
         for i0 in range(0, N_total, chunk_size):
             i1 = min(i0 + chunk_size, N_total)
@@ -458,30 +545,42 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000
             cm = float(np.nanmax(eps))
             if cm > eps_max:
                 eps_max = cm
-            eps_dec.append(eps[::decimate])
+            # Decimate on GLOBAL index, not per-chunk. `eps[::decimate]` restarts
+            # the phase at every chunk boundary, so unless chunk_size is an exact
+            # multiple of decimate the samples drift out of step with
+            #     t_arr = ps_step * arange(len(eps_arr)) * decimate
+            # and the adiabaticity/meridian time axis is quietly wrong.
+            # Fancy indexing also COPIES: a strided view here would keep the whole
+            # chunk-length eps array alive for the rest of the run, making the
+            # retained total grow as N_total instead of the ~500K target
+            # (measured: 80x overhead, ~800 GB on the full 20-year VDS).
+            sel_dec = np.arange((-i0) % decimate, i1 - i0, decimate)
+            eps_dec.append(eps[sel_dec])
 
             # --- meridian plane (decimated) ---
-            rho_dec.append(np.sqrt(cx**2 + cy**2)[::decimate] / L_shell)
-            z_dec.append(cz[::decimate] / L_shell)
+            rho_dec.append(np.sqrt(cx**2 + cy**2)[sel_dec] / L_shell)
+            z_dec.append(cz[sel_dec] / L_shell)
 
             # --- z-crossings: chunk boundary ---
             if prev_z is not None and prev_z * cz[0] < 0:
                 t_f = abs(prev_z) / (abs(prev_z) + abs(float(cz[0])))
                 ps = prev_state
-                cx_list.append(np.array([ps[0] + t_f * (float(cx[0]) - ps[0])]))
-                cy_list.append(np.array([ps[1] + t_f * (float(cy[0]) - ps[1])]))
-                cvx_list.append(np.array([ps[3] + t_f * (float(cvx[0]) - ps[3])]))
-                cvy_list.append(np.array([ps[4] + t_f * (float(cvy[0]) - ps[4])]))
+                _keep_crossings(
+                    np.array([ps[0] + t_f * (float(cx[0]) - ps[0])]),
+                    np.array([ps[1] + t_f * (float(cy[0]) - ps[1])]),
+                    np.array([ps[3] + t_f * (float(cvx[0]) - ps[3])]),
+                    np.array([ps[4] + t_f * (float(cvy[0]) - ps[4])]))
 
             # --- z-crossings: within chunk ---
             mask = cz[:-1] * cz[1:] < 0
             idx  = np.where(mask)[0]
             if len(idx) > 0:
                 t_f = np.abs(cz[idx]) / (np.abs(cz[idx]) + np.abs(cz[idx+1]))
-                cx_list.append(cx[idx]  + t_f * (cx[idx+1]  - cx[idx]))
-                cy_list.append(cy[idx]  + t_f * (cy[idx+1]  - cy[idx]))
-                cvx_list.append(cvx[idx] + t_f * (cvx[idx+1] - cvx[idx]))
-                cvy_list.append(cvy[idx] + t_f * (cvy[idx+1] - cvy[idx]))
+                _keep_crossings(
+                    cx[idx]  + t_f * (cx[idx+1]  - cx[idx]),
+                    cy[idx]  + t_f * (cy[idx+1]  - cy[idx]),
+                    cvx[idx] + t_f * (cvx[idx+1] - cvx[idx]),
+                    cvy[idx] + t_f * (cvy[idx+1] - cvy[idx]))
 
             prev_z     = float(cz[-1])
             prev_state = tuple(float(v) for v in (cx[-1], cy[-1], cz[-1],
@@ -489,6 +588,12 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000
             del chunk, cx, cy, cz, cvx, cvy, cvz, eps
 
     # --- consolidate ---
+    # No silent truncation: say what the surface of section is actually showing.
+    if cross_stride > 1:
+        print(f"  Equatorial crossings: {cross_seen:,} found, keeping every "
+              f"{cross_stride}th ({cross_kept:,}) — capped at {max_crossings:,}")
+    else:
+        print(f"  Equatorial crossings: {cross_seen:,} found, all kept")
     eps_arr = np.concatenate(eps_dec)
     rho_arr = np.concatenate(rho_dec)
     z_arr   = np.concatenate(z_dec)
@@ -513,6 +618,7 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=1_000
         eps_mean=eps_sum / eps_count if eps_count > 0 else 0.0,
         eps_max=eps_max,
         crossings=crossings,
+        n_eq_crossings=cross_seen,
     )
 
 
@@ -535,6 +641,7 @@ def run_section(
     polar_phase_space_func,
     meridian_plane_func,
     adiabaticity_func,
+    meridian_plane_RE_func=None,
 ):
     """Run the complete Dragt analysis section.
 
@@ -553,6 +660,7 @@ def run_section(
         "L_eff": None, "W0_sq": None, "boundary": None,
         "mu_sq": None, "orbit_character": None,
         "eps_initial": None, "eps_mean": None, "eps_max": None,
+        "n_eq_crossings": None,
         "hit_atmosphere": False, "hit_atm_r": None,
     }
 
@@ -671,8 +779,17 @@ def run_section(
         gyrophase_mu_func(fig_folder, gyrophase, mu_cross, stem=stem)
         polar_phase_space_func(fig_folder, gyrophase, mu_cross, stem=stem)
 
+    # Dragt-units meridian plane (rho/L, z/L) — kept for sanity checks vs Dragt.
     meridian_plane_func(
         fig_folder, _dragt["rho_arr"], _dragt["z_arr"], stem=stem)
+    # Separate paper-units version (R_E): scale the stored L-normalized arrays
+    # back by L. Optional so older callers that don't pass it keep working.
+    if meridian_plane_RE_func is not None:
+        meridian_plane_RE_func(
+            fig_folder,
+            np.asarray(_dragt["rho_arr"]) * L_shell_dragt,
+            np.asarray(_dragt["z_arr"]) * L_shell_dragt,
+            stem=stem)
     adiabaticity_func(
         fig_folder, _dragt["t_arr"], _dragt["eps_arr"],
         _dragt["eps_initial"], _dragt["eps_mean"], _dragt["eps_max"], stem=stem)
@@ -686,6 +803,7 @@ def run_section(
     dragt_log["eps_initial"]     = _dragt["eps_initial"]
     dragt_log["eps_mean"]        = _dragt["eps_mean"]
     dragt_log["eps_max"]         = _dragt["eps_max"]
+    dragt_log["n_eq_crossings"]  = _dragt["n_eq_crossings"]
 
     # --- Atmosphere flag from h5 ---
     try:

@@ -391,8 +391,16 @@ def write_dict(f, d, indent=0):
 
 
 def summarize(err):
-    """Return mean / max / rms of |err| as a dict."""
+    """Return mean / max / rms of |err| as a dict.
+
+    Tolerates err=None or an empty array (e.g. when an upstream analysis was
+    skipped or failed) by returning NaNs, so a partial run can still be logged.
+    """
+    if err is None:
+        return {"mean": np.nan, "max": np.nan, "rms": np.nan}
     ae = np.abs(err)
+    if ae.size == 0:
+        return {"mean": np.nan, "max": np.nan, "rms": np.nan}
     return {
         "mean": np.mean(ae),
         "max":  np.max(ae),
@@ -535,14 +543,25 @@ def save_results_h5_dipoleb(h5_path, results, summary):
                 gmeta.attrs[sk] = meta[sk]
 
 
-def load_results_h5_dipoleb(h5_path):
+def load_results_h5_dipoleb(h5_path, groups=None):
     """Load solver arrays and metadata from an HDF5 cache file.
 
     Note: dipoleb's save writes ``summary_json``, not ``params_json``,
     so no params dict is returned. The cache filename is derived from
     a hash of the run-params dict in the driver, not from anything in
     the file itself, so consumers don't need it.
+
+    groups : iterable of group names to actually read into memory, or None
+        for all of ("ps", "rk4", "rk45", "rkg"). This loads whole datasets,
+        so on a combined h5 (one file holding every solver) asking for all
+        groups pulls the full PS trajectory into RAM even when the caller
+        only wants, say, the RK4 overlay. Pass the group you need. Groups
+        that are present but not requested come back as None.
     """
+    if groups is None:
+        groups = ("ps", "rk4", "rk45", "rkg")
+    groups = set(groups)
+
     with h5py.File(h5_path, "r") as f:
         loaded = {"meta": {"timing": {}}}
 
@@ -558,7 +577,7 @@ def load_results_h5_dipoleb(h5_path):
             return out
 
         for k in ("ps", "rk4", "rk45", "rkg"):
-            loaded[k] = _read_grp(k)
+            loaded[k] = _read_grp(k) if k in groups else None
 
         gmeta = f["meta"]
         for a in gmeta.attrs:
@@ -743,10 +762,18 @@ def summary_txt_dipoleb(
     solution_rk4=None, solution_rkg=None, y_rk45_common=None,
     # PS storage info
     ps_store_stride=1,
+    # Extra plot-side decimation applied to rel_drift_ps / rel_pphi_ps by the
+    # analysis layer, ON TOP of ps_store_stride. Needed to locate the tail
+    # window correctly — see step_ps below.
+    energy_stride=1,
     # npfloat type
     npfloat=np.float64,
     # Physics functions (injected to avoid circular imports)
     compute_mu_ps=None, compute_mu_rk=None, vector_potential=None,
+    # Whole-run max |delta mu|/mu0, taken from the full-run mu error array
+    # (ea.compute_mu_errors -> rel_mu_ps). None when PS did not run, in which
+    # case only the tail-window figures above are reported.
+    mu_max_run=None,
 ):
     """Write the dipoleb summary text file, including tail-averaged energy
     and mu errors, Dragt diagnostics, and bounce/drift statistics."""
@@ -763,7 +790,7 @@ def summary_txt_dipoleb(
     j0_ps = j0_rk4 = j0_rk45 = j0_rkg = 0
 
     if USE_PS:
-        step_ps = ps_store_stride * ps_step
+        step_ps = ps_store_stride * ps_step * energy_stride
         j0_ps = _tail_start_index(rel_drift_ps.size, step_ps, tail_start, MAX_TAIL_STEPS)
 
     if USE_RK45:
@@ -811,21 +838,21 @@ def summary_txt_dipoleb(
         # --- Mu tail errors ---
         f.write("\n=== |delta mu|/mu0 (tail average) ===\n")
 
-        if USE_RK45:
+        if USE_RK45 and mu0_rk45 is not None:
             y_tail = y_rk45_common[:, j0_rk45:]
             mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
             del y_tail, mu_tail
             gc.collect()
 
-        if USE_RK4:
+        if USE_RK4 and mu0_rk4 is not None:
             y_tail = solution_rk4[:, j0_rk4:]
             mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
             del y_tail, mu_tail
             gc.collect()
 
-        if USE_RKG:
+        if USE_RKG and mu0_rkg is not None:
             r_tail = solution_rkg[j0_rkg:, 0:3]
             p_tail = solution_rkg[j0_rkg:, 3:6]
 
@@ -841,7 +868,7 @@ def summary_txt_dipoleb(
             del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
             gc.collect()
 
-        if USE_PS:
+        if USE_PS and mu0_ps is not None:
             step_ps_store = ps_store_stride * ps_step
 
             with h5py.File(cache_path, "r") as ps_h5:
@@ -861,6 +888,10 @@ def summary_txt_dipoleb(
             del y_tail, mu_tail
             gc.collect()
 
+        if mu_max_run is not None:
+            f.write("\n=== |delta mu|/mu0 (whole run) ===\n")
+            f.write(f"  PS      : max = {mu_max_run:.6e}\n")
+
         # --- Dragt diagnostics ---
         if dragt_log["L_eff"] is not None:
             f.write("\n=== Dragt Diagnostics ===\n")
@@ -872,6 +903,8 @@ def summary_txt_dipoleb(
             f.write(f"Adiabaticity (initial)  : {dragt_log['eps_initial']:.4f}\n")
             f.write(f"Adiabaticity (mean)     : {dragt_log['eps_mean']:.4f}\n")
             f.write(f"Adiabaticity (max)      : {dragt_log['eps_max']:.4f}\n")
+            if dragt_log.get("n_eq_crossings") is not None:
+                f.write(f"Equatorial crossings    : {dragt_log['n_eq_crossings']:,}\n")
             if dragt_log["hit_atmosphere"]:
                 f.write(f"Atmosphere flag         : HIT (r_min = {dragt_log['hit_atm_r']:.4f} R_E)\n")
             else:
@@ -882,9 +915,9 @@ def summary_txt_dipoleb(
             f.write("\n=== Bounce and Drift Motion ===\n")
 
             if bounce_results is None or bounce_results.get("full_mean_s") is None:
-                f.write("Bounce: not detected / insufficient mirror crossings\n")
+                f.write("Bounce: not detected / insufficient mirror points\n")
             else:
-                f.write(f"Mirror crossings        : {bounce_results['n_crossings']}\n")
+                f.write(f"Mirror points (v·B = 0) : {bounce_results['n_crossings']}\n")
                 f.write(f"Bounce period (s)       : {bounce_results['full_mean_s']:.6g}\n")
                 f.write(f"Bounce frequency (Hz)   : {bounce_results['frequency_hz']:.6g}\n")
 
@@ -1069,6 +1102,69 @@ def summary_txt_hyperb(
 # =================  Dipoleb-only extras  =============================
 # =====================================================================
 
+def missing_vds_sources(h5_path, group="ps", dset="y"):
+    """Source files a virtual dataset references but cannot reach.
+
+    build_vds writes its VirtualSources by BASENAME, so a stitched
+    <hash>_full.h5 only resolves while the <hash>_segNNN.h5 files sit in the
+    same directory (HDF5 also falls back to the process cwd, and to
+    $HDF5_VDS_PREFIX when that is set). This matters because an unresolvable
+    VDS does NOT raise: HDF5 quietly returns the fill value, which is 0.0
+    here since create_virtual_dataset is called without one. Every read then
+    yields zeros, positions collapse to the origin, and the whole
+    post-processing run produces blank/NaN figures with no error anywhere.
+
+    Returns [] when the dataset is not virtual or every source resolves.
+    """
+    out = []
+    try:
+        with h5py.File(h5_path, "r") as f:
+            if group not in f or dset not in f[group]:
+                return out
+            d = f[group][dset]
+            if not d.is_virtual:
+                return out
+            search = []
+            prefix = os.environ.get("HDF5_VDS_PREFIX")
+            if prefix:
+                search.append(prefix)
+            search.append(os.path.dirname(os.path.abspath(h5_path)))
+            search.append(os.getcwd())
+            seen = set()
+            for src in d.virtual_sources():
+                name = src.file_name
+                if name in seen:
+                    continue
+                seen.add(name)
+                if os.path.isabs(name):
+                    if not os.path.exists(name):
+                        out.append(name)
+                    continue
+                if not any(os.path.exists(os.path.join(r, name)) for r in search):
+                    out.append(name)
+    except OSError:
+        pass
+    return out
+
+
+def check_vds_readable(h5_path, group="ps", dset="y"):
+    """Raise with an actionable message if a VDS can't reach its segments."""
+    missing = missing_vds_sources(h5_path, group=group, dset=dset)
+    if not missing:
+        return
+    shown = ", ".join(missing[:5]) + (f", ... (+{len(missing) - 5} more)"
+                                      if len(missing) > 5 else "")
+    raise FileNotFoundError(
+        f"{os.path.basename(h5_path)} is a virtual dataset whose segment files "
+        f"cannot be found: {len(missing)} missing [{shown}].\n"
+        f"  HDF5 would NOT error on this — it returns the 0.0 fill value, so every "
+        f"figure would come out blank or NaN with no warning.\n"
+        f"  Segment sources are stored by basename, so fix it by either:\n"
+        f"    - putting the *_segNNN.h5 files (or symlinks to them) next to "
+        f"{os.path.basename(h5_path)}, or\n"
+        f"    - running with HDF5_VDS_PREFIX=/path/to/segments")
+
+
 def expand_h5_to_full(compact_arr):
     """Expand a 9-row compact h5 array back to 17-row full layout.
     If the array already has 17 rows, return it unchanged."""
@@ -1101,6 +1197,7 @@ def master_csv(
     method_records,
     bounce_results=None,
     drift_results=None,
+    mu_max_run=None,
 ):
     """Build records and append to master_simulation_log.csv with duplicate detection."""
     # Trajectory-derived diagnostics (eps_*, hit_atm_*, bounce/drift) come
@@ -1142,10 +1239,12 @@ def master_csv(
             "energy_max_err": e["max"],
             "mu_mean_err": mu["mean"],
             "mu_max_err": mu["max"],
+            "mu_max_run": mu_max_run if is_ps else None,
             # --- PS-only trajectory diagnostics (blank on non-PS rows) ---
             "eps_initial":        dragt_log["eps_initial"]    if is_ps else None,
             "eps_mean":           dragt_log["eps_mean"]       if is_ps else None,
             "eps_max":            dragt_log["eps_max"]        if is_ps else None,
+            "n_eq_crossings":     dragt_log.get("n_eq_crossings") if is_ps else None,
             "hit_atmosphere":     dragt_log["hit_atmosphere"] if is_ps else None,
             "hit_atm_r":          dragt_log["hit_atm_r"]      if is_ps else None,
             "n_mirror_crossings": _b.get("n_crossings")       if is_ps else None,

@@ -103,10 +103,25 @@ def physics_hash(cfg):
     Numeric-looking strings are canonicalized to floats first (see
     _canonicalize_for_hash) so YAML 1.1 quirks like `1.0e7` (string)
     vs `1.0e+7` (float) don't produce different hashes for the same run.
+
+    LEGACY BORIS COMPAT: the removed boris solver keys (solvers.boris,
+    steps_per_gyro.boris, step_overrides.boris) are stripped before
+    hashing. Boris was a hash-neutral audit overlay, so stored provenance
+    ymls under data/ (and any other pre-removal configs) still carry these
+    keys — stripping them keeps every such yml hashing to its original
+    value, so re-runs and segmented resumes still find their cached h5.
+    For cleaned configs the strip is a no-op.
     """
     from ps_method.writers import run_hash
-    physics = {k: _canonicalize_for_hash(v) for k, v in cfg.items()
-               if k not in _NON_HASH_KEYS}
+    pruned = {}
+    for k, v in cfg.items():
+        if k in _NON_HASH_KEYS:
+            continue
+        if k in ("solvers", "steps_per_gyro", "step_overrides") \
+                and isinstance(v, dict) and "boris" in v:
+            v = {kk: vv for kk, vv in v.items() if kk != "boris"}
+        pruned[k] = v
+    physics = {k: _canonicalize_for_hash(v) for k, v in pruned.items()}
     return run_hash(physics)
 
 
@@ -575,7 +590,12 @@ def load_config(conf_file):
         "output_folder", "run_storage", "output_root", "batch_group",
         "git_commit",
     }
-    real_unknown = {k for k in unknown if k.split(".")[0] not in _known_extras}
+    # Removed-solver keys still present in stored provenance ymls; ignored
+    # by the loader and stripped from the hash (see physics_hash).
+    _legacy_ignored = {"solvers.boris", "steps_per_gyro.boris", "step_overrides.boris"}
+    real_unknown = {k for k in unknown
+                    if k.split(".")[0] not in _known_extras
+                    and k not in _legacy_ignored}
     if real_unknown:
         print(f"\n  WARNING: Unknown config keys (possible typos): {sorted(real_unknown)}")
         print(f"  Valid top-level keys: {sorted(k for k in base_keys if '.' not in k)}\n")
@@ -755,6 +775,7 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         # Plotting
         "USE_PLOT_TITLES": plot_cfg["titles"],
         "USE_FULL_PLOT":   plot_cfg["full_plot"],
+        "INVARIANTS_ONLY": plot_cfg.get("invariants_only", False),
         "slice_mode":      plot_cfg["slice_mode"],
         "gyro_window":     plot_cfg["gyro_window"],
 

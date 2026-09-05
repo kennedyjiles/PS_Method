@@ -196,6 +196,14 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
     return max_ps, elapsed
 
 
+class _SkipSection(Exception):
+    """Raised to skip an optional analysis section on purpose.
+
+    Caught by its own `except` ahead of the generic handler so an intentional
+    skip prints one line instead of being logged as an analysis FAILURE.
+    """
+
+
 def main(cfg_path, replot=False):
     """Run a dipole-B simulation from a YAML config file path.
 
@@ -293,6 +301,12 @@ def main(cfg_path, replot=False):
     z_initial       = params["z_initial"]
     USE_PLOT_TITLES = params["USE_PLOT_TITLES"]
     USE_FULL_PLOT   = params["USE_FULL_PLOT"]
+    # Figure-only fast path: emit just <hash>_invariants.png and skip every other
+    # plot plus the Dragt / mu-deviation / bounce-drift streams (they only feed
+    # summary diagnostics). Implies paper-plot mode for everything else.
+    INVARIANTS_ONLY = params.get("INVARIANTS_ONLY", False)
+    if INVARIANTS_ONLY:
+        USE_FULL_PLOT = False
     slice_mode      = params["slice_mode"]
     gyro_window     = params["gyro_window"]
     output_folder   = params["output_folder"]
@@ -1203,10 +1217,17 @@ def main(cfg_path, replot=False):
     ps_order_label = None # for plotting later
     ps_order_mean  = None
 
+    # Preflight the VDS before anything reads it. A stitched <hash>_full.h5
+    # references its segments by BASENAME, so moving the segments (or the
+    # _full.h5) to another drive silently breaks the mapping — HDF5 returns the
+    # 0.0 fill value rather than raising, and every figure below would come out
+    # blank/NaN with no error. Fail here, with the fix, instead.
+    if USE_PS and not DATA_ONLY:
+        wr.check_vds_readable(cache_path)
+
     if USE_PS:
         with h5py.File(cache_path, "r") as ps_h5:
             ps_grp = ps_h5["ps"]
-            stride = max(1, steps_ps // max_plot_points_local)
             # Label uses mean (typical work/step) — falls back to max for
             # h5 files written before mean tracking landed.
             ps_order_label = ul.ps_order_label_from_attrs(ps_grp.attrs)
@@ -1219,9 +1240,16 @@ def main(cfg_path, replot=False):
             # exactly what data_only exists to avoid. Attrs above are cheap/safe.
             if USE_FULL_PLOT and not DATA_ONLY:
                 ps_y_h5 = ps_grp["y"]
-                x_ps_plot = ps_y_h5[0, ::stride]
-                y_ps_plot = ps_y_h5[1, ::stride]
-                z_ps_plot = ps_y_h5[2, ::stride]
+                # One sequential pass for all three rows, decimated on the way
+                # in. Was three separate `ps_y_h5[i, ::stride]` reads, each of
+                # which decompresses the whole VDS (3x the I/O on a 28 GB run),
+                # with the stride derived from steps_ps (physical steps) rather
+                # than the STORED column count — so with ps_decimate > 1 the
+                # full-trajectory plots were silently thinned by a further
+                # factor of ps_decimate below max_plot_points.
+                x_ps_plot, y_ps_plot, z_ps_plot = ul.read_rows_decimated(
+                    ps_y_h5, (0, 1, 2), 0, ps_y_h5.shape[1] - 1,
+                    max_plot_points_local)
 
     if DEBUG:
         _, peak = tracemalloc.get_traced_memory()
@@ -1309,7 +1337,12 @@ def main(cfg_path, replot=False):
     # ========================================================================
     if DEBUG: tracemalloc.start()
 
-    _sw = ul.prepare_slice_dipoleb(
+    # The slice read only feeds slice_2d/slice_3d; skip it when neither is drawn.
+    _sw = (dict.fromkeys(
+        ("ps_x_slice","ps_y_slice","ps_z_slice","rk4_x_slice","rk4_y_slice","rk4_z_slice",
+         "rkg_x_slice","rkg_y_slice","rkg_z_slice","rk45_x_slice","rk45_y_slice",
+         "rk45_z_slice","ps_order_label"))
+        if INVARIANTS_ONLY else ul.prepare_slice_dipoleb(
         slice_mode, window_duration, norm_time,
         USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
         steps_ps=steps_ps, ps_decimate=ps_decimate,
@@ -1317,7 +1350,7 @@ def main(cfg_path, replot=False):
         USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
         USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
         USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
-    )
+    ))
     ps_x_slice   = _sw["ps_x_slice"]
     ps_y_slice   = _sw["ps_y_slice"]
     ps_z_slice   = _sw["ps_z_slice"]
@@ -1361,13 +1394,16 @@ def main(cfg_path, replot=False):
     if USE_FULL_PLOT:
         dplt.slice_2d(**_slice_common)
 
-    dplt.slice_3d(
-        **_slice_common, plotbounds=plotbounds,
-        rk45_z_slice=rk45_z_slice if USE_RK45 else None,
-        rk4_z_slice=rk4_z_slice if USE_RK4 else None,
-        rkg_z_slice=rkg_z_slice if USE_RKG else None,
-        ps_z_slice=ps_z_slice if USE_PS else None,
-    )
+    if not INVARIANTS_ONLY:
+        dplt.slice_3d(
+            **_slice_common, plotbounds=plotbounds,
+            rk45_z_slice=rk45_z_slice if USE_RK45 else None,
+            rk4_z_slice=rk4_z_slice if USE_RK4 else None,
+            rkg_z_slice=rkg_z_slice if USE_RKG else None,
+            ps_z_slice=ps_z_slice if USE_PS else None,
+        )
+
+
 
 
     # =====================================================
@@ -1375,8 +1411,23 @@ def main(cfg_path, replot=False):
     # =====================================================
     if DEBUG: tracemalloc.start()
 
+    # ONE streaming pass over the PS VDS feeding the KE, P_phi and mu plots.
+    # These three used to walk the whole file independently (~3x the I/O; on the
+    # 2715-segment cec255 run that is ~18 h vs ~8 h). Decimation semantics inside
+    # are unchanged, so every downstream number is identical.
+    _ps_fused = None
+    if USE_PS:
+        _ps_fused = ea.compute_ps_invariants_fused(
+            cache_path=cache_path, e0_ps=e0_ps, ps_y_initial=initial_pos_vel,
+            ps_step=ps_step, ps_decimate=ps_decimate,
+            max_plot_points=max_plot_points_local,
+            energy_stride=max(1, steps_ps // max_plot_points_local),
+            charge_sign=charge_sign,
+        )
+
     _ke = ea.compute_ke_errors(
         T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
+        ps_fused=_ps_fused,
         USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
         ps_decimate=ps_decimate, e0_ps=e0_ps,
         USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
@@ -1401,16 +1452,17 @@ def main(cfg_path, replot=False):
     rel_drift_rk45 = _ke["rel_drift_rk45"]
     rel_drift_rkg  = _ke["rel_drift_rkg"]
 
-    dplt.ke_error(
-        run_folder=fig_folder, stem=stem,
-        particle_type=particle_type, ps_order_label=ps_order_label,
-        USE_PLOT_TITLES=USE_PLOT_TITLES, time_factor=time_factor, norm_time=norm_time,
-        ps_data=_ke["ke_ps"], rk4_data=_ke["ke_rk4"],
-        rk45_data=_ke["ke_rk45"], rkg_data=_ke["ke_rkg"],
-        ext_ps_data=_ke["ke_ext_ps"], ext_rk4_data=_ke["ke_ext_rk4"],
-        ext_rk45_data=_ke["ke_ext_rk45"], ext_rkg_data=_ke["ke_ext_rkg"],
-        envelope=True,   # True = plot max-per-bin upper envelope (cleaner RKG band)
-    )
+    if not INVARIANTS_ONLY:
+        dplt.ke_error(
+            run_folder=fig_folder, stem=stem,
+            particle_type=particle_type, ps_order_label=ps_order_label,
+            USE_PLOT_TITLES=USE_PLOT_TITLES, time_factor=time_factor, norm_time=norm_time,
+            ps_data=_ke["ke_ps"], rk4_data=_ke["ke_rk4"],
+            rk45_data=_ke["ke_rk45"], rkg_data=_ke["ke_rkg"],
+            ext_ps_data=_ke["ke_ext_ps"], ext_rk4_data=_ke["ke_ext_rk4"],
+            ext_rk45_data=_ke["ke_ext_rk45"], ext_rkg_data=_ke["ke_ext_rkg"],
+            envelope=True,   # True = plot max-per-bin upper envelope (cleaner RKG band)
+        )
 
     if DEBUG:
         _, peak = tracemalloc.get_traced_memory()
@@ -1427,34 +1479,24 @@ def main(cfg_path, replot=False):
                 _mid = int(round(len(_rd) / 2))
                 logger.debug(f"[{_lbl}] E rel drift initial ={_rd[0]:.2e}, E rel drift mid ={_rd[_mid]:.2e}, E rel drift final ={_rd[-1]:.2e}")
 
-    # ==================================================
-    # ======== Dragt Analysis + Poincaré Plots =========
-    # ==================================================
-    from functools import partial as _partial
-    dragt_log, _ = df.run_section(
-        x_initial, y_initial, z_initial,
-        vx_initial, vy_initial, v_tau,
-        charge_sign, gamma,
-        USE_PS=USE_PS, cache_path=cache_path,
-        ps_step=ps_step, time_factor=time_factor,
-        cache_velocity_rtol=cache_velocity_rtol,
-        fig_folder=fig_folder, stem=stem,
-        poincare_func=_partial(dplt.poincare, use_titles=USE_PLOT_TITLES),
-        gyrophase_mu_func=_partial(dplt.gyrophase_mu, use_titles=USE_PLOT_TITLES),
-        polar_phase_space_func=_partial(dplt.polar_phase_space, use_titles=USE_PLOT_TITLES),
-        meridian_plane_func=_partial(dplt.meridian_plane, use_titles=USE_PLOT_TITLES),
-        adiabaticity_func=_partial(dplt.adiabaticity, use_titles=USE_PLOT_TITLES),
-    )
-
     # =========================================================
     # PLOT RELATIVE ERROR OF CANONICAL ANGULAR MOMENTUM
     # =========================================================
+    # Runs right after ke_error (and BEFORE the Dragt analysis, which streams the
+    # whole VDS and is a likely crash point) so both error plots are safely on
+    # disk before that risk.
     # Computes P_phi drift for every enabled solver (mirrors compute_ke_errors),
     # then plots them all on a single log-log axis using the same color /
     # linestyle scheme as the kinetic-energy plot.
-    if USE_PS or USE_RK4 or USE_RK45 or USE_RKG:
+    # Produced whenever there is anything to plot — a local solver OR an
+    # external h5 overlay. Independent of USE_FULL_PLOT (paper plot), matching
+    # ke_error, so external-only comparison runs still get a P_phi plot.
+    if (USE_PS or USE_RK4 or USE_RK45 or USE_RKG
+            or USE_EXTERNAL_H5_ps or USE_EXTERNAL_H5_rk4
+            or USE_EXTERNAL_H5_rk45 or USE_EXTERNAL_H5_rkg):
         _pphi = ea.compute_pphi_errors(
             T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
+            ps_fused=_ps_fused,
             USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
             ps_decimate=ps_decimate, ps_y_initial=initial_pos_vel,
             USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
@@ -1463,18 +1505,146 @@ def main(cfg_path, replot=False):
             rkg_y_initial=rkg_y_initial,
             USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
             rk45_y_initial=rk45_y_initial,
+            USE_EXTERNAL_H5_ps=USE_EXTERNAL_H5_ps,   external_h5_ps=external_h5_ps,
+            USE_EXTERNAL_H5_rk4=USE_EXTERNAL_H5_rk4, external_h5_rk4=external_h5_rk4,
+            USE_EXTERNAL_H5_rk45=USE_EXTERNAL_H5_rk45, external_h5_rk45=external_h5_rk45,
+            USE_EXTERNAL_H5_rkg=USE_EXTERNAL_H5_rkg,   external_h5_rkg=external_h5_rkg,
             vector_potential_func=dp.vector_potential,
             charge_sign=charge_sign,
+            load_results_h5_func=wr.load_results_h5_dipoleb,
         )
-        dplt.pphi_error(
-            run_folder=fig_folder, stem=stem,
-            particle_type=particle_type, ps_order_label=ps_order_label,
-            USE_PLOT_TITLES=USE_PLOT_TITLES,
-            time_factor=time_factor, norm_time=norm_time,
-            ylabel_str=_pphi["ylabel"],
-            ps_data=_pphi["pphi_ps"], rk4_data=_pphi["pphi_rk4"],
-            rk45_data=_pphi["pphi_rk45"], rkg_data=_pphi["pphi_rkg"],
+        if not INVARIANTS_ONLY:
+            dplt.pphi_error(
+                run_folder=fig_folder, stem=stem,
+                particle_type=particle_type, ps_order_label=ps_order_label,
+                USE_PLOT_TITLES=USE_PLOT_TITLES,
+                time_factor=time_factor, norm_time=norm_time,
+                ylabel_str=_pphi["ylabel"],
+                ps_data=_pphi["pphi_ps"], rk4_data=_pphi["pphi_rk4"],
+                rk45_data=_pphi["pphi_rk45"], rkg_data=_pphi["pphi_rkg"],
+                ext_ps_data=_pphi["pphi_ext_ps"], ext_rk4_data=_pphi["pphi_ext_rk4"],
+                ext_rk45_data=_pphi["pphi_ext_rk45"], ext_rkg_data=_pphi["pphi_ext_rkg"],
+            )
+
+    # =========================================================
+    # PLOT RELATIVE ERROR OF MAGNETIC MOMENT (full run)
+    # =========================================================
+    # Third invariant plot in the ke_error / pphi_error family: |Δμ_n|/μ_0
+    # over the WHOLE run on log-log axes (the mu_deviation plot further down
+    # covers only the gyro window). Same chunked-h5 reading pattern as the
+    # other two so it stays memory-safe on large VDS files, and runs BEFORE
+    # the Dragt analysis for the same crash-safety reason as pphi_error.
+    # Whole-run ceiling on |dmu|/mu0, captured from the array that already
+    # feeds the MUerror plot. None when PS did not run. Distinct from the
+    # tail-window mu_max_err in the summary, which covers only the last
+    # 0.01% of the run.
+    mu_max_run = None
+    if (USE_PS or USE_RK4 or USE_RK45 or USE_RKG
+            or USE_EXTERNAL_H5_ps or USE_EXTERNAL_H5_rk4
+            or USE_EXTERNAL_H5_rk45 or USE_EXTERNAL_H5_rkg):
+        _mue = ea.compute_mu_errors(
+            T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
+            ps_fused=_ps_fused,
+            USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
+            ps_decimate=ps_decimate, ps_y_initial=initial_pos_vel,
+            USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
+            rk4_y_initial=rk4_y_initial,
+            USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
+            rkg_y_initial=rkg_y_initial,
+            USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
+            rk45_y_initial=rk45_y_initial,
+            USE_EXTERNAL_H5_ps=USE_EXTERNAL_H5_ps,   external_h5_ps=external_h5_ps,
+            USE_EXTERNAL_H5_rk4=USE_EXTERNAL_H5_rk4, external_h5_rk4=external_h5_rk4,
+            USE_EXTERNAL_H5_rk45=USE_EXTERNAL_H5_rk45, external_h5_rk45=external_h5_rk45,
+            USE_EXTERNAL_H5_rkg=USE_EXTERNAL_H5_rkg,   external_h5_rkg=external_h5_rkg,
+            vector_potential_func=dp.vector_potential,
+            charge_sign=charge_sign,
+            load_results_h5_func=wr.load_results_h5_dipoleb,
         )
+        # Capture BEFORE any plotting, so a figure failure cannot cost the
+        # number. rel_mu_ps is the uniform-decimation full-run array; the
+        # log-spaced "mu_ps" tuple is plot-only and must not be used here.
+        if _mue.get("rel_mu_ps") is not None:
+            mu_max_run = float(np.max(_mue["rel_mu_ps"]))
+        if not INVARIANTS_ONLY:
+            dplt.mu_error(
+                run_folder=fig_folder, stem=stem,
+                particle_type=particle_type, ps_order_label=ps_order_label,
+                USE_PLOT_TITLES=USE_PLOT_TITLES,
+                time_factor=time_factor, norm_time=norm_time,
+                ylabel_str=_mue["ylabel"],
+                ps_data=_mue["mu_ps"], rk4_data=_mue["mu_rk4"],
+                rk45_data=_mue["mu_rk45"], rkg_data=_mue["mu_rkg"],
+                ext_ps_data=_mue["mu_ext_ps"], ext_rk4_data=_mue["mu_ext_rk4"],
+                ext_rk45_data=_mue["mu_ext_rk45"], ext_rkg_data=_mue["mu_ext_rkg"],
+            )
+
+        # ---- Invariants overlay: E, P_phi, mu for the PS run on ONE axis ----
+        # Reuses the three log-spaced PS series already computed above (no
+        # extra h5 pass). PS-only by design: colours encode the quantity here.
+        #
+        # PAPER PLOT — deliberately NOT gated on USE_FULL_PLOT: this figure is
+        # wanted in every mode. Do not "tidy" it into the full_plot gate; the
+        # only condition is USE_PS, because all three series it draws are PS
+        # series and there is nothing to plot without them.
+        if USE_PS:
+            dplt.invariants_overlay(
+                run_folder=fig_folder, stem=stem,
+                particle_type=particle_type, ps_order_label=ps_order_label,
+                USE_PLOT_TITLES=USE_PLOT_TITLES, time_factor=time_factor,
+                ke_data=_ke["ke_ps"],
+                pphi_data=_pphi["pphi_ps"],
+                mu_data=_mue["mu_ps"],
+            )
+
+    # ==================================================
+    # ======== Dragt Analysis + Poincaré Plots =========
+    # ==================================================
+    from functools import partial as _partial
+    # In paper-plot mode (full_plot=false) the Dragt *analysis* still runs — it
+    # populates dragt_log (summary writer) plus adiabaticity/crossing stats — but
+    # no Dragt figures are emitted. Feed no-op plot funcs to skip only the images.
+    def _noop_plot(*_a, **_k):
+        return None
+    _dragt_plot = (lambda f: _partial(f, use_titles=USE_PLOT_TITLES)) if USE_FULL_PLOT \
+        else (lambda f: _noop_plot)
+    # Best-effort: the Dragt stream walks the whole VDS and can fail on a very
+    # long run. Default dragt_log keeps the summary writer's key access safe, and
+    # a failure here still lets the summary / CSV be written below.
+    # Must carry EVERY key the summary / CSV writers read, or a skipped-or-failed
+    # Dragt section takes the writers down with it — which is exactly what the
+    # try/except below exists to prevent. Keep in sync with the identical default
+    # in dipoleb_dragt_analysis.run_section.
+    dragt_log = {
+        "L_eff": None, "W0_sq": None, "boundary": None, "mu_sq": None,
+        "orbit_character": None, "eps_initial": None, "eps_mean": None,
+        "eps_max": None, "n_eq_crossings": None,
+        "hit_atmosphere": False, "hit_atm_r": None,
+    }
+    try:
+        if INVARIANTS_ONLY:
+            raise _SkipSection("invariants_only: skipping Dragt analysis")
+        dragt_log, _ = df.run_section(
+            x_initial, y_initial, z_initial,
+            vx_initial, vy_initial, v_tau,
+            charge_sign, gamma,
+            USE_PS=USE_PS, cache_path=cache_path,
+            ps_step=ps_step, time_factor=time_factor,
+            cache_velocity_rtol=cache_velocity_rtol,
+            fig_folder=fig_folder, stem=stem,
+            poincare_func=_dragt_plot(dplt.poincare),
+            gyrophase_mu_func=_dragt_plot(dplt.gyrophase_mu),
+            polar_phase_space_func=_dragt_plot(dplt.polar_phase_space),
+            meridian_plane_func=_dragt_plot(dplt.meridian_plane),
+            adiabaticity_func=_dragt_plot(dplt.adiabaticity),
+            meridian_plane_RE_func=_dragt_plot(dplt.meridian_plane_RE),
+        )
+    except _SkipSection as _s:
+        print(f"  {_s}")
+    except Exception as _e:
+        logger.exception("Dragt analysis failed; continuing with default dragt_log.")
+        print(f"\n  WARNING: Dragt analysis failed ({type(_e).__name__}: {_e});\n"
+              f"  summary will omit Dragt diagnostics.\n")
 
 
     # ============================================================
@@ -1484,55 +1654,92 @@ def main(cfg_path, replot=False):
 
     mu_rk4_result = mu_rkg_result = mu_rk45_result = mu_ps_result = None
 
-    if USE_RK4:
-        mu_rk4_result = mp.compute_mu_deviation_rk(
-            solution_rk4, steps_rk4, rk4_step,
-            n_gyro, n_steps_per_gyro_rk4, gyro_window, time_factor,
-            solver_type="rk4", y_initial=rk4_y_initial)
+    # Best-effort: the PS μ pass streams the whole VDS. On failure keep whatever
+    # per-solver results completed (all pre-set to None above) so the summary
+    # still writes; ps_order_label retains its earlier value.
+    try:
+        if INVARIANTS_ONLY:
+            raise _SkipSection("invariants_only: skipping mu-deviation analysis")
+        if USE_RK4:
+            mu_rk4_result = mp.compute_mu_deviation_rk(
+                solution_rk4, steps_rk4, rk4_step,
+                n_gyro, n_steps_per_gyro_rk4, gyro_window, time_factor,
+                solver_type="rk4", y_initial=rk4_y_initial)
 
-    if USE_RKG:
-        mu_rkg_result = mp.compute_mu_deviation_rk(
-            solution_rkg, steps_rkg, rkg_step,
-            n_gyro, n_steps_per_gyro_rkg, gyro_window, time_factor,
-            solver_type="rkg", y_initial=rkg_y_initial,
-            charge_sign=charge_sign)
+        if USE_RKG:
+            mu_rkg_result = mp.compute_mu_deviation_rk(
+                solution_rkg, steps_rkg, rkg_step,
+                n_gyro, n_steps_per_gyro_rkg, gyro_window, time_factor,
+                solver_type="rkg", y_initial=rkg_y_initial,
+                charge_sign=charge_sign)
 
-    if USE_RK45:
-        mu_rk45_result = mp.compute_mu_deviation_rk(
-            y_rk45_common, steps_ps, ps_step,
-            n_gyro, n_steps_per_gyro_ps, gyro_window, time_factor,
-            solver_type="rk45", y_initial=rk45_y_initial)
+        if USE_RK45:
+            mu_rk45_result = mp.compute_mu_deviation_rk(
+                y_rk45_common, steps_ps, ps_step,
+                n_gyro, n_steps_per_gyro_ps, gyro_window, time_factor,
+                solver_type="rk45", y_initial=rk45_y_initial)
 
-    if USE_PS:
-        mu_ps_result = mp.compute_mu_deviation_ps(
-            cache_path, steps_ps, ps_step, ps_decimate,
-            n_gyro, n_steps_per_gyro_ps, mu0_ps,
-            gyro_window, time_factor, max_plot_points=max_plot_points_local)
-        ps_order_label = mu_ps_result["ps_order_label"]
+        if USE_PS:
+            mu_ps_result = mp.compute_mu_deviation_ps(
+                cache_path, steps_ps, ps_step, ps_decimate,
+                n_gyro, n_steps_per_gyro_ps, mu0_ps,
+                gyro_window, time_factor, max_plot_points=max_plot_points_local)
+            ps_order_label = mu_ps_result["ps_order_label"]
+    except _SkipSection as _s:
+        print(f"  {_s}")
+    except Exception as _e:
+        logger.exception("Magnetic-moment analysis failed; continuing with partial μ results.")
+        print(f"\n  WARNING: μ analysis failed ({type(_e).__name__}: {_e});\n"
+              f"  summary will use whatever μ results completed.\n")
 
     # --- Unpack mu0 values needed by the summary writer ---
     mu0_rk4  = mu_rk4_result["mu0"]  if mu_rk4_result  else None
     mu0_rkg  = mu_rkg_result["mu0"]  if mu_rkg_result  else None
     mu0_rk45 = mu_rk45_result["mu0"] if mu_rk45_result else None
 
-    dplt.mu_deviation(
-        fig_folder, stem, particle_type, ps_order_label,
-        USE_PLOT_TITLES,
-        ps_data=(mu_ps_result["t"], mu_ps_result["mudrift_plot"]) if mu_ps_result else None,
-        rk4_data=(mu_rk4_result["t"], mu_rk4_result["mudrift"]) if mu_rk4_result else None,
-        rk45_data=(mu_rk45_result["t"], mu_rk45_result["mudrift"]) if mu_rk45_result else None,
-        rkg_data=(mu_rkg_result["t"], mu_rkg_result["mudrift"]) if mu_rkg_result else None,
-    )
+    # --- Equatorial-crossing markers for the μ figures (black dots) ---
+    # Taken from the first available solver's μ result (crossings are a
+    # physical event, so any solver marks essentially the same times).
+    # To DISABLE the dots: comment out the eq_data= line in either plot
+    # call below (the plots default to eq_data=None).
+    _mu_eq_src = next((r for r in (mu_ps_result, mu_rk4_result,
+                                   mu_rk45_result, mu_rkg_result)
+                       if r is not None and "eq_t" in r), None)
+    _eq_mudrift = (_mu_eq_src["eq_t"], _mu_eq_src["eq_mudrift"]) if _mu_eq_src else None
+    _eq_mushape = (_mu_eq_src["eq_t"], _mu_eq_src["eq_mu_ratio"]) if _mu_eq_src else None
+
+    # mu_deviation is diagnostic-only — skip the image in paper mode. The μ
+    # computation above runs either way (its mu0 / mudrift feed the summary writer).
+    if USE_FULL_PLOT:
+        dplt.mu_deviation(
+            fig_folder, stem, particle_type, ps_order_label,
+            USE_PLOT_TITLES,
+            ps_data=(mu_ps_result["t"], mu_ps_result["mudrift_plot"]) if mu_ps_result else None,
+            rk4_data=(mu_rk4_result["t"], mu_rk4_result["mudrift"]) if mu_rk4_result else None,
+            rk45_data=(mu_rk45_result["t"], mu_rk45_result["mudrift"]) if mu_rk45_result else None,
+            rkg_data=(mu_rkg_result["t"], mu_rkg_result["mudrift"]) if mu_rkg_result else None,
+            eq_data=_eq_mudrift,   # equatorial-crossing dots — comment out to disable
+        )
 
     # Instantaneous μ/μ₀ shape over the same window (companion to mu_deviation).
-    dplt.mu_shape(
-        fig_folder, stem, particle_type, ps_order_label,
-        USE_PLOT_TITLES,
-        ps_data=(mu_ps_result["t"], mu_ps_result["mu_ratio_plot"]) if mu_ps_result else None,
-        rk4_data=(mu_rk4_result["t"], mu_rk4_result["mu_ratio"]) if mu_rk4_result else None,
-        rk45_data=(mu_rk45_result["t"], mu_rk45_result["mu_ratio"]) if mu_rk45_result else None,
-        rkg_data=(mu_rkg_result["t"], mu_rkg_result["mu_ratio"]) if mu_rkg_result else None,
-    )
+    # PAPER PLOT: produced in both full_plot modes, like ke_error / pphi_error /
+    # mu_error — it shows the shape of μ along the orbit, not a diagnostic
+    # conservation error. Only invariants_only suppresses it, and it must: that
+    # mode skips the μ analysis, so the data would all be None and the figure empty.
+    if not INVARIANTS_ONLY:
+        dplt.mu_shape(
+            fig_folder, stem, particle_type, ps_order_label,
+            USE_PLOT_TITLES,
+            ps_data=(mu_ps_result["t"], mu_ps_result["mu_ratio_plot"]) if mu_ps_result else None,
+            rk4_data=(mu_rk4_result["t"], mu_rk4_result["mu_ratio"]) if mu_rk4_result else None,
+            rk45_data=(mu_rk45_result["t"], mu_rk45_result["mu_ratio"]) if mu_rk45_result else None,
+            rkg_data=(mu_rkg_result["t"], mu_rkg_result["mu_ratio"]) if mu_rkg_result else None,
+            # eq_data=_eq_mushape,   # equatorial-crossing dots — comment out to disable
+            # ^ DISABLED for the decimated 20-year run: the markers are sample-level
+            #   (no interpolation), so at 20 steps/gyroperiod with decimate=5 one can be
+            #   a quarter gyroperiod -- 90 deg of gyrophase -- early. RE-ENABLE before
+            #   rebuilding the Section 3.1 demo figure, whose caption promises the dots.
+        )
 
 
     if DEBUG:
@@ -1556,87 +1763,102 @@ def main(cfg_path, replot=False):
 
     if DEBUG: tracemalloc.start()
 
-    if USE_PS:
-        print(f"\n{'='*60}")
-        print(f"  Bounce/Drift Statistics")
-        print(f"{'='*60}")
+    # Pre-set so the summary writer's `ps_store_stride if USE_PS else 1` is
+    # always safe, even if the bounce/drift stream below fails early.
+    ps_store_stride = ps_decimate if ps_decimate > 1 else 1
 
-        v_eps = npfloat(velocity_epsilon_scale) * v_tau
-        user_min_gap = max(min_gap_steps, int(gap_gyro_fraction * T_gyro / ps_step))
+    # Best-effort: the PS bounce/drift stream walks the whole VDS. On failure,
+    # bounce_results/drift_results stay None (summary writer tolerates that).
+    try:
+        if INVARIANTS_ONLY:
+            raise _SkipSection("invariants_only: skipping bounce/drift analysis")
+        if USE_PS:
+            print(f"\n{'='*60}")
+            print(f"  Bounce/Drift Statistics")
+            print(f"{'='*60}")
 
-        bounce_state = bd.init_bounce_stream_state()
-        drift_state  = bd.init_drift_stream_state()
+            v_eps = npfloat(velocity_epsilon_scale) * v_tau
+            user_min_gap = max(min_gap_steps, int(gap_gyro_fraction * T_gyro / ps_step))
 
-        ps_store_stride = ps_decimate if ps_decimate > 1 else 1
-        dt_store = ps_step * ps_store_stride
+            bounce_state = bd.init_bounce_stream_state()
+            drift_state  = bd.init_drift_stream_state()
 
-        with h5py.File(cache_path, "r") as ps_h5:
-            ps_y = ps_h5["ps"]["y"]
-            n_store = ps_y.shape[1]
+            ps_store_stride = ps_decimate if ps_decimate > 1 else 1
+            dt_store = ps_step * ps_store_stride
 
-            for j0_chunk in range(0, n_store, ps_chunk_steps):
-                j1 = min(j0_chunk + ps_chunk_steps, n_store)
+            with h5py.File(cache_path, "r") as ps_h5:
+                ps_y = ps_h5["ps"]["y"]
+                n_store = ps_y.shape[1]
 
-                y_chunk = wr.expand_h5_to_full(ps_y[:, j0_chunk:j1])
-                t_chunk = dt_store * np.arange(j0_chunk, j1, dtype=npfloat)
+                for j0_chunk in range(0, n_store, ps_chunk_steps):
+                    j1 = min(j0_chunk + ps_chunk_steps, n_store)
 
-                bd.process_bounce_and_drift_chunk(
-                    y_chunk=y_chunk,
-                    t_chunk=t_chunk,
-                    bounce_state=bounce_state,
-                    drift_state=drift_state,
-                    min_gap_tau=user_min_gap * ps_step,
-                    s_eps=v_eps,
-                )
+                    y_chunk = wr.expand_h5_to_full(ps_y[:, j0_chunk:j1])
+                    t_chunk = dt_store * np.arange(j0_chunk, j1, dtype=npfloat)
 
-        # --- Bounce ---
-        bounce_stats = bd.bounce_summary(
-            bounce_state["crossing_times"],
-            time_scale_sec=tau_time
-        )
+                    bd.process_bounce_and_drift_chunk(
+                        y_chunk=y_chunk,
+                        t_chunk=t_chunk,
+                        bounce_state=bounce_state,
+                        drift_state=drift_state,
+                        min_gap_tau=user_min_gap * ps_step,
+                        s_eps=v_eps,
+                    )
 
-        if bounce_stats["full_mean_s"] is not None:
-            print("Mirror crossings:", bounce_stats["n_crossings"])
-            print(f"Full bounce period (mean): {bounce_stats['full_mean_s']:.6g} s")
-            print("Bounce frequency [Hz]:", bounce_stats["bounce_frequency_hz"])
-        else:
-            print("No mirror motion detected (no full-bounce interval).")
-
-        print(f"Initial gyroradius: {gyro_radius_si:.4e} m  ({gyro_radius_RE:.4f} R_E)")
-        gyro_freq_hz = 1.0 / (T_gyro * abs(tau_time))
-        print(f"Gyrofrequency: {gyro_freq_hz:.4f} Hz  (period: {T_gyro * abs(tau_time):.4e} s)")
-
-        bounce_results = {
-            "n_crossings": bounce_stats["n_crossings"],
-            "full_mean_tau": bounce_stats["full_mean_tau"],
-            "full_mean_s": bounce_stats["full_mean_s"],
-            "frequency_hz": bounce_stats["bounce_frequency_hz"],
-        }
-
-        # --- Drift ---
-        drift_stats = bd.finalize_drift_stream(
-            drift_state,
-            time_scale_sec=tau_time,
-            min_phase_rad=user_min_phase,
-        )
-
-        T_drift_s   = drift_stats["period_s_fit"]
-        T_drift_tau = drift_stats.get("period_tau_fit", None)
-        direction   = drift_stats["direction"]
-
-        if T_drift_s is None:
-            print("Drift period: not enough azimuthal motion to estimate (yet).")
-        else:
-            print(
-                f"Drift period ≈ {T_drift_s:.6g} s "
-                f"(direction {'east' if direction > 0 else 'west'})"
+            # --- Bounce ---
+            bounce_stats = bd.bounce_summary(
+                bounce_state["crossing_times"],
+                time_scale_sec=tau_time
             )
 
-        drift_results = {
-            "period_s": T_drift_s,
-            "period_tau": T_drift_tau,
-            "direction": direction,
-        }
+            if bounce_stats["full_mean_s"] is not None:
+                print("Mirror crossings:", bounce_stats["n_crossings"])
+                print(f"Full bounce period (mean): {bounce_stats['full_mean_s']:.6g} s")
+                print("Bounce frequency [Hz]:", bounce_stats["bounce_frequency_hz"])
+            else:
+                print("No mirror motion detected (no full-bounce interval).")
+
+            print(f"Initial gyroradius: {gyro_radius_si:.4e} m  ({gyro_radius_RE:.4f} R_E)")
+            gyro_freq_hz = 1.0 / (T_gyro * abs(tau_time))
+            print(f"Gyrofrequency: {gyro_freq_hz:.4f} Hz  (period: {T_gyro * abs(tau_time):.4e} s)")
+
+            bounce_results = {
+                "n_crossings": bounce_stats["n_crossings"],
+                "full_mean_tau": bounce_stats["full_mean_tau"],
+                "full_mean_s": bounce_stats["full_mean_s"],
+                "frequency_hz": bounce_stats["bounce_frequency_hz"],
+            }
+
+            # --- Drift ---
+            drift_stats = bd.finalize_drift_stream(
+                drift_state,
+                time_scale_sec=tau_time,
+                min_phase_rad=user_min_phase,
+            )
+
+            T_drift_s   = drift_stats["period_s_fit"]
+            T_drift_tau = drift_stats.get("period_tau_fit", None)
+            direction   = drift_stats["direction"]
+
+            if T_drift_s is None:
+                print("Drift period: not enough azimuthal motion to estimate (yet).")
+            else:
+                print(
+                    f"Drift period ≈ {T_drift_s:.6g} s "
+                    f"(direction {'east' if direction > 0 else 'west'})"
+                )
+
+            drift_results = {
+                "period_s": T_drift_s,
+                "period_tau": T_drift_tau,
+                "direction": direction,
+            }
+    except _SkipSection as _s:
+        print(f"  {_s}")
+    except Exception as _e:
+        logger.exception("PS bounce/drift analysis failed; continuing without bounce/drift stats.")
+        print(f"\n  WARNING: bounce/drift analysis failed ({type(_e).__name__}: {_e});\n"
+              f"  summary will omit bounce/drift statistics.\n")
 
     if DEBUG:
         _, peak = tracemalloc.get_traced_memory()
@@ -1673,10 +1895,12 @@ def main(cfg_path, replot=False):
         solution_rkg=solution_rkg if USE_RKG else None,
         y_rk45_common=y_rk45_common if USE_RK45 else None,
         ps_store_stride=ps_store_stride if USE_PS else 1,
+        energy_stride=energy_stride if USE_PS else 1,
         npfloat=npfloat,
         compute_mu_ps=mp.compute_mu_ps,
         compute_mu_rk=mp.compute_mu_rk,
         vector_potential=dp.vector_potential,
+        mu_max_run=mu_max_run,
     )
 
     if DEBUG:
@@ -1688,10 +1912,12 @@ def main(cfg_path, replot=False):
 
     # === Write to master simulation log CSV ===
     _method_records = []
-    if USE_RK4:  _method_records.append(("RK4",  steps_rk4, rk4_step, rel_drift_rk4,  mu_rk4_result["mudrift"]))
-    if USE_RK45: _method_records.append(("RK45", steps_ps,  ps_step,  rel_drift_rk45, mu_rk45_result["mudrift"]))
-    if USE_RKG:  _method_records.append(("RKG",  steps_rkg, rkg_step, rel_drift_rkg,  mu_rkg_result["mudrift"]))
-    if USE_PS:   _method_records.append(("PS",   steps_ps,  ps_step,  rel_drift_ps,   mu_ps_result["mudrift"]))
+    # mudrift may be missing if the μ analysis above failed — pass None then
+    # (summarize() and the CSV writer tolerate it, leaving μ error cols blank).
+    if USE_RK4:  _method_records.append(("RK4",  steps_rk4, rk4_step, rel_drift_rk4,  mu_rk4_result["mudrift"]  if mu_rk4_result  else None))
+    if USE_RK45: _method_records.append(("RK45", steps_ps,  ps_step,  rel_drift_rk45, mu_rk45_result["mudrift"] if mu_rk45_result else None))
+    if USE_RKG:  _method_records.append(("RKG",  steps_rkg, rkg_step, rel_drift_rkg,  mu_rkg_result["mudrift"]  if mu_rkg_result  else None))
+    if USE_PS:   _method_records.append(("PS",   steps_ps,  ps_step,  rel_drift_ps,   mu_ps_result["mudrift"]   if mu_ps_result   else None))
 
     wr.master_csv(
         output_folder=output_folder, stem=stem, particle_type=particle_type,
@@ -1702,6 +1928,7 @@ def main(cfg_path, replot=False):
         method_records=_method_records,
         bounce_results=bounce_results,
         drift_results=drift_results,
+        mu_max_run=mu_max_run,
     )
 
     print(f"\nRun Complete → {run_folder}")

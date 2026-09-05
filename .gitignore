@@ -31,6 +31,10 @@ testrun.yml
 .claude/
 batch_tmp/
 
+fma*
+tinker*
+*_copy*
+
 # DELETE later  
 flux_map_builder.py
 launch*

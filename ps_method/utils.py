@@ -322,6 +322,47 @@ def slice_solution_dipoleb(t, sol, window_duration, norm_time, mode="last"):
     return x, y, z
 
 
+def read_rows_decimated(ds, rows, j0, j1, max_points, block=200_000):
+    """Read `rows` of an h5 dataset over columns [j0, j1], decimated to
+    <= ~max_points, WITHOUT ever materialising the undecimated window.
+
+    Returns a list of 1D arrays, one per entry in `rows`, each equal to
+    ``ds[row, j0:j1+1][::stride]`` with ``stride = max(1, n_win // max_points)``
+    — but built in one sequential pass with pre-allocated outputs, so peak
+    memory is O(block) instead of O(window). Every returned array owns its
+    data: no strided view is left pointing at a large base array (a view
+    would keep the whole read alive for the rest of the run).
+
+    This is the read pattern for every full-run / long-window trajectory plot.
+    Slicing the dataset first and decimating afterwards is what turns a 28 GB
+    VDS into an out-of-memory kill.
+    """
+    n_win = j1 - j0 + 1
+    if n_win <= 0:
+        return [np.empty(0, dtype=ds.dtype) for _ in rows]
+    stride = max(1, n_win // max(1, int(max_points)))
+    n_pts = (n_win + stride - 1) // stride
+    outs = [np.empty(n_pts, dtype=ds.dtype) for _ in rows]
+
+    r0, r1 = min(rows), max(rows)
+    k = 0
+    for b0 in range(j0, j1 + 1, block):
+        b1 = min(b0 + block, j1 + 1)
+        # Smallest index >= b0 that is stride-aligned to j0.
+        first = b0 + (-(b0 - j0)) % stride
+        if first >= b1:
+            continue
+        blk = ds[r0:r1 + 1, b0:b1]
+        sel = np.arange(first - b0, b1 - b0, stride)
+        n_b = len(sel)
+        for out, row in zip(outs, rows):
+            out[k:k + n_b] = blk[row - r0, sel]
+        k += n_b
+        del blk
+
+    return [out[:k] for out in outs]
+
+
 def prepare_slice_dipoleb(
     slice_mode, window_duration, norm_time,
     # PS-specific
@@ -384,13 +425,19 @@ def prepare_slice_dipoleb(
             j1 = max(0, min(j1, n_store - 1))
             if j1 < j0:
                 raise RuntimeError("Empty PS stored slice")
-            y_win = ps_y[:, j0:j1+1]
             result["ps_order_label"] = ps_order_label_from_attrs(ps_grp.attrs)
 
-        plot_stride = max(1, y_win.shape[1] // max_plot_points)
-        result["ps_x_slice"] = y_win[0, ::plot_stride]
-        result["ps_y_slice"] = y_win[1, ::plot_stride]
-        result["ps_z_slice"] = y_win[2, ::plot_stride]
+            # Decimate DURING the read, never after. window_time is a free
+            # user knob, so the window can be an arbitrary fraction of the run
+            # (up to all of it); materialising ps_y[:, j0:j1+1] first would pull
+            # all 9 stored rows of that window into RAM — tens of GB on a long
+            # segmented run — just to throw away all but ~max_plot_points of it.
+            xs, ys, zs = read_rows_decimated(
+                ps_y, (0, 1, 2), j0, j1, max_plot_points)
+
+        result["ps_x_slice"] = xs
+        result["ps_y_slice"] = ys
+        result["ps_z_slice"] = zs
 
     # ---------- RK4 ----------
     if USE_RK4:
