@@ -48,7 +48,7 @@ plotting:
   slice_mode: last        # "first" or "last" — which window for slice plots
   gyro_window: last       # "first" or "last" — window for detailed view
   n_gyro: 75              # gyroperiods in the slice window
-                          # IMPORTANT: for trimmed files, n_gyro must be
+  invariants_only: true                        # IMPORTANT: for trimmed files, n_gyro must be
                           # ≤ the trimmed file's gyroperiods or the slice
                           # will be empty.
 
