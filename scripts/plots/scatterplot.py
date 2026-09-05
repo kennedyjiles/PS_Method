@@ -10,6 +10,7 @@ Usage:
     python scatterplot.py
     SUMMARY_CSV=electron_summary_results.csv USE_ELECTRON=1 python scatterplot.py
     SCATTER_METRIC=mu python scatterplot.py        # default metric is energy
+    SCATTER_METRIC=pphi python scatterplot.py      # canonical momentum |dP_phi|/P_phi0
 """
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -36,12 +37,17 @@ USE_ELECTRON = os.environ.get("USE_ELECTRON", "0") in ("1", "True", "true")  # T
 #              good methods pile up at the oscillation floor and 30°/90° split
 #              is a reference artifact — do NOT use this to rank).
 #   "energy" — |ΔE|/E₀.
+#   "pphi"   — |ΔP_φ|/P_φ,₀ (canonical momentum, tail average).
 METRIC = os.environ.get("SCATTER_METRIC", "energy")
 
 if METRIC == "mu":
     ERR_COLUMN = "errMu_mean"
     YLABEL = r"$|\Delta \mu|/\mu_\emptyset$"
     suffix = "_mu"
+elif METRIC == "pphi":
+    ERR_COLUMN = "errPphi_mean"
+    YLABEL = r"$|\Delta P_\phi|/|P_{\phi,0}|$"
+    suffix = "_pphi"
 else:
     ERR_COLUMN = "errE_mean"
     YLABEL = r"$|\Delta E|/E_0$"
@@ -131,8 +137,12 @@ for method, df_m in df_energy.groupby("method"):
 ax.set_xscale("log")
 ax.set_yscale('log') 
 
-ax.set_xlabel("Runtime (s)")
-# ax.tick_params(labelbottom=False)
+if METRIC == "energy":
+    # Stacked-figure top panel: keep the tick marks but drop the x-axis
+    # numbers and label — the pphi panel below carries them.
+    ax.tick_params(labelbottom=False)
+else:
+    ax.set_xlabel("Runtime (s)")
 
 ax.set_ylabel(YLABEL)
 
@@ -151,11 +161,6 @@ if METRIC == "mu":
     # squash every well-behaved method into a thin band. Bottom 1e-4 keeps the
     # smallest electron PS points (~3e-4) visible.
     ax.set_ylim(1e-4, 1e3)
-elif USE_ELECTRON:
-    # Other electron metrics: add headroom at the top so the upper-right
-    # legend clears the RK45 data instead of overlapping it (legend stays put).
-    _ymin, _ymax = ax.get_ylim()
-    ax.set_ylim(_ymin, _ymax * 1000)
 
 
 # === Legend (custom order, circle markers, no lines) ===
@@ -185,7 +190,11 @@ else:
             markerfacecolor="lightgray", markeredgecolor="lightgray",
             markersize=10, label="90° (plain fill)"),
     ]
-ax.legend(handles=method_handles + angle_handles, loc="upper right")
+# The lower-right corner is empty across metrics and particles, so the legend
+# lives there. pphi is the bottom panel of a stacked figure whose top (energy)
+# panel carries the identical legend, so it gets none.
+if METRIC != "pphi":
+    ax.legend(handles=method_handles + angle_handles, loc="lower right")
 
 fig.tight_layout()
 fig.savefig(outputfile, dpi=600, bbox_inches="tight")
