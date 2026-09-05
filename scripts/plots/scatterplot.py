@@ -190,9 +190,7 @@ else:
             markerfacecolor="lightgray", markeredgecolor="lightgray",
             markersize=10, label="90° (plain fill)"),
     ]
-# The lower-right corner is empty across metrics and particles, so the legend
-# lives there. pphi is the bottom panel of a stacked figure whose top (energy)
-# panel carries the identical legend, so it gets none.
+
 if METRIC != "pphi":
     ax.legend(handles=method_handles + angle_handles, loc="lower right")
 
