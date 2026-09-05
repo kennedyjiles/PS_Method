@@ -11,8 +11,6 @@ solvers:
   rk4: true
   rkg: true
 
-ps_order: 16
-
 # Manually override step sizes (not computed from steps_per_gyro)
 step_overrides:
   ps: 54.0
