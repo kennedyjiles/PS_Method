@@ -1,16 +1,22 @@
 #!/usr/bin/env python
-"""Compare two dipoleb PS h5 files (single-file vs segmented VDS).
+"""Compare ps/y and ps/orders of two h5 runs (e.g. single-file vs stitched VDS).
 
 Usage:
-    python compare_runs.py  <baseline_full.h5>  <segmented_full.h5>
+    python scripts/compare_runs.py <a.h5> <b.h5>
 
-Reads ps/y and ps/orders in column blocks (so it never loads a multi-TB
-dataset into RAM) and reports the max absolute difference plus whether the
-two runs are bit-identical.
+Streams column blocks so it never loads the full dataset. Prints the max
+absolute difference for information; the verdict and exit code (0 identical,
+1 differences or shape mismatch, 2 usage) are strict bit-identity. VDS
+sources are checked first so a dangling stitch is reported rather than
+compared as zeros.
 """
-import sys, numpy as np, h5py
+import os, sys, numpy as np, h5py
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from ps_method import writers as wr
 
 def main(a, b, block=200_000):
+    for path in (a, b):
+        wr.check_vds_readable(path)
     with h5py.File(a, "r") as fa, h5py.File(b, "r") as fb:
         ya, yb = fa["ps/y"], fb["ps/y"]
         oa, ob = fa["ps/orders"], fb["ps/orders"]
@@ -25,7 +31,7 @@ def main(a, b, block=200_000):
         for j0 in range(0, n, block):
             j1 = min(j0 + block, n)
             ca, cb = ya[:, j0:j1], yb[:, j0:j1]
-            d = float(np.max(np.abs(ca - cb))) if j1 > j0 else 0.0
+            d = float(np.max(np.abs(ca - cb)))
             max_abs = max(max_abs, d)
             bit_ident &= np.array_equal(ca, cb)
             orders_ident &= np.array_equal(oa[j0:j1], ob[j0:j1])

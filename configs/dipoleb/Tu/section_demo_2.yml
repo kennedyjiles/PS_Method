@@ -1,0 +1,10 @@
+phi_deg: -75 # gyrophase angle (degrees)
+use_gyroradius_L_correction: false  # Uses gyroradius-corrected L_eff for T_gyro computation
+x_initial: 2.6665375266094262
+energy_eV: 1e8        # kinetic energy in eV
+gyroperiods: 1e5
+
+
+solvers:
+  ps: true
+  adaptive: true

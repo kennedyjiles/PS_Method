@@ -1,31 +1,39 @@
 """
-Runtime-vs-error scatter plot (bubble size = particle energy) per solver.
+Runtime-vs-error bubble plot per solver (bubble size = particle energy).
 
-Reads a per-particle summary_results CSV (built by build_summary_results.py)
-and plots conservation error vs runtime for each method, with energies encoded
-as bubble sizes and pitch angles as fill/ring styles. Input file and metric are
-selected via environment variables.
+Reads a summary_results CSV written by build_summary_results.py (columns
+energy_label, pitch_deg, method, err{E,Mu,Pphi}_{mean,max}, runtime_s) and
+plots the chosen error against runtime on log-log axes. 90-degree points are
+plain; 30-degree (protons) or 60-degree (electrons) points get a black ring.
 
-Usage:
-    python scatterplot.py
-    SUMMARY_CSV=electron_summary_results.csv USE_ELECTRON=1 python scatterplot.py
-    SCATTER_METRIC=mu python scatterplot.py        # default metric is energy
-    SCATTER_METRIC=pphi python scatterplot.py      # canonical momentum |dP_phi|/P_phi0
+Usage (any cwd; the CSV is resolved next to this script unless absolute):
+    python scripts/plots/scatterplot.py                                # protons, |dE|/E0
+    SUMMARY_CSV=electron_summary_results.csv USE_ELECTRON=1 python scripts/plots/scatterplot.py
+    SCATTER_METRIC=mu|energy|pphi python scripts/plots/scatterplot.py  # default energy
+
+USE_ELECTRON=1 selects the electron energy->size map and the 60-degree ring;
+without it an electron CSV would map most bubbles to NaN, so that case aborts.
+Output: <csv stem>_<metric>.png next to the CSV. The energy panel omits x tick
+labels and the pphi panel omits the legend because they are stacked in the
+paper; the mu panel is self-contained.
 """
 import pandas as pd
 import matplotlib.pyplot as plt
 import re
 from matplotlib.lines import Line2D
 import os
-from matplotlib.ticker import LogLocator, LogFormatterSciNotation, NullFormatter, FuncFormatter
+from matplotlib.ticker import LogLocator, NullFormatter, FuncFormatter
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from ps_method.utils import plt_config, sparse_labels
 
 # === Load CSV ===
-# Defaults preserve the original behavior; env vars allow batch regeneration
-# (e.g. SUMMARY_CSV=electron_summary_results.csv SCATTER_METRIC=energy ...).
+# build_summary_results.py writes the CSVs next to this script, so resolve a
+# relative SUMMARY_CSV there rather than against the cwd.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.environ.get("SUMMARY_CSV", "proton_summary_results.csv")
+if not os.path.isabs(csv_path):
+    csv_path = os.path.join(SCRIPT_DIR, csv_path)
 df = pd.read_csv(csv_path)
 plt_config(scale=1)
 
@@ -93,6 +101,9 @@ else:
 
 
 df_energy["size"] = df_energy["energy_numeric_eV"].map(energy_size_map)
+if df_energy["size"].isna().any():
+    _missing = sorted(df_energy.loc[df_energy["size"].isna(), "energy_label"].unique())
+    raise SystemExit(f"energies {_missing} have no bubble size: wrong USE_ELECTRON setting for {csv_path}?")
 
 # === Scatter plot (runtime on x, error on y) ===
 fig, ax = plt.subplots(figsize=(7, 6))
@@ -147,7 +158,6 @@ else:
 ax.set_ylabel(YLABEL)
 
 ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=100))
-ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10.0))  
 ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=[]))
 ax.yaxis.set_minor_formatter(NullFormatter())
 ax.yaxis.set_major_formatter(FuncFormatter(sparse_labels))

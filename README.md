@@ -83,12 +83,14 @@ at the end.
 │   ├── dragt.py / si_to_dragt.py            # RESEARCH: Dragt-unit conversions
 │   ├── test_dragt_roundtrip.py / test_dragt_thorough.py  # Dragt-unit validation tests
 │   ├── inspect_hdf5.py / trim_h5.py / benchmark_compression.py  # h5 utilities
+│   ├── build_vds.py / compare_runs.py                          # segment stitching + bit-compare
 │   ├── run_at_night.py          #   pause/resume a long run within a time window
 │   └── plots/                   #   post-processing figure scripts
 │       ├── scatterplot.py / build_summary_results.py  # method-comparison plots (paper)
 │       ├── trappedbands.py / flux_map_builder.py / launch_fate_map.py  # RESEARCH
 │       ├── waltplot.py / timestepplots.py             # supplementary plots
-│       └── animate.py / animate_merged.py             # trajectory animations
+│       ├── animate_merged.py                          # trajectory animation (animate.py is legacy)
+│       └── animate_section.py / animate_mu_kicks.py   # explainer videos (section_demo runs)
 │
 ├── data/                        # Created on first run — all outputs land here
 ├── ps_method.yml                # Conda environment specification

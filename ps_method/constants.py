@@ -1,9 +1,11 @@
 """
 Shared physical constants for the PS_Method project.
 
-npfloat is resolved at import time via builtins (set by the driver script,
-e.g. dipoleb.py, before physics modules are imported).
-Falls back to np.float64 if builtins.npfloat has not been set yet.
+npfloat is looked up in builtins at import time. In practice every driver
+(dipoleb.py, constb.py, hyperb.py) and configs/config_loader.py import this
+module at the top of the file, BEFORE main() sets builtins.npfloat, so these
+constants are always np.float64 even in float128 runs. That is harmless (none
+carries more than ~10 significant digits) but it is not driver-controlled.
 """
 
 import builtins

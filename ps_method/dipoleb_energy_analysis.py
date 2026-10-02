@@ -160,11 +160,12 @@ def compute_ps_invariants_fused(
     every downstream number is unchanged:
       - KE   uniform output is aligned on the GLOBAL index (as
         _compute_energy_ps_chunked did).
-      - P_phi / mu uniform outputs restart the stride at each chunk boundary
-        (as their own loops did). That is inconsistent with KE and only
-        matches it when chunk_cols % energy_stride == 0, but it feeds the
-        summary tail statistics, so it is left alone here rather than
-        silently changing published numbers.
+      - P_phi / mu uniform outputs are aligned on the GLOBAL index too
+        (since 2026-10-02). They used to restart the stride at each chunk
+        boundary, which only matched KE when chunk_cols % energy_stride == 0;
+        otherwise the arrays were longer than KE and the summary writer,
+        which reuses the KE tail index j0_ps for them, averaged over a far
+        longer window (7.9% of the run instead of 0.01% on the 20-year VDS).
     Plots use the log-spaced series, which is global-indexed for all three.
 
     Returns a dict of per-quantity dicts, or None if there is nothing to read.
@@ -194,8 +195,10 @@ def compute_ps_invariants_fused(
         n_ke = (N + stride - 1) // stride
         ke_unif = np.empty(n_ke, dtype=ul.npfloat)
         k_ke = 0
-        # P_phi / mu uniform: per-chunk stride restart (their original scheme).
-        pp_dec, mu_dec = [], []
+        # P_phi / mu uniform: same global-index alignment as KE, so all three
+        # uniform arrays have identical length and cadence.
+        pp_unif = np.empty(n_ke, dtype=ul.npfloat)
+        mu_unif = np.empty(n_ke, dtype=ul.npfloat)
         # Log-spaced (plot) series, shared index bookkeeping.
         ke_log, pp_log, mu_log, t_log = [], [], [], []
 
@@ -219,10 +222,9 @@ def compute_ps_invariants_fused(
                 aligned = np.arange(first_aligned, i1, stride)
                 n_a = len(aligned)
                 ke_unif[k_ke:k_ke + n_a] = err_ke[aligned - i0]
+                pp_unif[k_ke:k_ke + n_a] = err_pp[aligned - i0]
+                mu_unif[k_ke:k_ke + n_a] = err_mu[aligned - i0]
                 k_ke += n_a
-            # .copy(): a strided view would pin the whole chunk via .base.
-            pp_dec.append(err_pp[::stride].copy())
-            mu_dec.append(err_mu[::stride].copy())
 
             # --- log-spaced sampling for the plots ---
             lo = np.searchsorted(log_idx, i0, side="left")
@@ -246,11 +248,11 @@ def compute_ps_invariants_fused(
     return {
         "ke":   {"uniform": ke_unif[:k_ke],
                  "t_log": t_log_arr, "drift_log": _cat(ke_log)},
-        "pphi": {"uniform": _cat(pp_dec), "initial": P_phi_initial,
+        "pphi": {"uniform": pp_unif[:k_ke], "initial": P_phi_initial,
                  "t_log": t_log_arr, "drift_log": _cat(pp_log),
                  "ylabel": (r"$|\Delta P_\phi|$" if P_phi_initial == 0
                             else r"$|\Delta P_\phi|/|P_{\phi,0}|$")},
-        "mu":   {"uniform": _cat(mu_dec), "initial": mu_initial,
+        "mu":   {"uniform": mu_unif[:k_ke], "initial": mu_initial,
                  "t_log": t_log_arr, "drift_log": _cat(mu_log),
                  "ylabel": (r"$|\Delta \mu_n|$" if mu_initial == 0
                             else r"$|\Delta \mu_n|/\mu_0$")},

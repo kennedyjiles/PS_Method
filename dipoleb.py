@@ -277,6 +277,13 @@ def main(cfg_path, replot=False):
     if DEBUG:
         logger = dbg.setup_logger("dipole_logger", "dipoleb.log", level=logging.DEBUG) #This logger will log to a file in the working directory, it will overwrite each run unless you change the filename
         tracemalloc.start()
+    else:
+        # The best-effort `except Exception: logger.exception(...)` handlers
+        # around the Dragt / mu / bounce sections need a logger even when
+        # DEBUG is off; without this they raise NameError instead of logging
+        # and continuing. No handlers are attached, so Python's last-resort
+        # handler prints ERROR-level records (with traceback) to stderr.
+        logger = logging.getLogger("dipole_logger")
 
     params     = compute_derived(cfg, npfloat=npfloat)
 
@@ -545,7 +552,17 @@ def main(cfg_path, replot=False):
                     ps_store_stride = ps_decimate if ps_decimate > 1 else 1
                     steps_ps_actual = n_store_actual * ps_store_stride
                     if steps_ps_actual < steps_ps:
+                        # Halted run (adaptive PS gave up) or otherwise short
+                        # file: keep every span-derived quantity consistent with
+                        # the data, or the summary tail window is sized from
+                        # the target span and collapses to a single sample.
                         steps_ps = steps_ps_actual
+                        norm_time = steps_ps * ps_step
+                        gyroperiods = norm_time / T_gyro
+                        print(f"  NOTE: PS data covers {steps_ps:,} steps "
+                              f"({gyroperiods:.4g} gyroperiods), short of the "
+                              f"configured span; norm_time/gyroperiods/physical_time "
+                              f"reconciled to the data.")
 
                 # === RK4 ===
                 if USE_RK4 and "rk4" in cached:
@@ -787,7 +804,18 @@ def main(cfg_path, replot=False):
                     ps_store_stride = ps_decimate if ps_decimate > 1 else 1
                     steps_ps_actual = n_store_actual * ps_store_stride
                     if steps_ps_actual < steps_ps:
+                        # Halted run (adaptive PS gave up) or otherwise short
+                        # file: keep every span-derived quantity consistent with
+                        # the data, or the summary tail window is sized from
+                        # the target span and collapses to a single sample.
                         steps_ps = steps_ps_actual
+                        norm_time = steps_ps * ps_step
+                        gyroperiods = norm_time / T_gyro
+                        physical_time = norm_time * abs(tau_time)
+                        print(f"  NOTE: PS data covers {steps_ps:,} steps "
+                              f"({gyroperiods:.4g} gyroperiods), short of the "
+                              f"configured span; norm_time/gyroperiods/physical_time "
+                              f"reconciled to the data.")
 
                 # === RK4 ===
                 if USE_RK4 and "rk4" in cached:
@@ -838,7 +866,8 @@ def main(cfg_path, replot=False):
                     _r_i = np.sqrt(x_initial**2 + y_initial**2 + z_initial**2)
                     _L_mon = float(_r_i**3 / _rho_i**2)
                 dragt_mon = df.conservation_monitor(_L_mon, charge_sign,
-                                         check_every=1, rtol=dragt_monitor_rtol)
+                                         check_every=1, rtol=dragt_monitor_rtol,
+                                         initial_state=initial_pos_vel)
                 # ----------------------------------
                 _stream_args = dict(
                     initial_pos_vel_ps=initial_pos_vel,
@@ -1629,8 +1658,14 @@ def main(cfg_path, replot=False):
             vx_initial, vy_initial, v_tau,
             charge_sign, gamma,
             USE_PS=USE_PS, cache_path=cache_path,
-            ps_step=ps_step, time_factor=time_factor,
+            # The h5 stores every ps_decimate-th step, and run_section uses
+            # this value as the time between STORED samples (adiabaticity
+            # time axis, Poincare colour blocks). Passing the raw ps_step
+            # compressed both by ps_decimate (5x on the 20-year run).
+            ps_step=ps_step * (ps_decimate if ps_decimate > 1 else 1),
+            time_factor=time_factor,
             cache_velocity_rtol=cache_velocity_rtol,
+            T_gyro=T_gyro,
             fig_folder=fig_folder, stem=stem,
             poincare_func=_dragt_plot(dplt.poincare),
             gyrophase_mu_func=_dragt_plot(dplt.gyrophase_mu),
@@ -1873,6 +1908,7 @@ def main(cfg_path, replot=False):
 
     wr.summary_txt_dipoleb(
         summary=summary, run_folder=run_folder, stem=stem,
+        charge_sign=charge_sign,
         dragt_log=dragt_log, bounce_results=bounce_results, drift_results=drift_results,
         gyroperiods=gyroperiods, norm_time=norm_time, cache_path=cache_path,
         USE_PS=USE_PS, USE_RK4=USE_RK4, USE_RK45=USE_RK45, USE_RKG=USE_RKG,

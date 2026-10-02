@@ -125,10 +125,15 @@ def _process_chunk_kernel(
                     sample_phis[n_samples] = phi_tc
                     n_samples += 1
 
-        last_s = si
-        last_t = ti
-        last_y = y_chunk[:, i].copy()
-        has_prev = True
+        # Only advance the reference sample when this one is significant.
+        # Advancing unconditionally let a sub-threshold (or exactly zero)
+        # sample sit between two opposite signs: the next pair then shared a
+        # sign and the crossing was lost rather than deferred.
+        if abs(si) >= s_eps:
+            last_s = si
+            last_t = ti
+            last_y = y_chunk[:, i].copy()
+            has_prev = True
 
     return (last_s, last_t, last_y, last_cross_t, last_phi,
             has_phi_prev,

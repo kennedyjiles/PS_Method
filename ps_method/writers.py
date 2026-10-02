@@ -61,7 +61,12 @@ def _to_serializable(x):
         return int(x)
     if isinstance(x, (np.ndarray,)):
         return x.tolist()
-    return x
+    if isinstance(x, np.bool_):
+        return bool(x)
+    # json.dumps only calls `default` for objects it cannot serialise, so
+    # returning x unchanged here makes it report "Circular reference
+    # detected" instead of naming the offending type.
+    raise TypeError(f"summary value of type {type(x).__name__} is not JSON-serialisable")
 
 
 def run_hash(params: dict) -> str:
@@ -174,23 +179,19 @@ def vds_has_missing_sources(h5_path):
     stitch reads as corrupt-but-valid data (all-zero position columns → r=0 →
     NaNs downstream). Callers use this to refuse to trust such a file. Returns
     False for non-VDS files, unreadable files, or fully-intact VDSes.
+
+    Delegates to missing_vds_sources so that the staleness decision uses the
+    same search order HDF5 itself uses ($HDF5_VDS_PREFIX, the file's folder,
+    the cwd). A separate folder-only check here used to declare a VDS stale
+    even when HDF5_VDS_PREFIX made every source readable, which sent the
+    driver into a full re-simulation.
     """
     if not os.path.exists(h5_path):
         return False
-    folder = os.path.dirname(os.path.abspath(h5_path))
     try:
-        with h5py.File(h5_path, "r") as f:
-            if "ps/y" not in f or not f["ps/y"].is_virtual:
-                return False
-            for vs in f["ps/y"].virtual_sources():
-                fn = vs.file_name
-                if os.path.isabs(fn) and os.path.exists(fn):
-                    continue
-                if not os.path.exists(os.path.join(folder, os.path.basename(fn))):
-                    return True
+        return len(missing_vds_sources(h5_path)) > 0
     except (OSError, KeyError, RuntimeError):
         return False
-    return False
 
 
 def synthesize_full_summary(hash_str, output_folder, full_path=None):
@@ -774,6 +775,10 @@ def summary_txt_dipoleb(
     # (ea.compute_mu_errors -> rel_mu_ps). None when PS did not run, in which
     # case only the tail-window figures above are reported.
     mu_max_run=None,
+    # Charge sign for the RKG canonical -> kinetic velocity conversion
+    # (v = p - charge_sign * A). Defaults to +1 (proton); electron+RKG runs
+    # previously got the wrong mu tail here.
+    charge_sign=1,
 ):
     """Write the dipoleb summary text file, including tail-averaged energy
     and mu errors, Dragt diagnostics, and bounce/drift statistics."""
@@ -823,8 +828,10 @@ def summary_txt_dipoleb(
             summarize_to_file("PS", rel_drift_ps[j0_ps:], f)
 
         # --- P_phi (canonical angular momentum) tail errors ---
-        # Same tail-window indices as the energy block — the arrays are sampled
-        # at the same cadence per solver, so reusing j0_* is correct.
+        # Same tail-window indices as the energy block. For PS this relies on
+        # compute_ps_invariants_fused aligning all three uniform series on the
+        # global index (true since 2026-10-02; before that the P_phi/mu arrays
+        # could be longer than KE and j0_ps landed far too early).
         f.write("\n=== |delta P_phi|/|P_phi_0| (tail average) ===\n")
         if USE_RK45 and rel_pphi_rk45 is not None:
             summarize_to_file("RK45", rel_pphi_rk45[j0_rk45:], f)
@@ -860,7 +867,7 @@ def summary_txt_dipoleb(
             for i in range(len(r_tail)):
                 A_tail[i] = vector_potential(r_tail[i])
 
-            v_tail = p_tail - A_tail
+            v_tail = p_tail - charge_sign * A_tail
             state_tail = np.hstack((r_tail, v_tail))
 
             mu_tail = compute_mu_rk(state_tail)

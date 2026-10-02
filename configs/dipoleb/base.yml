@@ -64,7 +64,9 @@ window_time: 300.0         # time window for slice plots (normalized units)
 # Set output_root to prepend a path:
 #   output_root: "thesis/chapter3"  → thesis/chapter3/data/dipoleb/<config-name>/
 # Leave null for the default layout.
-output_root: /Volumes/Extreme
+# output_root: /Volumes/Extreme SSD
+# output_root: /Volumes/Extreme
+output_root: null
 read_data: true                # scan for cached runs and load from disk
 
 # --- Special modes (leave null for normal runs) ---
@@ -130,12 +132,12 @@ round_decimals: 1         # decimal places for step size rounding
 # --- Adaptive PS Settings ---
 # Only used when solvers.adaptive = true. Safe to ignore for fixed-step runs.
 ps_adaptive:
-  order_low: 50             # minimum PS order for adaptive stepping
-  order_high: 300           # maximum PS order for adaptive stepping
-  grow_factor: 1.5          # step-size growth multiplier on success
-  shrink_factor: 0.5        # step-size shrink multiplier on failure
-  steps_per_local_gyro: 200 # target steps per local gyroperiod
-  min_fast_path_N: 100      # minimum steps before fast-path kicks in
+  order_low: 50  # only sets how fast dt recovers toward the |B|-derived dt after a rejected substep (growth is capped at dt_B)
+  order_high: 60  # reject + shrink a substep that needs more than this PS order (was 300: never fired below ps_order=100)
+  grow_factor: 1.5  # dt recovery multiplier after a rejected substep; growth is capped at the |B|-derived dt
+  shrink_factor: 0.5  # dt multiplier after a rejected substep
+  steps_per_local_gyro: 10  # substeps per LOCAL gyroperiod in adaptive regions (was 200: ~5x the cost optimum of 6-10, same ~1e-13 energy error)
+  min_fast_path_N: 10  # fast (fixed-step) path allowed while >= this many ps_steps fit in one local gyroperiod; MUST be <= steps_per_gyro.ps or the fast path never runs (was 100 with 20 steps/gyro -> always adaptive)
 
 # --- Dragt Monitor ---
 dragt_monitor_rtol: 1.0e-4  # relative tolerance for Dragt conservation monitor

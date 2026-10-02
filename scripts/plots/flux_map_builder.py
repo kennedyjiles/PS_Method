@@ -1,43 +1,26 @@
 #!/usr/bin/env python3
 """
-Dwell Map Builder
-=================
-Post-processes batch run h5 trajectories into a meridian-plane
-dwell-occupancy map vs (ρ, z) in Earth radii.
-
-NOTE on terminology: this builds a TRAJECTORY DWELL-OCCUPANCY map, not a
-true omnidirectional particle flux.  Two physics ingredients required for a
-true flux map are NOT applied here:
-  - The toroidal Jacobian (2π·ρ) that converts a Cartesian bin count into a
-    3D volume density;
-  - A genuine pitch-angle integration (current pipeline uses one pitch per
-    cell).
-The output is therefore best read as "where each orbit spends its time,
-weighted by an assumed energy spectrum and an L-shell population profile."
-That's still informative for showing belt-shape geometry, but it is not a
-density and should not be overlaid quantitatively on flux references.
-
-The idea:
-  1. For each trapped orbit, compute how much TIME it spends in each (ρ, z) bin
-     → this gives a per-orbit "shape" (dwell time per bin, normalized)
-  2. Weight each orbit by a power-law energy spectrum j(E) ∝ E^(-γ)
-     and by sin(α₀) for pitch-angle isotropy
-  3. Sum across all orbits → meridian dwell-occupancy map
+Meridian-plane dwell-occupancy map from batch h5 trajectories.
 
 Usage:
-    # Build from all batch h5 files
-    python flux_map_builder.py outputs/outputs_rawdata/*.h5
+    python scripts/plots/flux_map_builder.py --group <group> [--per-energy] [--save-state F.npz]
+    python scripts/plots/flux_map_builder.py --load-state F.npz [--spectral-index 2 --radial-index 4]
+    python scripts/plots/flux_map_builder.py path/to/_rawdata/*_full.h5 --E-min 10e6
 
-    # With energy range filter
-    python flux_map_builder.py outputs/outputs_rawdata/*.h5 --E-min 10e6
-
-    # Custom grid resolution
-    python flux_map_builder.py outputs/outputs_rawdata/*.h5 --bins 100
-
-    # Only process files from a specific output folder
-    python flux_map_builder.py outputs/outputs_rawdata/*.h5 --output-dir outputs/dwell_map
+Inputs : data/dipoleb/<group>/*/_rawdata/*_full.h5 (ps/y rows 0-2 = x, y, z in
+         R_E; summary_json meta gives energy_eV, pitch_deg, x0) and each run
+         folder's master_simulation_log.csv (boundary column; OPEN runs are
+         skipped unless --include-open).
+Outputs: --output (default dwell_map_meridian.png); with --per-energy also
+         <stem>_<E>MeV.png; --save-state keeps per-orbit unweighted histograms
+         so weights can change without re-reading the h5 files.
+Each orbit is normalised to unit total (shape only), then weighted by
+E^-gamma, sin(alpha) d(alpha), optional dE and w(L). This is NOT an
+omnidirectional flux: no toroidal Jacobian and one pitch angle per cell. No
+time dataset is stored, so bins count saved steps, which equals dwell time
+only for fixed-step runs. Columns that read as exactly (0,0,0) come from a
+VDS whose segment files are missing; they are dropped with a warning.
 """
-
 import sys
 import os
 import csv
@@ -117,7 +100,7 @@ def accumulate_dwell_time(h5_path, rho_edges, z_edges, chunk_size=1_000_000,
             meta["energy_eV"]  = m.get("energy_eV", None)
             meta["pitch_deg"]  = m.get("pitch_deg", None)
             meta["phi_deg"]    = m.get("phi_deg", None)
-            meta["L_eff"]      = m.get("x_initial", None)   # writer stores "x_initial", not "x0"
+            meta["L_eff"]      = m.get("x0", None)
             meta["particle"]   = m.get("particle", "unknown")
             meta["stem"]       = m.get("stem", os.path.basename(h5_path))
             meta["norm_time"]  = m.get("norm_time", None)
@@ -149,6 +132,7 @@ def accumulate_dwell_time(h5_path, rho_edges, z_edges, chunk_size=1_000_000,
 
         hist_2d = np.zeros((len(rho_edges) - 1, len(z_edges) - 1), dtype=np.float64)
         hit_boundary = False
+        n_zero_cols = 0
 
         for start in range(0, n_steps, chunk_size):
             end = min(start + chunk_size, n_steps)
@@ -157,6 +141,17 @@ def accumulate_dwell_time(h5_path, rho_edges, z_edges, chunk_size=1_000_000,
             x = chunk[0]
             y = chunk[1]
             z = chunk[2]
+
+            # A VDS with missing segment files reads those columns as exact
+            # zeros; they would be binned at the origin and skew the per-orbit
+            # normalisation, so drop them and report the fraction below.
+            zero = (x == 0.0) & (y == 0.0) & (z == 0.0)
+            if zero.any():
+                n_zero_cols += int(zero.sum())
+                keep = ~zero
+                x, y, z = x[keep], y[keep], z[keep]
+                if len(x) == 0:
+                    continue
 
             # Truncate at first atmosphere hit if requested
             if truncate_atm and hit_atm:
@@ -194,6 +189,11 @@ def accumulate_dwell_time(h5_path, rho_edges, z_edges, chunk_size=1_000_000,
 
             if hit_boundary:
                 break
+
+    if n_zero_cols:
+        print(f"  WARNING: {meta.get('stem', h5_path)}: {n_zero_cols:,} of {n_steps:,} columns "
+              f"({100.0 * n_zero_cols / n_steps:.1f}%) read as (0,0,0) and were dropped "
+              f"-- missing VDS segment files?")
 
     # Normalize to fractional occupancy so orbits with different
     # total simulation times contribute shape, not magnitude.
@@ -751,11 +751,7 @@ Examples:
                              "up to the first impact (discard post-impact trajectory).")
     parser.add_argument("--r-atm", type=float, default=1.0, dest="r_atm",
                         help="Atmosphere radius in R_E for --truncate-atm (default: 1.0).")
-    parser.add_argument("--exclude-open", action="store_true", default=True, dest="exclude_open",
-                        help="Skip orbits with OPEN boundary status (default: True). "
-                             "Open orbits are escape trajectories and should not "
-                             "contribute to a trapped-particle dwell map.")
-    parser.add_argument("--include-open", action="store_false", dest="exclude_open",
+    parser.add_argument("--include-open", action="store_false", dest="exclude_open", default=True,
                         help="Include OPEN orbits (overrides --exclude-open).")
     parser.add_argument("--rescale-peak", type=float, default=None,
                         help="Rescale map so peak matches this value (cosmetic only — does "
@@ -831,7 +827,7 @@ Examples:
         if not os.path.isdir(group_dir):
             print(f"Group directory not found: {group_dir}")
             sys.exit(1)
-        pattern = os.path.join(group_dir, "*", "_rawdata", "*.h5")
+        pattern = os.path.join(group_dir, "*", "_rawdata", "*_full.h5")   # not the _segNNN files
         discovered = sorted(glob.glob(pattern))
         print(f"Discovered {len(discovered)} h5 files from group '{args.group}'.")
         h5_paths.extend(discovered)
@@ -1027,11 +1023,11 @@ Examples:
     # ── Combined map ─────────────────────────────────────────────────
     E_range = f"{min(energies_used)/1e6:.0f}–{max(energies_used)/1e6:.0f} MeV" if energies_used else ""
     spec_label = f"γ={args.spectral_index}"
-    title = (f"PS Meridian Flux Map — Proton > {args.E_min/1e6:.0f} MeV\n"
+    title = (f"PS Meridian Dwell Map — Proton > {args.E_min/1e6:.0f} MeV\n"
              f"{n_used} orbits, {E_range}, "
              f"spectrum: {spec_label}"
              if args.E_min else
-             f"PS Meridian Flux Map — Proton ({E_range})\n"
+             f"PS Meridian Dwell Map — Proton ({E_range})\n"
              f"{n_used} orbits, spectrum: {spec_label}")
 
     plot_dwell_map(dwell_2d, rho_edges, z_edges,

@@ -1,40 +1,34 @@
 """
-Quick HDF5 inspector — prints the group/dataset tree with shapes, dtypes,
-and attributes for a run h5 file. Read-only.
+Print the group/dataset tree of an h5 file with shapes, dtypes and attrs.
 
-    inspect_hdf5 — open a file and recursively print its structure
+Usage:
+    python scripts/inspect_hdf5.py data/dipoleb/<run>/_rawdata/<hash>_full.h5
+
+Read-only. Virtual datasets are tagged with how many backing _segNNN.h5
+sources resolve (same search order as HDF5: $HDF5_VDS_PREFIX, the file's
+folder, cwd); an unresolved VDS reads as zeros with no error, which this
+flags.
 """
 import h5py
 import os
 import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from ps_method import writers as wr
 
 
-# to use: python scripts/inspect_hdf5.py data/<config-name>/_rawdata/run_xxxxxxxx.h5
-
-def _vds_tag(dset, folder):
-    """For a Virtual Dataset, report how many backing source files are present.
-
-    Sources are stored as basenames (folder-relative), so a stitched _full.h5
-    reads its _segNNN.h5 files from the same directory. A VDS silently returns
-    fill-value (0) for absent sources, so a missing count flags likely-corrupt
-    (zero-filled) reads — something the shape/dtype alone can't reveal.
-    """
+def _vds_tag(dset, path):
+    """Tag a virtual dataset with its resolvable-source count (writers decides)."""
     if not dset.is_virtual:
         return ""
-    srcs = dset.virtual_sources()
-    present = 0
-    for vs in srcs:
-        fn = vs.file_name
-        if (os.path.isabs(fn) and os.path.exists(fn)) or \
-           os.path.exists(os.path.join(folder, os.path.basename(fn))):
-            present += 1
-    total = len(srcs)
-    warn = "" if present == total else "  ⚠ MISSING SOURCES → reads as zeros"
+    total = len(dset.virtual_sources())
+    group, _, name = dset.name.strip("/").rpartition("/")
+    missing = len(wr.missing_vds_sources(path, group=group, dset=name))
+    present = total - missing
+    warn = "" if missing == 0 else "  ⚠ MISSING SOURCES → reads as zeros"
     return f"  [VIRTUAL: {present}/{total} sources present{warn}]"
 
 
 def inspect_hdf5(path):
-    folder = os.path.dirname(os.path.abspath(path))
     with h5py.File(path, "r") as f:
         print(f"\n📂 File: {path}")
         print("Root attributes:")
@@ -48,12 +42,13 @@ def inspect_hdf5(path):
                     print(f"   (attr) {k}: {v}")
             elif isinstance(obj, h5py.Dataset):
                 print(f"  📄 Dataset: {name}  shape={obj.shape} "
-                      f"dtype={obj.dtype}{_vds_tag(obj, folder)}")
+                      f"dtype={obj.dtype}{_vds_tag(obj, path)}")
 
         f.visititems(walk)
 
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python inspect_hdf5.py path/to/file.h5")
-    else:
-        inspect_hdf5(sys.argv[1])
+        print("Usage: python scripts/inspect_hdf5.py path/to/file.h5")
+        sys.exit(2)
+    inspect_hdf5(sys.argv[1])

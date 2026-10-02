@@ -111,8 +111,19 @@ def physics_hash(cfg):
     keys — stripping them keeps every such yml hashing to its original
     value, so re-runs and segmented resumes still find their cached h5.
     For cleaned configs the strip is a no-op.
+
+    FIXED-STEP ps_adaptive COMPAT: when solvers.adaptive is false the
+    ps_adaptive block never touches the trajectory, but it has always been
+    hashed. The three tuning keys retuned in 2026-10 (order_high,
+    steps_per_local_gyro, min_fast_path_N) are therefore pinned to their
+    historical values (300 / 200 / 100) for fixed-step configs before
+    hashing, so retuning the defaults in base.yml does not invalidate any
+    cached fixed-step h5 (every stored fixed-step provenance yml carried
+    exactly those values). Adaptive configs hash their real values, as the
+    tuning does change their step sequence.
     """
     from ps_method.writers import run_hash
+    _is_adaptive = bool((cfg.get("solvers") or {}).get("adaptive", False))
     pruned = {}
     for k, v in cfg.items():
         if k in _NON_HASH_KEYS:
@@ -120,6 +131,9 @@ def physics_hash(cfg):
         if k in ("solvers", "steps_per_gyro", "step_overrides") \
                 and isinstance(v, dict) and "boris" in v:
             v = {kk: vv for kk, vv in v.items() if kk != "boris"}
+        if k == "ps_adaptive" and isinstance(v, dict) and not _is_adaptive:
+            v = {**v, "order_high": 300, "steps_per_local_gyro": 200,
+                 "min_fast_path_N": 100}
         pruned[k] = v
     physics = {k: _canonicalize_for_hash(v) for k, v in pruned.items()}
     return run_hash(physics)

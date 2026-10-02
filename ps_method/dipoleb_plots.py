@@ -418,7 +418,9 @@ def ke_error(
 def poincare(
     run_folder, L_shell_dragt, gamma,
     rho_bnd, rho_dot_bnd, rho_0_sim, rho_dot_0_sim,
-    crossings=None, stem="", use_titles=True, show_sim_units=True,
+    crossings=None, crossing_gyro=None, gyro_block=1e7,
+    stem="", use_titles=True, show_sim_units=True,
+    crossing_ms=0.6, launch_ms=3.5,
 ):
     """
     Poincaré surface of section at z=0 in Dragt dimensionless units, with a
@@ -428,6 +430,19 @@ def poincare(
     crossings: tuple (rho_dragt, rho_dot_dragt, ...) collected by
                analysis_chunked, or None if no equatorial crossings found.
     show_sim_units: draw the R_E / (R_E/tau_0) axes on top and right.
+    crossing_ms: marker size for the crossing dots. Sections carry thousands of
+               points, so these are deliberately tiny — the structure (curves,
+               islands, or a filled sea) is what should read, not the individual
+               markers. The legend gets a legible swatch regardless.
+    launch_ms: marker size for the t=0 diamond. Kept a few times the crossing
+               dots so it stays findable, but not so large it outweighs the
+               structure it sits in.
+    crossing_gyro: elapsed equatorial gyroperiods at each kept crossing, or
+               None. When given, the dots step through a colour wheel once per
+               gyro_block gyroperiods, so temporal clustering shows up as
+               colour clustering. A run shorter than one block draws in a
+               single colour, as does crossing_gyro=None.
+    gyro_block: gyroperiods per colour step.
     """
     fig, ax = plt.subplots(figsize=(10, 7))
 
@@ -439,16 +454,46 @@ def poincare(
         print("WARNING: No accessible boundary region for this energy and launch angle!")
 
     # --- Launch point (t=0) ---
-    ax.plot(rho_0_sim / L_shell_dragt, rho_dot_0_sim * L_shell_dragt**2 / gamma, 'D',
-            markerfacecolor='blue', markeredgecolor='black', markersize=6, label="Launch (t=0)")
+    # Dragt velocity scale is v_d = v_sim * L^2 with NO gamma division (gamma
+    # is already folded into tau_0); the crossing dots use exactly that, so the
+    # launch marker must too or it sits off the section for relativistic runs.
+    ax.plot(rho_0_sim / L_shell_dragt, rho_dot_0_sim * L_shell_dragt**2, 'D',
+            markerfacecolor='blue', markeredgecolor='black', markeredgewidth=0.5,
+            markersize=launch_ms, label="Launch (t=0)")
 
     # --- Equatorial (z=0) crossings ---
+    crossing_line = None
+    _block_handles = []
     if crossings is None:
         print("WARNING: No equatorial crossings (z=0) found!")
     else:
         rho_dragt, rho_dot_dragt = crossings[0], crossings[1]
-        ax.plot(rho_dragt, rho_dot_dragt, 'D', markerfacecolor='none',
-                markeredgecolor=COLORS["ps"], markersize=4, label="Crossings")
+        blocks = None
+        if crossing_gyro is not None and gyro_block:
+            cg = np.asarray(crossing_gyro, dtype=float)
+            if cg.size == len(rho_dragt) and np.isfinite(cg).any():
+                blocks = np.floor(cg / float(gyro_block)).astype(int)
+                blocks -= blocks.min()
+
+        if blocks is None or blocks.max() == 0:
+            # one block: short run, or no clock supplied
+            crossing_line, = ax.plot(rho_dragt, rho_dot_dragt, '.',
+                                     color=COLORS["ps"], markersize=crossing_ms,
+                                     markeredgecolor='none', label="Crossings")
+        else:
+            n_blk = int(blocks.max()) + 1
+            wheel = plt.get_cmap("tab10").colors
+            for b in range(n_blk):
+                m = blocks == b
+                if not m.any():
+                    continue
+                col = wheel[b % len(wheel)]
+                ax.plot(rho_dragt[m], rho_dot_dragt[m], '.', color=col,
+                        markersize=crossing_ms, markeredgecolor='none')
+                _block_handles.append((b, col))
+            print(f"  Section coloured in {n_blk} blocks of "
+                  f"{gyro_block:.0e} equatorial gyroperiods"
+                  + (" (wheel repeats)" if n_blk > len(wheel) else ""))
 
     ax.set_xlabel(r"$\rho$  (Dragt)")
     ax.set_ylabel(r"$\dot{\rho}$  (Dragt)")
@@ -466,15 +511,37 @@ def poincare(
             "top", functions=(lambda rd: rd * _L, lambda rr: rr / _L))
         sec_x.set_xlabel(r"$\rho$  ($R_E$)")
         sec_y = ax.secondary_yaxis(
-            "right", functions=(lambda vd: vd * _g / _L**2,
-                                lambda vs: vs * _L**2 / _g))
+            "right", functions=(lambda vd: vd / _L**2,
+                                lambda vs: vs * _L**2))
         sec_y.set_ylabel(r"$\dot{\rho}$  ($R_E/\tau_0$)")
 
     if use_titles:
         ax.set_title("Poincaré Surface of Section at z=0 "
                      r"(Dragt units; $R_E$ units on top/right)")
     ax.grid(True)
-    ax.legend(loc="upper right", fontsize=9)
+    def _gy(v):
+        """1e7 -> '1e7', so the block labels stay short."""
+        if v == 0:
+            return "0"
+        e = int(np.floor(np.log10(abs(v))))
+        m = v / 10.0 ** e
+        return f"{m:.0f}e{e}" if abs(m - round(m)) < 1e-9 else f"{v:.1e}"
+
+    _handles, _labels = ax.get_legend_handles_labels()
+    # the plotted dots are ~0.6 pt, invisible as a legend swatch
+    _dot = lambda c: plt.Line2D([], [], ls="none", marker=".", color=c,
+                                markersize=8, markeredgecolor="none")
+    _handles = [_dot(COLORS["ps"]) if h is crossing_line else h
+                for h in _handles]
+    if _block_handles:
+        if len(_block_handles) <= 8:
+            for b, col in _block_handles:
+                _handles.append(_dot(col))
+                _labels.append(f"{_gy(b * gyro_block)}-{_gy((b + 1) * gyro_block)} $T_g$")
+        else:
+            _handles.append(_dot(_block_handles[0][1]))
+            _labels.append(f"Crossings (colour steps every {_gy(gyro_block)} $T_g$)")
+    ax.legend(_handles, _labels, loc="upper right", fontsize=9)
     fig.savefig(os.path.join(run_folder, f"{stem}_dragt_surface_section.png"), dpi=300)
     plt.close(fig)
 
@@ -951,6 +1018,7 @@ def mu_deviation(
 
     ax.set_xlabel(r"$\tau/T$")
     ax.set_ylabel(r"$|\Delta \mu|/\mu_\emptyset$")
+    ax.set_ylim(1e-4, 1.5e0)
 
     if USE_PLOT_TITLES:
         ax.set_title(f"{particle_type} Magnetic Moment Variations in Dipole B Field")

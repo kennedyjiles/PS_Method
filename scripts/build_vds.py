@@ -1,48 +1,20 @@
 """
-(Re)build the stitched <hash>_full.h5 Virtual Dataset over a folder of
-segment files — without re-running the solver.
+Rebuild <hash>_full.h5 as an HDF5 Virtual Dataset over <hash>_segNNN.h5 files
+without re-running the solver (e.g. after segments were offloaded to another
+drive and the auto-stitch missed them).
 
-WHEN YOU NEED THIS
-------------------
-Segmented runs (ps_segment_gyroperiods > 0) write one <hash>_segNNN.h5 per
-segment and auto-stitch them into <hash>_full.h5 at the end of the run. That
-auto-stitch scans the folder the run wrote to. So you need to rebuild by hand
-whenever the segments and the VDS get separated, e.g.:
+Usage:
+    python scripts/build_vds.py <_rawdata folder> [--hash HASH] [--force]
 
-  * You moved segments to an external drive *during* the run, so the auto-built
-    _full.h5 only covered the segments still in the local folder.
-  * You gathered segments from several places into one folder and want a fresh
-    stitch over the complete set.
-  * You deleted _full.h5 and just want to regenerate the (tiny) pointer file.
-
-The VDS is only pointers — this is fast and copies no trajectory data. It
-records each segment by *basename*, so the resulting _full.h5 must live in the
-SAME folder as its _segNNN.h5 files (that's how HDF5 resolves them).
-
-USAGE
------
-    python scripts/build_vds.py <folder> [--hash HASH]
-
-    <folder>   the _rawdata folder holding the <hash>_segNNN.h5 files
-    --hash     the run hash (the NNN-less stem). Optional: if omitted and the
-               folder holds segments for exactly one hash, it's auto-detected.
-
-EXAMPLES
-    # after moving all segments to the drive, stitch them there:
-    python scripts/build_vds.py /Volumes/Jiles_thesi/data/dipoleb/run/_rawdata
-
-    # be explicit when several runs share a folder:
-    python scripts/build_vds.py path/to/_rawdata --hash a51bff
-
-NOTES
-    * Only the unbroken 0,1,2,… segment prefix is stitched; a gap (missing
-      middle segment) stops the stitch there and is reported.
-    * It refuses to overwrite a real (non-virtual) <hash>_full.h5, so it can't
-      clobber a single-file run that happens to share the name.
-    * Verify afterwards with:  python scripts/inspect_hdf5.py <folder>/<hash>_full.h5
-      (look for "VIRTUAL: N/N sources present").
+--hash is auto-detected when the folder holds segments for one run only.
+Only the unbroken seg000, seg001, ... prefix is stitched; a gap is reported
+and later segments are ignored. Segments are referenced by basename, so the
+result must stay in the same folder (or be reached via HDF5_VDS_PREFIX).
+Refuses to overwrite a non-virtual _full.h5. The rebuilt file holds only the
+ps group plus a summary synthesized from the per-segment summaries, so any
+rk4/rk45/rkg data the driver appended to an existing _full.h5 would be LOST:
+the script refuses in that case unless --force is given.
 """
-
 import os
 import re
 import sys
@@ -69,6 +41,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="(Re)build <hash>_full.h5 as a VDS over a folder of segments.")
     parser.add_argument("folder", help="the _rawdata folder holding the segments")
+    parser.add_argument("--force", action="store_true",
+                        help="rebuild even if the existing _full.h5 holds rk4/rk45/rkg data (it is lost)")
     parser.add_argument("--hash", default=None,
                         help="run hash (auto-detected if the folder has just one)")
     args = parser.parse_args()
@@ -97,13 +71,28 @@ def main():
     contiguous = wr.contiguous_committed_segments(hash_str, folder)
     print(f"Segments present:   {len(committed)}  "
           f"(contiguous prefix: {len(contiguous)})")
+    if not contiguous:
+        print("Error: no contiguous segments to stitch (is seg000 present?).")
+        sys.exit(1)
     if len(contiguous) < len(committed):
         gap = len(contiguous)
         print(f"  WARNING: gap after seg{gap-1:03d} — segments >= seg{gap:03d} are "
               f"orphaned and will NOT be stitched. Refill or move them back.")
-    if not contiguous:
-        print("Error: no contiguous segments to stitch (is seg000 present?).")
-        sys.exit(1)
+
+    # The rebuilt file carries only the ps group. If the driver already
+    # appended RK solver data to the existing _full.h5, rebuilding destroys it.
+    existing = os.path.join(folder, f"{hash_str}_full.h5")
+    if os.path.exists(existing) and not args.force:
+        import h5py
+        try:
+            with h5py.File(existing, "r") as f:
+                rk_groups = [g for g in ("rk4", "rk45", "rkg") if g in f and "y" in f[g]]
+        except OSError:
+            rk_groups = []
+        if rk_groups:
+            print(f"Error: {existing} holds solver data for {rk_groups}, which a rebuild "
+                  f"would discard. Re-run with --force to rebuild anyway.")
+            sys.exit(1)
 
     try:
         full = wr.build_vds(hash_str, folder)

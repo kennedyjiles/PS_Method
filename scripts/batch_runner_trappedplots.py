@@ -1,59 +1,33 @@
 #!/usr/bin/env python3
 """
-Trapped-Particle Sweep Runner (phase-based refinement)
-======================================================
-Sweeps an L-shell grid at each energy, producing the h5/CSV runs that
-scripts/plots/trappedbands.py consumes.
+Trapped-particle L-sweep runner with phase-based refinement.
 
-The sweep is organized into PHASES, mirroring batch_runner_eandp. A phase is a
-refinement tier: phase 1 is the coarse first pass (large dL over every energy);
-later phases refine the (energies, L-window, dL) you pick after examining the
-plots. You add or tweak a phase by editing one dict — never by copying presets.
-Shared constants (pitch, gyroperiods, coarse L-range) live in DEFAULTS once;
-each energy carries its own coarse L_stop; a phase states only what differs.
+Runs dipoleb.py over an L grid at each energy in ENERGIES. PHASES are
+refinement tiers: phase 1 is the coarse pass, later phases are finer windows
+added after looking at the plot. All phases write to one group and
+`--phase all` runs their de-duplicated union. Output feeds
+scripts/plots/trappedbands.py.
 
-All phases feed ONE group (folder) → one master CSV → one trappedbands plot.
+Usage:
+    python scripts/batch_runner_trappedplots.py --phase 1
+    python scripts/batch_runner_trappedplots.py --phase 2 --resume
+    python scripts/batch_runner_trappedplots.py --phase all --resume
+    python scripts/batch_runner_trappedplots.py --list-phases
+    python scripts/batch_runner_trappedplots.py data/dipoleb/<group>/master_simulation_log.csv   # rebuild that CSV only
+    python scripts/batch_runner_trappedplots.py --energy 1e8 --L-start 2 --L-stop 4 --L-step 0.05 --phi 0 90 180 270
+    python scripts/batch_runner_trappedplots.py --rerun-chaotic              # 1e6 T_g, adaptive, segmented
+    python scripts/batch_runner_trappedplots.py --clean --phase all          # wipe group + ledger first
 
-Typical loop
-------------
-    python scripts/batch_runner_trappedplots.py --phase 1              # coarse pass
-    # ...examine the trappedbands plot, decide who needs finer dL...
-    #    append a phase to PHASES below, then:
-    python scripts/batch_runner_trappedplots.py --phase 2 --resume     # only new points run
-    # ...repeat...
-    python scripts/batch_runner_trappedplots.py --phase all --resume   # assemble everything
-    python scripts/plots/trappedbands.py data/dipoleb/trapped/master_simulation_log.csv
-
-`--phase all` runs the de-duplicated union of every phase: a fine L that
-coincides with a coarse L is never run twice, and --resume skips anything
-already done, so you get exactly the data the plot needs and no more.
-
-Targeting a group
------------------
-The group can be named positionally with the same path you hand to
-trappedbands.py — a master CSV, a group folder, or a bare group name:
-
-    python scripts/batch_runner_trappedplots.py data/dipoleb/trapped_85/master_simulation_log.csv
-
-That form carries no phase/energy/rerun flag, so it does the non-destructive
-thing: it rebuilds that group's master CSV from the per-cell CSVs. Add
-`--phase N --resume` (etc.) to the same command to run simulations instead.
-
-Master-CSV schema
------------------
-CANONICAL_COLUMNS below mirrors the record dict in
-ps_method/writers.py:append_to_master_log(); consolidation reindexes the
-merged frame to it, so the group CSV keeps writers.py's column order however
-the per-cell files are ordered on disk. Columns added mid-study (currently
-n_eq_crossings, the PS equatorial-crossing count) are listed in
-LATE_ADDED_COLUMNS: cells that ran before the column existed leave it blank
-and are reported as coverage rather than flagged as schema drift. When
-writers.py gains a column, add it to CANONICAL_COLUMNS in the same position
-(and to LATE_ADDED_COLUMNS if older cells will lack it).
+Output: <output_root>/data/dipoleb/<group>/fm_<run_key>/ (output_root from
+base.yml or --output-root). --resume trusts the disk: a cell is done iff its
+per-run master_simulation_log.csv exists, and cells with committed segments
+continue from the last one rather than being wiped. Consolidation reindexes
+the merged CSV to CANONICAL_COLUMNS, which must track writers.py:master_csv.
 """
 
 import os
 import sys
+import glob
 import json
 import argparse
 import subprocess
@@ -66,7 +40,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # ─── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT  = os.path.dirname(SCRIPT_DIR)
-PROGRESS_PATH = os.path.join(SCRIPT_DIR, "batch_progress_fluxmap.json")
+PROGRESS_PATH = os.path.join(SCRIPT_DIR, "batch_progress_trapped.json")
 BATCH_TMP_DIR = os.path.join(SCRIPT_DIR, "batch_tmp")
 BASE_YML      = os.path.join(PROJECT_ROOT, "configs", "dipoleb", "base.yml")
 
@@ -102,7 +76,7 @@ DATA_ROOT = _data_root()
 CUSTOM_L_STOP = 6.0
 
 # Canonical master-CSV column order, mirroring the record dict in
-# ps_method/writers.py:append_to_master_log(). The consolidator reindexes to
+# ps_method/writers.py:master_csv(). The consolidator reindexes to
 # this so the group CSV keeps writers.py's ordering no matter which per-cell
 # file happens to be read first. Columns added to writers.py later (the newest
 # is n_eq_crossings, the PS equatorial-crossing count) must be added here too,
@@ -113,7 +87,7 @@ CANONICAL_COLUMNS = [
     "x", "y", "z", "pitch_deg", "phi_deg",
     "L_eff", "W0_sq", "boundary", "mu_sq", "orbit_character",
     "steps", "dt", "method",
-    "energy_mean_err", "energy_max_err", "mu_mean_err", "mu_max_err",
+    "energy_mean_err", "energy_max_err", "mu_mean_err", "mu_max_err", "mu_max_run",
     "eps_initial", "eps_mean", "eps_max",
     "n_eq_crossings",
     "hit_atmosphere", "hit_atm_r", "n_mirror_crossings",
@@ -131,11 +105,15 @@ LATE_ADDED_COLUMNS = {"n_eq_crossings"}
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # All phases write here → one master CSV → one trappedbands plot.
-GROUP = "trapped_30"
+GROUP = "trapped_60_temp"
 
 # Shared defaults. A phase inherits these and overrides only what it names.
 DEFAULTS = {
-    "pitch_deg":   30.0,
+    "pitch_deg":   60.0,
+    # launch gyrophase(s), deg: a number or a list. dipoleb sets
+    # v_perp = v sin(alpha) (cos phi, sin phi, 0) at (x0, 0, 0), so 0 = radially
+    # outward, 90 = +phi-hat (azimuthal), 180 = inward, 270 = -phi-hat.
+    "phi_deg":     0.0,
     "gyroperiods": 1e2,
     "L_start":     1.5,
     "L_step":      0.1,    # coarse first-pass dL; refinement phases override this
@@ -149,6 +127,7 @@ ENERGIES = {
     "1e7":  (1e7, 9.0),
     "1e8": (1e8, 6.0),
     "1e9":   (1e9, 3.0),
+    "4e8":   (4e8, 2.0),
 }
 #### for 85 pitch #####
 # ENERGIES = {         
@@ -159,42 +138,15 @@ ENERGIES = {
 #     "1e9":   (1e9, 3.0),
 # }
 
-# Refinement phases.  APPEND a new phase or TWEAK an existing one anytime.
-#   "energies" : the string "all", or a list of ENERGIES keys.
-#   L_start / L_step / pitch_deg / gyroperiods : override DEFAULTS if named.
-#   L_stop     : override the per-energy coarse L_stop if named (else per-energy).
-#
-# ─── Worked example ──────────────────────────────────────────────────────────
-# Round 1 — run the coarse pass and look at the plot:
-#     python scripts/batch_runner_trappedplots.py --phase 1
-#     python scripts/plots/trappedbands.py data/dipoleb/trapped/master_simulation_log.csv
-#
-#   Say the plot shows the trapped→open transition for 1 MeV and 10 MeV falls
-#   somewhere between the coarse points L=2.1 and L=3.1 — you can't tell exactly
-#   where. Add a phase that walks that window at dL=0.1 for just those energies:
-#     2: {"energies": ["1mev", "10mev"], "L_start": 2.1, "L_stop": 3.1, "L_step": 0.1},
-#
-#   Then run ONLY the new points (coarse already done, --resume skips them):
-#     python scripts/batch_runner_trappedplots.py --phase 2 --resume
-#
-# Round 2 — the boundary now looks like it sits near L=2.6 for 1 MeV; zoom in:
-#     3: {"energies": ["1mev"], "L_start": 2.5, "L_stop": 2.7, "L_step": 0.02},
-#     python scripts/batch_runner_trappedplots.py --phase 3 --resume
-#
-# Done — assemble everything (deduped, nothing re-run) for the final figure:
-#     python scripts/batch_runner_trappedplots.py --phase all --resume
-#
-# The commented 2/3 below are that example, ready to uncomment. `--list-phases`
-# shows the run counts before you launch; overlapping L values (e.g. L=2.1/3.1
-# shared by coarse + phase 2, or L=2.6 shared by phase 2 + phase 3) run once.
-# ─────────────────────────────────────────────────────────────────────────────
 PHASES = {
     1: {"energies": "all"},   # coarse first pass (dL = DEFAULTS["L_step"], per-energy L_stop)
     2: {"energies": ["1e9"], "L_start": 1.5, "L_stop": 3.0, "L_step": 0.1},
-    3: {"energies": ["1e8"], "L_start": 3.5, "L_stop": 4.5, "L_step": 0.1},
-    4: {"energies": ["1e7"], "L_start": 6.5, "L_stop": 8.5, "L_step": 0.01},
-    5: {"energies": ["1e8"], "L_start": 1.5, "L_stop": 2.3, "L_step": 0.1, "gyroperiods": 1e8},
-    6: {"energies": ["1e8"], "L_start": 2.5, "L_stop": 2.5, "L_step": 0.1, "gyroperiods": 1.2e8}
+    3: {"energies": ["4e8"], "L_start": 2.0, "L_stop": 2.0, "L_step": 0.1, "gyroperiods": 1e6},
+    4: {"energies": ["1e9"], "L_start": 2.31, "L_stop": 2.32, "L_step": 0.001, "gyroperiods": 1e6},
+    5: {"energies": ["1e9"], "L_start": 1.5, "L_stop": 1.9, "L_step": 0.1, "gyroperiods": 1e3},
+    # gyrophase sweep example: every point below runs at each listed phi
+    # 6: {"energies": ["1e8"], "L_start": 3.0, "L_stop": 5.0, "L_step": 0.1,
+    #     "phi_deg": [0, 90, 180, 270]},
     # 3: {"energies": ["1mev"],          "L_start": 2.5, "L_stop": 2.7, "L_step": 0.02},
 }
 
@@ -207,6 +159,12 @@ def _L_grid(L_start, L_stop, L_step):
     """Build inclusive L-shell array, rounded to avoid float noise."""
     vals = np.arange(L_start, L_stop + L_step / 2, L_step)
     return [round(v, 4) for v in vals]
+
+
+def _phi_list(phi):
+    """A phase's phi_deg as a list of floats (accepts a number or a list)."""
+    vals = phi if isinstance(phi, (list, tuple)) else [phi]
+    return [float(v) % 360.0 for v in vals]
 
 
 def validate_phases():
@@ -235,53 +193,60 @@ def _phase_spec(phase):
     return spec
 
 
-def build_phase_runs(phase):
-    """Run dicts for one phase: each named energy swept over its own L-grid.
+def build_phase_runs(phase, phi_override=None):
+    """Run dicts for one phase: each named energy swept over its own L-grid,
+    at each of the phase's gyrophases.
 
     L_stop for an energy is the phase's override if it names one, else that
-    energy's coarse L_stop from ENERGIES.
+    energy's coarse L_stop from ENERGIES. phi_override (the --phi flag)
+    replaces the phase's phi_deg list.
     """
     spec = _phase_spec(phase)
     names = list(ENERGIES) if spec["energies"] == "all" else list(spec["energies"])
+    phis = _phi_list(spec["phi_deg"] if phi_override is None else phi_override)
     runs = []
     for name in names:
         energy_eV, energy_L_stop = ENERGIES[name]
         L_stop = spec.get("L_stop", energy_L_stop)   # phase override wins
         Ls = _L_grid(spec["L_start"], L_stop, spec["L_step"])
         for L in Ls:
-            runs.append({
-                "energy_eV":   float(energy_eV),
-                "x_initial":   L,
-                "pitch_deg":   float(spec["pitch_deg"]),
-                "gyroperiods": float(spec["gyroperiods"]),
-                "group":       GROUP,
-                "phase":       phase,
-            })
+            for phi in phis:
+                runs.append({
+                    "energy_eV":   float(energy_eV),
+                    "x_initial":   L,
+                    "pitch_deg":   float(spec["pitch_deg"]),
+                    "phi_deg":     phi,
+                    "gyroperiods": float(spec["gyroperiods"]),
+                    "group":       GROUP,
+                    "phase":       phase,
+                })
     return runs
 
 
-def build_all_phase_runs():
+def build_all_phase_runs(phi_override=None):
     """Union of every phase, de-duplicated by run_key so overlapping coarse/fine
     L-values never run twice.  The lowest phase number to define a given
-    (energy, L, pitch) point wins."""
+    (energy, L, pitch, phi) point wins."""
     seen = {}
     for phase in sorted(PHASES):
-        for run in build_phase_runs(phase):
+        for run in build_phase_runs(phase, phi_override):
             seen.setdefault(run_key(run), run)
     return list(seen.values())
 
 
-def build_runs_custom(energy_eV, L_start, L_stop, L_step, pitch_deg, gyroperiods, group):
+def build_runs_custom(energy_eV, L_start, L_stop, L_step, pitch_deg, gyroperiods,
+                      group, phi_deg=0.0):
     """Ad-hoc single-energy L-sweep from CLI flags (bypasses PHASES)."""
     Ls = _L_grid(L_start, L_stop, L_step)
     return [{
         "energy_eV":   float(energy_eV),
         "x_initial":   L,
         "pitch_deg":   float(pitch_deg),
+        "phi_deg":     phi,
         "gyroperiods": float(gyroperiods),
         "group":       group,
         "phase":       "custom",
-    } for L in Ls]
+    } for L in Ls for phi in _phi_list(phi_deg)]
 
 
 def build_chaotic_rerun_list(group):
@@ -305,7 +270,7 @@ def build_chaotic_rerun_list(group):
         return []
 
     # Deduplicate by physics parameters (same cell may have multiple solver rows)
-    param_cols = ["energy_eV", "L_eff", "pitch_deg"]
+    param_cols = ["energy_eV", "L_eff", "pitch_deg", "phi_deg"]
     existing = [c for c in param_cols if c in chaotic.columns]
     chaotic = chaotic.drop_duplicates(subset=existing)
 
@@ -317,6 +282,9 @@ def build_chaotic_rerun_list(group):
             "energy_eV":        float(row["energy_eV"]),
             "x_initial":        round(L_val, 4),
             "pitch_deg":        float(row["pitch_deg"]),
+            # blank phi (older rows) reads as NaN -> the phi = 0 launch it was
+            "phi_deg":          (float(row["phi_deg"]) if "phi_deg" in row
+                                 and pd.notna(row["phi_deg"]) else 0.0),
             # Chaotic tier: 1e6 T_g regardless of the original run length,
             # so loss-cone first-passage / sticky-escape physics has room to
             # happen. Adaptive stepping is mandatory here — chaotic mu
@@ -341,15 +309,17 @@ def _print_phase_plan():
     for ph in sorted(PHASES):
         spec = _phase_spec(ph)
         names = list(ENERGIES) if spec["energies"] == "all" else list(spec["energies"])
+        phis = _phi_list(spec["phi_deg"])
         n_runs = 0
         for name in names:
             _, e_lstop = ENERGIES[name]
             L_stop = spec.get("L_stop", e_lstop)
-            n_runs += len(_L_grid(spec["L_start"], L_stop, spec["L_step"]))
+            n_runs += len(_L_grid(spec["L_start"], L_stop, spec["L_step"])) * len(phis)
         ens_lbl   = "all" if spec["energies"] == "all" else ", ".join(names)
         lstop_lbl = spec["L_stop"] if "L_stop" in spec else "per-energy"
         print(f"  Phase {ph}: {len(names)} energies, dL={spec['L_step']}, "
               f"L {spec['L_start']}–{lstop_lbl}, pitch={spec['pitch_deg']}°, "
+              f"phi={', '.join(f'{p:g}' for p in phis)}°, "
               f"gyros={spec['gyroperiods']:.0e}  = {n_runs} runs")
         print(f"           energies: {ens_lbl}")
     total = len(build_all_phase_runs())
@@ -370,11 +340,15 @@ def _clean_group(group):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Config writing + execution  (unchanged machinery)
+#  Config writing + execution
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_key(run):
-    return f"E{run['energy_eV']:.1e}_L{run['x_initial']:.2f}_P{run['pitch_deg']:.1f}"
+    # phi = 0 keeps the pre-gyrophase key, so existing run folders (and their
+    # --resume detection) are unchanged; any other phi gets a _G<phi> suffix.
+    key = f"E{run['energy_eV']:.1e}_L{run['x_initial']:.2f}_P{run['pitch_deg']:.1f}"
+    phi = float(run.get("phi_deg", 0.0)) % 360.0
+    return key if phi == 0.0 else f"{key}_G{phi:.1f}"
 
 
 def write_config(run, config_path):
@@ -385,6 +359,9 @@ def write_config(run, config_path):
         "energy_eV":    float(run["energy_eV"]),
         "x_initial":    float(run["x_initial"]),
         "pitch_deg":    float(run["pitch_deg"]),
+        # explicit even at 0: base.yml's phi_deg is 0.0, so the merged config
+        # (and physics_hash) of existing phi = 0 runs is unchanged
+        "phi_deg":      float(run.get("phi_deg", 0.0)),
         "gyroperiods":  float(run["gyroperiods"]),
         "particle":     "proton",
         "read_data":    False,
@@ -396,23 +373,89 @@ def write_config(run, config_path):
     # (ps_segment_gyroperiods is in _NON_HASH_KEYS).
     if run.get("segment_gyroperiods"):
         cfg["ps_segment_gyroperiods"] = float(run["segment_gyroperiods"])
+    # Per-run override beats base.yml's output_root (_deep_merge puts the run
+    # config on top), so batches writing to different destinations can be
+    # launched back to back without editing a shared file mid-flight.
+    if run.get("output_root"):
+        cfg["output_root"] = str(run["output_root"])
     with open(config_path, "w") as f:
         f.write("# Auto-generated trapped-sweep batch config — merged with base.yml\n")
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+
+
+def data_root_for(run):
+    """Where this run's output lives.
+
+    A per-run output_root wins over the module-level DATA_ROOT (which is read
+    from base.yml at import). It has to travel on the run dict: macOS spawns
+    the pool workers, so rebinding the global in main() would never reach them.
+    Mirrors config_loader._resolve_output_paths: <output_root>/data/dipoleb/.
+    """
+    root = run.get("output_root")
+    if root:
+        return os.path.join(os.path.expanduser(str(root)), "data", "dipoleb")
+    return DATA_ROOT
+
+
+def run_folder_for(run):
+    return os.path.join(data_root_for(run), run["group"], f"fm_{run_key(run)}")
+
+
+def segment_files(folder):
+    """Committed <hash>_segNNN.h5 files for a run folder, both layouts.
+
+    Canonical storage is <run_folder>/_rawdata/, but some runs carry their
+    segments at the top level of the run folder. Miss one and the caller
+    concludes there is nothing to resume -- and may then delete it.
+    """
+    return (glob.glob(os.path.join(folder, "*_seg*.h5"))
+            + glob.glob(os.path.join(folder, "_rawdata", "*_seg*.h5"))
+            + glob.glob(os.path.join(folder, "_rawdata", "*", "*_seg*.h5")))
+
+
+def committed_segments(run):
+    """Highest committed segment index on disk for this run, or None.
+
+    dipoleb's _run_ps_segments resumes from the last committed segment by
+    itself; this is so the batch runner can report it and, above all, refuse to
+    delete it. (.building files are ignored -- they are the segment that was
+    mid-write when the run died, and clear_building_segments removes them.)
+    """
+    idx = []
+    for f in segment_files(run_folder_for(run)):
+        stem = os.path.basename(f).rsplit("_seg", 1)[-1].split(".")[0]
+        if stem.isdigit():
+            idx.append(int(stem))
+    return max(idx) if idx else None
+
+
+def run_is_complete(run):
+    """A finished run has written its per-run master_simulation_log.csv."""
+    return os.path.exists(os.path.join(run_folder_for(run),
+                                       "master_simulation_log.csv"))
 
 
 def execute_single_run(run):
     """Run one dipoleb.py subprocess. Returns (key, status, elapsed_min, error)."""
     key = run_key(run)
 
-    run_folder = os.path.join(DATA_ROOT,
-                              run["group"], f"fm_{key}")
+    run_folder = run_folder_for(run)
 
-    # Clean old run folder before rerun (e.g. chaotic reruns with adaptive)
-    if run.get("clean_before_run", False):
+    # Clean old run folder before rerun (e.g. chaotic reruns with adaptive).
+    # Two guards, because this is an rmtree of a folder that can hold >100 GB
+    # of committed checkpoints:
+    #   keep_segments  -- set by the --resume filter when segments were found
+    #   segment_files  -- a live re-check, so a run that is resumable is never
+    #                     wiped implicitly even if the filter missed it
+    # Only an explicit --clean is allowed to remove committed segments.
+    if run.get("clean_before_run", False) and not run.get("keep_segments", False):
         import shutil
         if os.path.isdir(run_folder):
-            shutil.rmtree(run_folder)
+            if segment_files(run_folder):
+                print(f"  {key}: refusing to wipe — committed segments present; "
+                      f"resuming instead (use --clean to discard them)")
+            else:
+                shutil.rmtree(run_folder)
 
     config_path = os.path.join(BATCH_TMP_DIR, f"fm_{key}.yml")
     write_config(run, config_path)
@@ -422,7 +465,10 @@ def execute_single_run(run):
         result = subprocess.run(
             [sys.executable, "dipoleb.py", config_path],
             cwd=PROJECT_ROOT,
-            timeout=3600 * 12,   # 12-hour timeout per cell
+            # None = no timeout (the default). A long chaotic-tier run can
+            # legitimately exceed any fixed wall-clock budget, and killing it
+            # mid-segment throws away that segment's work.
+            timeout=run.get("timeout_s"),
             capture_output=True,
             text=True,
         )
@@ -450,7 +496,10 @@ def execute_single_run(run):
         elapsed = (time.time() - start) / 60
         if os.path.exists(config_path):
             os.remove(config_path)
-        return (key, "timeout", elapsed, "12h timeout exceeded")
+        _h = (run.get("timeout_s") or 0) / 3600.0
+        return (key, "timeout", elapsed, f"{_h:g}h timeout exceeded "
+                                         f"(committed segments are kept; "
+                                         f"re-run with --resume to continue)")
     except Exception as e:
         elapsed = (time.time() - start) / 60
         if os.path.exists(config_path):
@@ -488,6 +537,7 @@ def run_parallel(runs, n_workers, dry_run=False):
             print(f"  [{i:>4d}/{total}] {run_key(run)}  "
                   f"E={E_MeV:.3g} MeV  L={run['x_initial']:.2f}  "
                   f"pitch={run['pitch_deg']:.0f}°  "
+                  f"phi={run.get('phi_deg', 0.0):g}°  "
                   f"gyros={run['gyroperiods']:.0e}")
         return 0, 0
 
@@ -713,6 +763,12 @@ After runs finish, plot:
     parser.add_argument("--L-step", type=float, default=None, dest="L_step")
     parser.add_argument("--pitch", type=float, default=None,
                         help=f"Pitch (deg) for a custom scan (default: {DEFAULTS['pitch_deg']}).")
+    parser.add_argument("--phi", type=float, nargs="+", default=None,
+                        help=f"Launch gyrophase(s) in deg, e.g. --phi 0 90 180 270. "
+                             f"Sets a custom scan's phi and replaces every phase's "
+                             f"phi_deg list (default: DEFAULTS/phase value, "
+                             f"{DEFAULTS['phi_deg']}). Chaotic reruns keep each "
+                             f"row's own phi.")
     parser.add_argument("--gyroperiods", type=float, default=None,
                         help=f"Override gyroperiods for ANY run list — phase, custom, "
                              f"or chaotic rerun (default: {DEFAULTS['gyroperiods']:.0e} "
@@ -728,6 +784,21 @@ After runs finish, plot:
                         help=f"Parallel workers (default: {_default_workers}).")
     parser.add_argument("--dry-run", action="store_true", dest="dry_run",
                         help="Print the run plan without executing.")
+    parser.add_argument("--output-root", default=None, dest="output_root",
+                        help="Write this batch under <PATH>/data/dipoleb/ "
+                             "instead of base.yml's output_root. Per-invocation, "
+                             "so external and local batches can run back to back "
+                             "without editing base.yml.")
+    parser.add_argument("--progress-file", default=None, dest="progress_file",
+                        help="Progress ledger for this batch (default: "
+                             "scripts/batch_progress_trapped.json). Give a "
+                             "separate file when two batches run at once — each "
+                             "runner rewrites its ledger wholesale.")
+    parser.add_argument("--timeout-hours", type=float, default=None,
+                        dest="timeout_hours",
+                        help="Wall-clock limit per cell in hours. Default: no "
+                             "timeout. A killed run keeps its committed "
+                             "segments and continues under --resume.")
     parser.add_argument("--resume", action="store_true",
                         help="Skip runs already completed in the progress file.")
     parser.add_argument("--consolidate-only", action="store_true", dest="consolidate_only",
@@ -739,6 +810,19 @@ After runs finish, plot:
                              "before running (clean rebuild).")
 
     args = parser.parse_args()
+
+    # Per-invocation overrides, applied before anything reads these. Both are
+    # parent-side only (consolidation, --clean, the progress ledger); the value
+    # that the spawned workers need rides on each run dict instead.
+    global DATA_ROOT, PROGRESS_PATH
+    if args.output_root:
+        DATA_ROOT = os.path.join(os.path.expanduser(args.output_root),
+                                 "data", "dipoleb")
+        print(f"Output root override: {DATA_ROOT}")
+    if args.progress_file:
+        PROGRESS_PATH = os.path.abspath(os.path.expanduser(args.progress_file))
+        print(f"Progress ledger:      {PROGRESS_PATH}")
+
     validate_phases()
 
     if args.target is not None:
@@ -793,10 +877,11 @@ After runs finish, plot:
             DEFAULTS["L_step"]      if args.L_step      is None else args.L_step,
             DEFAULTS["pitch_deg"]   if args.pitch       is None else args.pitch,
             DEFAULTS["gyroperiods"] if args.gyroperiods is None else args.gyroperiods,
-            group)
+            group,
+            DEFAULTS["phi_deg"]     if args.phi         is None else args.phi)
         mode = "CUSTOM SCAN"
     elif str(args.phase).lower() == "all":
-        all_runs = build_all_phase_runs()
+        all_runs = build_all_phase_runs(args.phi)
         mode = "ALL PHASES"
     else:
         try:
@@ -805,7 +890,7 @@ After runs finish, plot:
             raise SystemExit(f"--phase must be an integer or 'all' (got {args.phase!r}).")
         if ph not in PHASES:
             raise SystemExit(f"No phase {ph}. Defined phases: {sorted(PHASES)}.")
-        all_runs = build_phase_runs(ph)
+        all_runs = build_phase_runs(ph, args.phi)
         mode = f"PHASE {ph}"
 
     if not all_runs:
@@ -813,7 +898,7 @@ After runs finish, plot:
         return
 
     # Resolve the output group + adaptive flag on every run.
-    # --gyroperiods / --segment-gyroperiods now override ANY run list
+    # --gyroperiods / --segment-gyroperiods override ANY run list
     # (phase, custom, or chaotic rerun), so a failure mop-up can be given
     # the full chaotic-tier profile, e.g.:
     #   --phase 1 --resume --adaptive --gyroperiods 1e6 --segment-gyroperiods 5e4
@@ -825,15 +910,63 @@ After runs finish, plot:
         if args.segment_gyroperiods is not None:
             r["segment_gyroperiods"] = float(args.segment_gyroperiods)
 
+    # Carried on each run dict, not a module global: ProcessPoolExecutor
+    # spawns workers on macOS, so globals set here would not reach them.
+    _timeout_s = args.timeout_hours * 3600.0 if args.timeout_hours else None
+    for r in all_runs:
+        r["timeout_s"] = _timeout_s
+        if args.output_root:
+            r["output_root"] = args.output_root
+
     # ── Resume filter ────────────────────────────────────────────────
     runs = all_runs
     if args.resume:
         progress = load_progress()
+        done = set(progress["completed"])
         before = len(runs)
-        runs = [r for r in runs if run_key(r) not in progress["completed"]]
+        # The disk is the authority in BOTH directions: a ledger entry is a
+        # claim, the run's own master_simulation_log.csv is the evidence.
+        # Trusting the ledger alone would skip runs whose output was moved,
+        # cleaned, or never landed, and would miss runs the ledger never saw.
+        keep, from_disk, stale = [], 0, []
+        for r in runs:
+            in_ledger = run_key(r) in done
+            if run_is_complete(r):
+                if not in_ledger:
+                    from_disk += 1
+                continue
+            if in_ledger:
+                stale.append(run_key(r))
+            keep.append(r)
+        runs = keep
         skipped = before - len(runs)
         if skipped:
-            print(f"Resuming: skipping {skipped} already-completed runs.\n")
+            print(f"Resuming: skipping {skipped} already-completed runs"
+                  + (f" ({from_disk} detected on disk, not in progress.json)"
+                     if from_disk else "") + ".")
+        if stale:
+            print(f"  {len(stale)} run(s) marked completed in "
+                  f"{os.path.basename(PROGRESS_PATH)} have no "
+                  f"master_simulation_log.csv on disk — re-running them:")
+            for k in stale:
+                print(f"     {k}")
+        # Anything left with committed segments continues from the last one
+        # rather than restarting: keep_segments blocks the pre-run wipe, and
+        # dipoleb's _run_ps_segments resumes from the last committed segment.
+        partial = 0
+        for r in runs:
+            last = committed_segments(r)
+            if last is not None:
+                r["keep_segments"] = True
+                partial += 1
+        if partial:
+            print(f"  {partial} run(s) have committed segments and will "
+                  f"continue from where they stopped.")
+            for r in runs:
+                last = committed_segments(r)
+                if last is not None:
+                    print(f"     {run_key(r)}: resuming after segment {last}")
+        print()
 
     if not runs:
         print("Nothing to do — all requested runs already completed.")
@@ -849,6 +982,7 @@ After runs finish, plot:
           f"Stepping: {'adaptive' if (args.adaptive or args.rerun_chaotic) else 'fixed-step'}")
     print(f"  Energies (eV): {[f'{e:.0e}' for e in energies]}")
     print(f"  L-values: {len(L_vals)}  ({L_vals[0]:.2f} – {L_vals[-1]:.2f})")
+    print(f"  Gyrophases (deg): {sorted(set(r.get('phi_deg', 0.0) for r in runs))}")
     print(f"{'='*65}")
     if args.dry_run:
         print("  *** DRY RUN — no simulations will execute ***")

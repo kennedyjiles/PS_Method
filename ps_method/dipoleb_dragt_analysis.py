@@ -38,23 +38,35 @@ class conservation_monitor:
         mon.summary()                 # prints drift report
     """
 
-    def __init__(self, L_shell, charge_sign=1, check_every=1, rtol=1e-6):
+    def __init__(self, L_shell, charge_sign=1, check_every=1, rtol=1e-6,
+                 initial_state=None):
         """
         Parameters:
             L_shell       : L-shell used for Dragt normalization
             charge_sign   : +1 proton, -1 electron
             check_every   : check every N-th call to check() (1 = every call)
             rtol          : relative tolerance for warning
+            initial_state : optional 6-vector [x,y,z,vx,vy,vz] at launch. When
+                            given, drift is measured from the launch state;
+                            otherwise (legacy) from the end of the first checked
+                            chunk, which hides any drift inside that chunk.
         """
         self.L = L_shell
         self.cs = charge_sign
         self.check_every = max(1, int(check_every))
         self.rtol = rtol
 
-        # Reference values (set on first call)
+        # Reference values (from initial_state, else set on first call)
         self.W0sq_0 = None
         self.Pphi_0 = None
         self.W0_threshold = None
+        if initial_state is not None:
+            W0sq, Pphi = self._compute_invariants(
+                np.asarray(initial_state, dtype=float), self.L, self.cs)
+            self.W0sq_0 = W0sq
+            self.Pphi_0 = Pphi
+            trapped = (self.cs * Pphi < 0)
+            self.W0_threshold = (Pphi**4 / 16) if trapped else None
 
         # History (step_index, W0^2, P_phi)
         self.history = []
@@ -112,12 +124,19 @@ class conservation_monitor:
         idx = step_index if step_index is not None else self._call_count
         self.history.append((idx, W0sq, Pphi))
 
-        # Compute relative drift
+        # Compute relative drift. A NaN/inf state would make every comparison
+        # below False and pass silently, so treat non-finite as a failure.
         ok = True
         dW = abs(W0sq - self.W0sq_0) / max(abs(self.W0sq_0), 1e-30)
         dP = abs(Pphi - self.Pphi_0) / max(abs(self.Pphi_0), 1e-30)
 
-        if dW > self.rtol or dP > self.rtol:
+        if not (np.isfinite(dW) and np.isfinite(dP)):
+            ok = False
+            warnings.warn(
+                f"[Dragt monitor] non-finite invariants at step {idx} "
+                f"(W0^2={W0sq}, P_phi={Pphi}); integrator state is NaN/inf.",
+                RuntimeWarning, stacklevel=2)
+        elif dW > self.rtol or dP > self.rtol:
             ok = False
             warnings.warn(
                 f"conservation_monitor step {idx}: W0^2 drift {dW:.2e} "
@@ -469,6 +488,7 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
         eps_arr, t_arr, rho_arr, z_arr   — decimated arrays for plotting
         eps_initial, eps_mean, eps_max   — scalar statistics
         crossings  — tuple (rho_dragt, rho_dot_dragt, x_c, y_c, vx_c, vy_c) or None
+        crossing_steps — global fractional sample index of each kept crossing
 
     chunk_size is deliberately modest (matching ps_chunk_steps elsewhere):
     compute_adiabaticity builds ~20 temporaries of chunk length, so the
@@ -492,6 +512,7 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
         cy_list     = []
         cvx_list    = []
         cvy_list    = []
+        cn_list     = []   # global (fractional) sample index of each crossing
         # cross_seen counts STRICT z sign changes only, so an equatorial launch
         # (z_initial == 0.0) is NOT counted -- the first entry is the first
         # RETURN to the equator. This is deliberate: the accumulation bounds in
@@ -505,9 +526,11 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
         prev_z      = None
         prev_state  = None
 
-        def _keep_crossings(bx, by, bvx, bvy):
+        def _keep_crossings(bx, by, bvx, bvy, bn):
             """Append one batch of crossings, honouring the acceptance stride,
-            and thin everything by 2 if the cap is exceeded."""
+            and thin everything by 2 if the cap is exceeded. bn carries each
+            crossing's global fractional sample index, so the figures can put
+            the surviving points back on the run's own clock."""
             nonlocal cross_seen, cross_kept, cross_stride
             n_b = len(bx)
             if n_b:
@@ -516,6 +539,7 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
                 if len(sel):
                     cx_list.append(bx[sel]);  cy_list.append(by[sel])
                     cvx_list.append(bvx[sel]); cvy_list.append(bvy[sel])
+                    cn_list.append(bn[sel])
                     cross_kept += len(sel)
                 cross_seen += n_b
 
@@ -523,7 +547,7 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
                 # Kept ordinals are the multiples of cross_stride starting at 0,
                 # so keeping every other one leaves the multiples of 2*stride —
                 # still a uniform-in-time sample, just half as dense.
-                for lst in (cx_list, cy_list, cvx_list, cvy_list):
+                for lst in (cx_list, cy_list, cvx_list, cvy_list, cn_list):
                     merged = np.concatenate(lst)[::2].copy()
                     lst.clear()
                     lst.append(merged)
@@ -569,7 +593,8 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
                     np.array([ps[0] + t_f * (float(cx[0]) - ps[0])]),
                     np.array([ps[1] + t_f * (float(cy[0]) - ps[1])]),
                     np.array([ps[3] + t_f * (float(cvx[0]) - ps[3])]),
-                    np.array([ps[4] + t_f * (float(cvy[0]) - ps[4])]))
+                    np.array([ps[4] + t_f * (float(cvy[0]) - ps[4])]),
+                    np.array([(i0 - 1) + t_f]))
 
             # --- z-crossings: within chunk ---
             mask = cz[:-1] * cz[1:] < 0
@@ -580,7 +605,8 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
                     cx[idx]  + t_f * (cx[idx+1]  - cx[idx]),
                     cy[idx]  + t_f * (cy[idx+1]  - cy[idx]),
                     cvx[idx] + t_f * (cvx[idx+1] - cvx[idx]),
-                    cvy[idx] + t_f * (cvy[idx+1] - cvy[idx]))
+                    cvy[idx] + t_f * (cvy[idx+1] - cvy[idx]),
+                    i0 + idx + t_f)
 
             prev_z     = float(cz[-1])
             prev_state = tuple(float(v) for v in (cx[-1], cy[-1], cz[-1],
@@ -604,13 +630,17 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
         cy_all  = np.concatenate(cy_list)
         cvx_all = np.concatenate(cvx_list)
         cvy_all = np.concatenate(cvy_list)
+        cn_all  = np.concatenate(cn_list)
         rs      = np.sqrt(cx_all**2 + cy_all**2)
         rd_sim  = (cx_all * cvx_all + cy_all * cvy_all) / rs
         crossings = (rs / L_shell,
                      rd_sim * L_shell**2,
                      cx_all, cy_all, cvx_all, cvy_all)
+        # kept separate from the 6-tuple above: callers unpack that by position
+        crossing_steps = cn_all
     else:
         crossings = None
+        crossing_steps = None
 
     return dict(
         eps_arr=eps_arr, t_arr=t_arr, rho_arr=rho_arr, z_arr=z_arr,
@@ -618,6 +648,7 @@ def analysis_chunked(cache_path, L_shell, ps_step, time_factor, chunk_size=200_0
         eps_mean=eps_sum / eps_count if eps_count > 0 else 0.0,
         eps_max=eps_max,
         crossings=crossings,
+        crossing_steps=crossing_steps,
         n_eq_crossings=cross_seen,
     )
 
@@ -642,6 +673,8 @@ def run_section(
     meridian_plane_func,
     adiabaticity_func,
     meridian_plane_RE_func=None,
+    # equatorial gyroperiod in normalised units (from the h5 meta when present)
+    T_gyro=None,
 ):
     """Run the complete Dragt analysis section.
 
@@ -755,22 +788,63 @@ def run_section(
     _dragt = analysis_chunked(
         cache_path, L_shell_dragt, ps_step, time_factor)
 
-    # --- For trimmed files the h5 first column may have z != 0, so the
-    #     "launch" marker would be off the z=0 surface of section.
-    #     Use the first equatorial crossing instead. ---
+    # --- The h5 first column is off the equator for trimmed files and for
+    #     standalone checkpoint segments (each starts where the previous one
+    #     ended). Two quantities assume z == 0 at the first sample: the
+    #     "launch" marker on the surface of section, and mu^2 = sin^2(alpha_eq)
+    #     in compute_params (v_perp^2 = vx^2 + vy^2 only holds where B || z).
+    #     For such files evaluate both at the first equatorial crossing
+    #     instead; the first crossing always survives the thinning in
+    #     analysis_chunked (ordinal 0 is kept by every stride). ---
     _launch_rho = rho_0_sim
     _launch_rho_dot = _rho_dot_0_sim
+    _z0_abs = abs(float(_y0[2]))
+    _off_equator = _z0_abs > 1e-9 * max(float(_r_init), 1.0)
     with h5py.File(cache_path, "r") as _h5_trim_check:
-        if "trim_end" in _h5_trim_check["ps"].attrs and _dragt["crossings"] is not None:
-            _launch_rho = float(_dragt["crossings"][0][0]) * L_shell_dragt  # back to sim units
-            _launch_rho_dot = float(_dragt["crossings"][1][0]) / L_shell_dragt**2  # back to sim units
+        _off_equator = _off_equator or ("trim_end" in _h5_trim_check["ps"].attrs)
+    if _off_equator and _dragt["crossings"] is not None:
+        _launch_rho = float(_dragt["crossings"][0][0]) * L_shell_dragt  # back to sim units
+        _launch_rho_dot = float(_dragt["crossings"][1][0]) / L_shell_dragt**2  # back to sim units
+        # mu^2 from the first crossing: |v| is conserved, so use the speed at
+        # the first sample; v_perp at z=0 is the in-plane velocity.
+        _vx_c0 = float(_dragt["crossings"][4][0]); _vy_c0 = float(_dragt["crossings"][5][0])
+        _v_sq = _v_mag_ps0**2
+        _mu_sq_eq = (_vx_c0**2 + _vy_c0**2) / _v_sq if _v_sq > 0 else 0.0
+        dp["mu_sq"] = _mu_sq_eq
+        dp["orbit_character"] = ("REGULAR" if W0_sq_calc < 0.012 * _mu_sq_eq
+                                 else "CHAOTIC")
+        print(f"  NOTE: h5 first sample is off the equator (z0={float(_y0[2]):.4g}); "
+              f"mu^2 and orbit character evaluated at the first equatorial crossing: "
+              f"mu^2={_mu_sq_eq:.6f} -> {dp['orbit_character']}")
+    elif _off_equator:
+        print("  WARNING: h5 first sample is off the equator and no equatorial "
+              "crossing was found; mu^2 / orbit character are from the first "
+              "sample and assume B || z there (unreliable).")
 
     # --- Plots ---
+    # Put the kept crossings back on the run's own clock, in equatorial
+    # gyroperiods: normalised time is (sample index * ps_step), divided by the
+    # equatorial gyroperiod. Prefer the run's stored T_gyro; only fall back to
+    # 2*pi*L^3 (what dipoleb.py uses for older h5 files) when it is absent,
+    # since a mismatch would silently rescale every colour-block boundary.
+    _crossing_gyro = None
+    if _dragt.get("crossing_steps") is not None:
+        if T_gyro:
+            _T_gyro = float(T_gyro)
+        elif x_initial:
+            _T_gyro = 2.0 * np.pi * float(x_initial) ** 3
+            print(f"  NOTE: no stored T_gyro; section colour blocks use "
+                  f"2*pi*L^3 = {_T_gyro:.6g}")
+        else:
+            _T_gyro = 0.0
+        if _T_gyro > 0:
+            _crossing_gyro = _dragt["crossing_steps"] * float(ps_step) / _T_gyro
+
     poincare_func(
         run_folder=fig_folder, L_shell_dragt=L_shell_dragt, gamma=gamma,
         rho_bnd=rho_bnd, rho_dot_bnd=rho_dot_bnd,
         rho_0_sim=_launch_rho, rho_dot_0_sim=_launch_rho_dot,
-        crossings=_dragt["crossings"], stem=stem,
+        crossings=_dragt["crossings"], crossing_gyro=_crossing_gyro, stem=stem,
     )
 
     if _dragt["crossings"] is not None:

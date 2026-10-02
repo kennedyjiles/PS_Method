@@ -1,13 +1,16 @@
 """
-Bounce/drift period vs energy plot, by L-shell (Walt-style).
+Bounce and drift period vs energy, one curve per L-shell (Walt comparison).
 
-Reads a hand-assembled table (L_energy_table_p.csv) of period vs energy for
-each method/L, melts the per-energy columns to long form, and plots period
-vs energy on log-log axes — PS-method curves colored by L, analytical overlaid
-dashed-black. Output PNG auto-named from the CSV. One helper + main:
-
-    parse_energy_label — "10^6 eV" -> 1e6
-    main               — load, reshape, and render the plot
+Usage:  python scripts/plots/waltplot.py        (no CLI: csv_path below picks the table)
+Input:  L_energy_table_p.csv (protons) or L_energy_table_e.csv (electrons) next
+        to this script: rows "Method, L, 10^1 eV ... 10^8 eV" with Method in
+        {PS Method Bounce, PS Method Drift, Analytical Bounce, Analytical Drift},
+        periods in seconds. The tables are assembled by hand from
+        batch_runner_walt.py's master_simulation_log.csv (bounce_period_s /
+        drift_period_s); no script does that step.
+Output: <csv stem>.png next to this script. PS curves solid, coloured by L;
+        analytical dashed black. The two text labels sit at fixed data
+        coordinates tuned for the proton table.
 """
 import pandas as pd
 import numpy as np
@@ -24,17 +27,14 @@ plt_config(scale=1)
 # --- Input/output setup ---
 # Resolve relative to this script so it runs from any cwd.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-csv_path = os.path.join(SCRIPT_DIR, "L_energy_table_p.csv")   # <== your input CSV
+csv_path = os.path.join(SCRIPT_DIR, "L_energy_table_p.csv")
 csv_basename = os.path.splitext(os.path.basename(csv_path))[0]
-out_file = os.path.join(SCRIPT_DIR, f"{csv_basename}.png")    # Output will auto-match CSV name
+out_file = os.path.join(SCRIPT_DIR, f"{csv_basename}.png")
 print(f"Generating plot from {csv_path} → {out_file}")
 
 
 def parse_energy_label(label: str) -> float:
-    """
-    Convert labels like "10^6 eV" -> 1e6 (float).
-    Falls back to NaN if unparsable.
-    """
+    """'10^6 eV' -> 1e6; NaN if unparsable."""
     try:
         base = label.split()[0]  # e.g. "10^6"
         # "10^k" -> "1e{k}"

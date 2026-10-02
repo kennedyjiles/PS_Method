@@ -1,27 +1,20 @@
 """
-run.py — Unified entry point for all PS Method drivers.
+run.py — single entry point for the constb / hyperb / dipoleb drivers.
 
-Infers the field type (constb, hyperb, dipoleb) from the config path
-and dispatches to the appropriate driver's main() function.
+Usage:
+    python run.py configs/<field>/<name>.yml [--replot]   # full run (or replot)
+    python run.py <field> <name> [--replot]               # shorthand for the above
+    python run.py <any path containing data/<field>/>.yml # replot from a saved run
 
-Full run (solvers + post-processing):
-    python run.py configs/constb/demo.yml
-    python run.py configs/hyperb/demo.yml
-    python run.py configs/dipoleb/demo.yml
-
-Post-processing only (replot from cached h5 data):
-    python run.py data/constb/demo/demo.yml                     # auto-detected from data/ path
-    python run.py configs/dipoleb/manual_template.yml --replot  # explicit flag
-
-Shorthand (field type + config name):
-    python run.py constb demo
-    python run.py hyperb demo
-    python run.py dipoleb paper1
-
-The --replot flag can be added to any invocation to force replot mode.
+<field> is one of constb, hyperb, dipoleb and is inferred from the path. A yml
+anywhere under a data/<field>/ folder (the provenance copy, or a trim_h5
+companion, relative or absolute) always means replot; --replot forces replot
+for a configs/ path. The driver is called as main(yaml_path, replot=...); no
+other flags are passed through.
 """
 
 import os
+import re
 import sys
 
 
@@ -47,21 +40,19 @@ def _resolve(args):
     if len(args) == 1:
         path = args[0]
 
-        # --- Detect replot mode: path starts with data/ ---
-        if path.startswith("data/") or path.startswith("data" + os.sep):
-            # Infer field type from data/<field>/ prefix
-            parts = path.replace(os.sep, "/").split("/")
-            # parts: ["data", "<field>", "<config>", "config.yml"]
-            if len(parts) >= 3:
-                data_dir = parts[1].lower()
-                if data_dir not in _FIELDS:
-                    raise ValueError(
-                        f"Cannot infer field type from data path: {path}\n"
-                        f"Expected data/<field>/... where field is one of {sorted(_FIELDS)}"
-                    )
-                if not os.path.isfile(path):
-                    raise FileNotFoundError(f"Config file not found: {path}")
-                return data_dir, path, True  # replot = True
+        # --- Detect replot mode: a data/<field>/ folder anywhere in the path
+        #     (relative, ./, ../, absolute, or under an output_root prefix) ---
+        m = re.search(r"(?:^|/)data/([^/]+)/", path.replace(os.sep, "/"))
+        if m:
+            data_dir = m.group(1).lower()
+            if data_dir not in _FIELDS:
+                raise ValueError(
+                    f"Cannot infer field type from data path: {path}\n"
+                    f"Expected data/<field>/... where field is one of {sorted(_FIELDS)}"
+                )
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"Config file not found: {path}")
+            return data_dir, path, True  # replot = True
 
         # --- Normal run: path contains configs/<field>/ ---
         for field_key in _FIELDS:

@@ -1,15 +1,21 @@
 """
-=====================================
-eps vs L with three HORIZONTAL zone bands:
-  1. Trapped 20+ years     (eps below ~0.8)  — green
-  2. Trapped, hits atm     (eps ~0.8 to ~1)  — blue
-  3. Untrapped / open      (eps above ~1)    — red
-
-L=1 removed (misleading — surface proximity, not GCA issue).
-Dragt REGULAR/CHAOTIC colors the points.
+eps_max vs L-shell for one master_simulation_log.csv, with three horizontal
+bands (trapped / trapped but hits atmosphere / untrapped) whose edges are set
+by the data, points coloured by Dragt orbit_character and x-marks on
+atmosphere hits.
 
 Usage:
-    python trappedbands.py path/to/master_simulation_log.csv
+    python scripts/plots/trappedbands.py data/dipoleb/<group>/master_simulation_log.csv [out.png]
+
+Input : columns L_eff, eps_max, energy_eV, pitch_deg, boundary, hit_atmosphere,
+        orbit_character.
+Output: out.png (default walt_eps_vs_L_zones_v3.png in the cwd).
+eps_max is clipped at EPS_DISPLAY_CAP before use, and the band edges are
+computed on the clipped values: OPEN runs carry eps_max ~1e16, so the upper
+(blue/red) edge is the geometric mean of the highest closed-and-hit value and
+the cap, i.e. a display convention rather than a measured threshold. Only the
+first (lowest-L) OPEN point per energy is drawn; rows with L_eff <= 1 are
+dropped.
 """
 import sys
 import numpy as np
@@ -27,6 +33,7 @@ def _sci_label(v):
     return f"{mant}e{int(exp)}"
 
 csv_path = sys.argv[1] if len(sys.argv) > 1 else "master_simulation_log.csv"
+out_path = sys.argv[2] if len(sys.argv) > 2 else "walt_eps_vs_L_zones_v3.png"
 # on_bad_lines='warn' skips rows whose column count doesn't match the header,
 # printing a warning so we know which rows were dropped.  Defensive: a single
 # corrupt row shouldn't prevent the whole plot from rendering.
@@ -140,7 +147,7 @@ ax.text(9.7, 1.0, r"$\epsilon = 1.0$" "\n" r"GCA meaningless",
         fontsize=8, color="0.3", va="center", ha="left", fontstyle="italic", clip_on=False)
 
 # ── Zone labels inside plot area (right side) ──
-ax.text(8.8, np.sqrt(y_lo * eps_boundary_1) * 0.5, "Trapped (20+ years)",
+ax.text(8.8, np.sqrt(y_lo * eps_boundary_1) * 0.5, "Trapped (full run)",
         fontsize=10, color="#1b5e20", va="center", ha="right", fontstyle="italic",
         fontweight="bold", alpha=0.5)
 ax.text(8.8, np.sqrt(eps_boundary_1 * eps_boundary_2), "Trapped, hits atm",
@@ -235,7 +242,7 @@ ax.grid(True, alpha=0.15, which="both")
 
 fig.subplots_adjust(right=0.82)
 fig.tight_layout(rect=[0, 0, 0.85, 1])
-fig.savefig("walt_eps_vs_L_zones_v3.png", dpi=300, bbox_inches="tight")
-print("Saved: walt_eps_vs_L_zones_v3.png")
+fig.savefig(out_path, dpi=300, bbox_inches="tight")
+print(f"Saved: {out_path}")
 
 plt.show()

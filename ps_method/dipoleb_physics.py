@@ -121,7 +121,12 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
             c[vy, i+1] = charge_sign * cauchy_sum_inline(c[a_aux], c[f_aux], i) * oip1[i]
             c[vz, i+1] = charge_sign * cauchy_sum_inline(c[a_aux], c[g_aux], i) * oip1[i]
 
-            c[r2_aux, i+1] = cauchy_sum_inline(c[x], c[x], i+1) + cauchy_sum_inline(c[y], c[y], i+1) + cauchy_sum_inline(c[z], c[z], i+1)
+            # self-convolutions shared by r2 and b; operation order matches the
+            # original inline expressions so results are bit-identical.
+            xx = cauchy_sum_inline(c[x], c[x], i+1)
+            yy = cauchy_sum_inline(c[y], c[y], i+1)
+            zz = cauchy_sum_inline(c[z], c[z], i+1)
+            c[r2_aux, i+1] = xx + yy + zz
 
             # (1) incremental division — compute only the new zeta[i]; zeta[0..i-1]
             #     persist from earlier orders (a_aux/r2_aux coeffs are fixed once set).
@@ -136,7 +141,7 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
                 a_prime += (i - k + 1) * zeta[k] * c[r2_aux, i - k + 1]
             c[a_aux, i+1] = - (five / (two * (i + 1))) * a_prime
 
-            c[b_aux, i+1] = two * cauchy_sum_inline(c[z], c[z], i+1) - cauchy_sum_inline(c[x], c[x], i+1) - cauchy_sum_inline(c[y], c[y], i+1)
+            c[b_aux, i+1] = two * zz - xx - yy
             c[c_aux, i+1] = cauchy_sum_inline(c[y], c[z], i+1)
             c[d_aux, i+1] = cauchy_sum_inline(c[x], c[z], i+1)
 

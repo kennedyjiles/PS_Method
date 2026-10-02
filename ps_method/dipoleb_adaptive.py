@@ -7,10 +7,21 @@ dp.ps_integrate in batch — the same fast Numba path used by the
 non-adaptive driver.  When the particle enters a strong-field region
 (close to the dipole) where ps_step is too coarse, it switches to an
 adaptive mode that subdivides each output interval into smaller substeps
-sized by the local |B|.  Substep size grows or shrinks based on the
-PS truncation order actually needed: low order → grow, high order → shrink.
+sized by the local |B| (steps_per_local_gyro substeps per local
+gyroperiod).  The PS order a substep needed is used only as a quality gate:
+a substep that hits the order cap (or exceeds order_high) is rejected and
+retried with a shrunk dt.  grow_factor/order_low only govern how fast dt recovers
+toward dt_B after a shrink (dt_use is always capped at dt_B), so in
+practice dt is set by |B| alone.
 Output is always written on the original fixed ps_step grid so downstream
 code sees the same format regardless of which path was taken.
+
+Tuning (measured 2026-10, float64, 100 keV-10 MeV protons): PS cost per
+unit time is minimised at roughly 6-10 steps per gyroperiod (order ~20-30);
+200 steps per gyroperiod costs ~5x more for the same ~1e-13 energy error.
+_use_fast_path compares min_fast_path_N against ps_step-per-local-gyro, so
+min_fast_path_N must not exceed n_steps_per_gyro_ps or the fast path never
+engages.
 
 State management:
     _tether_aux           — recompute auxiliary variables [6:17] from pos/vel in place
@@ -36,7 +47,6 @@ from . import utils as ul
 _one    = ul.npfloat(1.0)
 _two    = ul.npfloat(2.0)
 _three  = ul.npfloat(3.0)
-_two5   = ul.npfloat(2.5)
 _twopi = ul.npfloat(2.0 * np.pi)
 
 
@@ -45,6 +55,10 @@ _twopi = ul.npfloat(2.0 * np.pi)
 # ===========================================================
 def _tether_aux(state):
     """Recompute auxiliary variables [6:17] from position/velocity [0:6] in place.
+
+    Works on a single 17-vector or on a (17, K) block of states; the formulas
+    are applied elementwise, so each column of a block is bit-identical to a
+    scalar call on it.
 
     The 17-element state vector is laid out as:
         [0:3]   x, y, z          — position
@@ -85,35 +99,6 @@ def _tether_aux(state):
 # ===========================================================
 # ============== Adaptive Stepping ===========================
 # ===========================================================
-def _tether_aux_block(block):
-    """Vectorized _tether_aux over a (17, K) block of states, in place.
-
-    Same formulas applied elementwise, so each column is bit-identical to a
-    scalar _tether_aux call on it.
-    """
-    xv, yv, zv    = block[0], block[1], block[2]
-    vxv, vyv, vzv = block[3], block[4], block[5]
-
-    r2 = xv*xv + yv*yv + zv*zv
-    a  = _one / (r2 * r2 * np.sqrt(r2))
-    b  = _two * zv*zv - xv*xv - yv*yv
-    cv = yv * zv
-    d  = xv * zv
-    e  = b * vyv - _three * cv * vzv
-    f  = _three * d * vzv  - b * vxv
-    g  = _three * cv * vxv - _three * d * vyv
-
-    block[6]  = r2
-    block[7]  = a
-    block[8]  = b
-    block[9]  = cv
-    block[10] = d
-    block[11] = -e
-    block[12] = -f
-    block[13] = -g
-    block[14] = -_three * a * d
-    block[15] = -_three * a * cv
-    block[16] = -a * b
 
 
 def _local_dt_from_B(state, steps_per_local_gyro, dt_min, dt_max):
@@ -146,7 +131,11 @@ def _use_fast_path(state, ps_step, min_N):
 # refreshed from the local field. The order/finiteness check still guards
 # every substep, so a batch that outruns a strengthening field is caught and
 # retried from the good prefix — this only sets the refresh cadence.
-_BATCH_LOCAL_GYROS = 4
+# Larger batches amortise the Python bookkeeping per ps_integrate call:
+# 4 -> 64 measured 1.4-1.7x faster on deep-mirror orbits, bit-identical
+# output (same substep sequence); 256 gave no further gain. Still capped by
+# max_substeps per call.
+_BATCH_LOCAL_GYROS = 64
 
 
 def _ps_adaptive_interval(
@@ -402,7 +391,7 @@ def _ps_adaptive_chunk(
             # sliced columns so batched output is bit-identical to scalar.
             cols = np.arange(1, K + 1) * n_sub
             block = sol_batch[:, cols].copy()
-            _tether_aux_block(block)
+            _tether_aux(block)
             fin = np.isfinite(block).all(axis=0)
             bad_col = -1 if fin.all() else int(np.flatnonzero(~fin)[0])
             if bad_col >= 0:
@@ -453,7 +442,7 @@ def _ps_adaptive_chunk(
         if completed > 0:
             cols = np.arange(1, completed + 1) * n_sub
             block = sol_batch[:, cols].copy()
-            _tether_aux_block(block)       # match scalar-path stored aux
+            _tether_aux(block)       # match scalar-path stored aux
             sol_chunk[:, jj:jj + completed] = block
             orders_chunk[jj:jj + completed] = orders_batch[cols]
         cur_state[:] = sol_batch[:, good_end]

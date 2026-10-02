@@ -1,15 +1,15 @@
 """
-Round-trip test: Dragt paper ↔ dipoleb.py conversions (CORRECTED per Dragt 1965).
+Round-trip Dragt <-> SI <-> dipoleb-sim conversions, checked against
+ps_method.dipoleb_dragt_analysis.compute_w0_squared.
 
-Key identity from paper eqs 2.7 + 2.15d + 2.16:
-    γmv = qMΓ² · W₀
-    γv  = v_scale · W₀     (where v_scale = qMΓ²/m, rest mass)
+Usage:
+    python scripts/test_dragt_roundtrip.py
 
-So W₀·v_scale = γv (relativistic momentum per rest mass), NOT physical speed.
-    γ = √(1 + (W₀·v_scale/c)²)
-    v = W₀·v_scale / γ
-
-And: v_dragt = v_sim · L²  (NO gamma division)
+Identity under test (Dragt 1965 eqs 2.7, 2.15d, 2.16): W0 * v_scale = gamma*v
+with v_scale = q M Gamma^2 / m (rest mass), hence v_dragt = v_sim * L^2 with no
+extra gamma. Prints PASS/FAIL per case at 1e-10 relative tolerance.
+test_dragt_thorough.py covers a superset of these cases except the SI v_perp
+check and the electron-mass compute_w0_squared call.
 """
 import numpy as np
 import sys, os
@@ -22,7 +22,7 @@ c = 299792458.0; m0c2_p = 938.27208943e6
 evtoj = 1.602176634e-19
 
 print("="*90)
-print("CORRECTED ROUND-TRIP TEST (per Dragt 1965)")
+print("ROUND-TRIP TEST: Dragt <-> SI <-> dipoleb")
 print("="*90)
 all_pass = True; threshold = 1e-10
 
