@@ -509,6 +509,7 @@ def run_ps_streaming_adaptive(
     user_min_phase,
     dragt_monitor=None,
     r_atmosphere=1.0,
+    stop_on_atmosphere=False,
     # ---- adaptive control ----
     order_low=50,
     order_high=300,
@@ -563,6 +564,7 @@ def run_ps_streaming_adaptive(
     hit_atmosphere  = False
     hit_atm_step    = -1
     hit_atm_r       = 0.0
+    stopped_on_atm  = False
     # r_atmosphere is in R_E; configurable via yaml (default 1.0 = surface)
 
     # --- internal time (autonomous field: labels output only, not the physics) ---
@@ -698,10 +700,25 @@ def run_ps_streaming_adaptive(
                 adaptive_chunks += 1
                 force_adaptive = False   # let next chunk try fast path again
 
-            # ---- atmospheric impact check (diagnostic only, does not halt) ----
+            # ---- atmospheric impact check (diagnostic unless stop_on_atmosphere) ----
             r_sq = sol_chunk[0]**2 + sol_chunk[1]**2 + sol_chunk[2]**2
             below = np.where(r_sq < r_atmosphere**2)[0]
             if len(below) > 0:
+                if stop_on_atmosphere:
+                    # Truncate at the first below-threshold sample, keep it as
+                    # the final output point, and halt after writing this chunk
+                    # (same exit path as the dt_min halt below).
+                    k = int(below[0])
+                    t_internal  -= ul.npfloat(this_chunk - k) * ps_step
+                    this_chunk   = k
+                    sol_chunk    = sol_chunk[:, :k + 1]
+                    orders_chunk = orders_chunk[:k + 1]
+                    cur_state[:6] = sol_chunk[:6, -1]
+                    _tether_aux(cur_state)
+                    r_sq = r_sq[:k + 1]
+                    below = below[:1]
+                    halted = True
+                    stopped_on_atm = True
                 r_min_chunk = float(np.sqrt(r_sq[below].min()))
                 hit_atm_r = min(hit_atm_r, r_min_chunk) if hit_atmosphere else r_min_chunk
                 if not hit_atmosphere:
@@ -724,6 +741,8 @@ def run_ps_streaming_adaptive(
                 keep = np.ones_like(idx_eff, dtype=bool)
             else:
                 keep = (idx_eff % decimate == 0) | (idx_eff == total_steps)
+                if halted and keep.size:
+                    keep[-1] = True   # a halted run always keeps its last sample
 
             sol_keep    = sol_eff[:, keep]
             orders_keep = orders_eff[keep]
@@ -748,12 +767,19 @@ def run_ps_streaming_adaptive(
             if dragt_monitor is not None:
                 dragt_monitor.check(sol_chunk, step_index=global_index)
 
-            # --- halt if adaptive path gave up ---
+            # --- halt if adaptive path gave up, or the particle hit the atmosphere ---
             if halted:
-                print(f"\n  *** Integration halted at t={float(t_internal):.2f} "
-                      f"(step {global_index}/{steps_ps}) — "
-                      f"PS series cannot converge at dt_min.\n"
-                      f"  Good trajectory data saved up to this point.\n")
+                if stopped_on_atm:
+                    print(f"\n  *** Integration stopped at t={float(t_internal):.2f} "
+                          f"(global step {global_index:,}/{total_steps:,}) — "
+                          f"particle reached r < {r_atmosphere} R_E "
+                          f"(r = {hit_atm_r:.4f} R_E).\n"
+                          f"  Trajectory saved up to and including the impact sample.\n")
+                else:
+                    print(f"\n  *** Integration halted at t={float(t_internal):.2f} "
+                          f"(global step {global_index:,}/{total_steps:,}) — "
+                          f"PS series cannot converge at dt_min.\n"
+                          f"  Good trajectory data saved up to this point.\n")
                 break
 
         # --- finalise ---
@@ -768,6 +794,8 @@ def run_ps_streaming_adaptive(
             ps_grp.attrs["hit_atmosphere"]   = hit_atmosphere
             ps_grp.attrs["hit_atm_step"]     = hit_atm_step
             ps_grp.attrs["hit_atm_r"]        = hit_atm_r
+            ps_grp.attrs["stop_on_atmosphere"]   = bool(stop_on_atmosphere)
+            ps_grp.attrs["stopped_on_atmosphere"] = stopped_on_atm
 
             # --- checkpoint handoff (see run_ps_streaming_with_decimation) ---
             # Only the 6-vector pos/vel is needed to continue; end_global_index
@@ -784,7 +812,8 @@ def run_ps_streaming_adaptive(
 
         completed_steps = global_index
         elapsed_ps = time.time() - start_time_ps
-        status = "HALTED" if completed_steps < steps_ps else "complete"
+        status = ("STOPPED (atmosphere)" if stopped_on_atm
+                  else "HALTED" if completed_steps < steps_ps else "complete")
         print(f"\n  Adaptive PS {status}:"
               f"\n    completed       = {completed_steps:,} / {steps_ps:,} steps"
               f"\n    fast chunks     = {fast_chunks}"

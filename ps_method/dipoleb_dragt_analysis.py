@@ -694,7 +694,7 @@ def run_section(
         "mu_sq": None, "orbit_character": None,
         "eps_initial": None, "eps_mean": None, "eps_max": None,
         "n_eq_crossings": None,
-        "hit_atmosphere": False, "hit_atm_r": None,
+        "hit_atmosphere": False, "hit_atm_r": None, "stopped_on_atmosphere": False,
     }
 
     if not USE_PS:
@@ -885,6 +885,8 @@ def run_section(
             if "ps" in _h5 and "hit_atmosphere" in _h5["ps"].attrs:
                 dragt_log["hit_atmosphere"] = bool(_h5["ps"].attrs["hit_atmosphere"])
                 dragt_log["hit_atm_r"]     = float(_h5["ps"].attrs["hit_atm_r"])
+                dragt_log["stopped_on_atmosphere"] = bool(
+                    _h5["ps"].attrs.get("stopped_on_atmosphere", False))
     except (OSError, KeyError):
         pass
 

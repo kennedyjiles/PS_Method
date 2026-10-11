@@ -288,7 +288,8 @@ def build_vds(hash_str, output_folder, verify_chain=True):
     last_end_index = 0
     agg = dict(max_ps=0, sum_orders=0, count_orders=0, total_steps=0,
                total_substeps=0, total_rejections=0,
-               hit_atmosphere=False, hit_atm_step=-1, hit_atm_r=0.0)
+               hit_atmosphere=False, hit_atm_step=-1, hit_atm_r=0.0,
+               stopped_on_atmosphere=False)
     prev_end = None
     for idx, path in segs:
         with h5py.File(path, "r") as f:
@@ -310,7 +311,13 @@ def build_vds(hash_str, output_folder, verify_chain=True):
             agg["max_ps"] = max(agg["max_ps"], int(ps.attrs.get("max_ps", 0)))
             agg["sum_orders"]   += int(ps.attrs.get("sum_orders", 0))
             agg["count_orders"] += int(ps.attrs.get("count_orders", 0))
-            agg["total_steps"]  += int(ps.attrs.get("steps", 0))
+            # Actual steps integrated (end - start) when the handoff attrs
+            # exist; a halted/stopped segment's nominal "steps" over-reports.
+            if "end_global_index" in ps.attrs and "start_global_index" in ps.attrs:
+                agg["total_steps"] += (int(ps.attrs["end_global_index"])
+                                       - int(ps.attrs["start_global_index"]))
+            else:
+                agg["total_steps"] += int(ps.attrs.get("steps", 0))
             agg["total_substeps"]   += int(ps.attrs.get("total_substeps", 0))
             agg["total_rejections"] += int(ps.attrs.get("total_rejections", 0))
             if bool(ps.attrs.get("hit_atmosphere", False)):
@@ -321,6 +328,8 @@ def build_vds(hash_str, output_folder, verify_chain=True):
                 else:
                     agg["hit_atm_step"] = min(agg["hit_atm_step"], s)
                     agg["hit_atm_r"]    = min(agg["hit_atm_r"], r)
+            if bool(ps.attrs.get("stopped_on_atmosphere", False)):
+                agg["stopped_on_atmosphere"] = True
         cols.append((os.path.basename(path), c))
         total_cols += c
 
@@ -362,6 +371,7 @@ def build_vds(hash_str, output_folder, verify_chain=True):
         ps.attrs["hit_atmosphere"]     = agg["hit_atmosphere"]
         ps.attrs["hit_atm_step"]       = agg["hit_atm_step"]
         ps.attrs["hit_atm_r"]          = agg["hit_atm_r"]
+        ps.attrs["stopped_on_atmosphere"] = agg["stopped_on_atmosphere"]
         ps.attrs["segmented"]          = True
         ps.attrs["n_segments"]         = len(segs)
         if "total_substeps" in base_attrs:      # adaptive runs only
@@ -913,7 +923,8 @@ def summary_txt_dipoleb(
             if dragt_log.get("n_eq_crossings") is not None:
                 f.write(f"Equatorial crossings    : {dragt_log['n_eq_crossings']:,}\n")
             if dragt_log["hit_atmosphere"]:
-                f.write(f"Atmosphere flag         : HIT (r_min = {dragt_log['hit_atm_r']:.4f} R_E)\n")
+                _stopped = " — run stopped at impact" if dragt_log.get("stopped_on_atmosphere") else ""
+                f.write(f"Atmosphere flag         : HIT (r_min = {dragt_log['hit_atm_r']:.4f} R_E){_stopped}\n")
             else:
                 f.write(f"Atmosphere flag         : CLEAR\n")
 
@@ -1253,6 +1264,7 @@ def master_csv(
             "eps_max":            dragt_log["eps_max"]        if is_ps else None,
             "n_eq_crossings":     dragt_log.get("n_eq_crossings") if is_ps else None,
             "hit_atmosphere":     dragt_log["hit_atmosphere"] if is_ps else None,
+            "stopped_on_atmosphere": bool(dragt_log.get("stopped_on_atmosphere", False)) if is_ps else None,
             "hit_atm_r":          dragt_log["hit_atm_r"]      if is_ps else None,
             "n_mirror_crossings": _b.get("n_crossings")       if is_ps else None,
             "bounce_period_s":    _b.get("full_mean_s")       if is_ps else None,

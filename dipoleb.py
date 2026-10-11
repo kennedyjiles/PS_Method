@@ -73,6 +73,11 @@ def _stamp_segment_summary(seg_build_path, summary_stub, hash_str, seg_index,
     meta["timing"] = {"ps": float(seg_elapsed)}
     meta["segment_index"] = int(seg_index)          # provenance
     with h5py.File(seg_build_path, "a") as f:
+        # Actual steps integrated, not the target: a segment that halts early
+        # (dt_min, or stop_on_atmosphere) must not over-report its span.
+        _a = f["ps"].attrs
+        if "end_global_index" in _a and "start_global_index" in _a:
+            seg_steps = int(_a["end_global_index"]) - int(_a["start_global_index"])
         s["ps"]["steps"] = int(seg_steps)
         s["ps"]["max_ps"] = int(f["ps"].attrs.get("max_ps", 0))
         f.attrs["summary_json"] = json.dumps(s)
@@ -376,6 +381,12 @@ def main(cfg_path, replot=False):
     gap_gyro_fraction       = bounce_drift_cfg["gap_gyro_fraction"]
 
     r_atmosphere            = params["r_atmosphere"]   # atmospheric impact threshold (R_E)
+    stop_on_atmosphere      = bool(params.get("stop_on_atmosphere", False))
+    if stop_on_atmosphere and not USE_ADAPTIVE:
+        print("\n  WARNING: stop_on_atmosphere is true but solvers.adaptive is false — "
+              "only the adaptive PS path can stop at the atmosphere; ignored "
+              "(and hash-neutral) for this run.\n")
+        stop_on_atmosphere = False
 
     # === Misc Odds and Ends ===
     PS_CHUNKING = True     # PS data always streamed to disk in chunks (no in-memory option)
@@ -897,6 +908,7 @@ def main(cfg_path, replot=False):
                         shrink_factor=ps_adaptive["shrink_factor"],
                         steps_per_local_gyro=ps_adaptive["steps_per_local_gyro"],
                         min_fast_path_N=ps_adaptive["min_fast_path_N"],
+                        stop_on_atmosphere=stop_on_atmosphere,
                     )
                     _run_fn = run_ps_streaming_adaptive
                 else:
@@ -966,6 +978,26 @@ def main(cfg_path, replot=False):
                     max_ps, elapsed_ps = _run_fn(**_stream_args)
                 dragt_mon.summary()
                 end_time_ps = time.time()
+
+                # A run that ended early (adaptive dt_min halt, or
+                # stop_on_atmosphere) leaves the h5 short of steps_ps. Mirror
+                # the cache-load branch: reconcile every span-derived quantity
+                # to the data so the summary/plots don't assume the target span.
+                if os.path.exists(cache_path):
+                    try:
+                        with h5py.File(cache_path, "r") as _f:
+                            _end_gi = int(_f["ps"].attrs.get("end_global_index", steps_ps))
+                    except (OSError, KeyError):
+                        _end_gi = steps_ps
+                    if _end_gi < steps_ps:
+                        steps_ps = _end_gi
+                        norm_time = steps_ps * ps_step
+                        gyroperiods = norm_time / T_gyro
+                        physical_time = norm_time * abs(tau_time)
+                        print(f"  NOTE: PS run ended at step {steps_ps:,} "
+                              f"({gyroperiods:.4g} gyroperiods), short of the "
+                              f"configured span; norm_time/gyroperiods/physical_time "
+                              f"reconciled to the data.")
 
             # ====== Run RK45 ======
             if USE_RK45:

@@ -124,9 +124,18 @@ def physics_hash(cfg):
     """
     from ps_method.writers import run_hash
     _is_adaptive = bool((cfg.get("solvers") or {}).get("adaptive", False))
+    # STOP-ON-ATMOSPHERE: the toggle (and the r_atmosphere threshold it acts
+    # on) can truncate the trajectory, but only on the adaptive path. Hash
+    # both ONLY when the toggle is on for an adaptive run; otherwise strip
+    # them (r_atmosphere is a post-processing flag there) so every pre-toggle
+    # config, and any config with the key false/absent, keeps its hash.
+    _stop_atm = _is_adaptive and bool(cfg.get("stop_on_atmosphere", False))
     pruned = {}
     for k, v in cfg.items():
-        if k in _NON_HASH_KEYS:
+        if k == "stop_on_atmosphere":
+            if not _stop_atm:
+                continue
+        elif k in _NON_HASH_KEYS and not (k == "r_atmosphere" and _stop_atm):
             continue
         if k in ("solvers", "steps_per_gyro", "step_overrides") \
                 and isinstance(v, dict) and "boris" in v:
@@ -864,8 +873,10 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         # Bounce/drift detection
         "bounce_drift": cfg["bounce_drift"],
 
-        # Atmospheric impact threshold (R_E)
+        # Atmospheric impact threshold (R_E), and whether the adaptive PS
+        # path stops the run at the first sample below it (see base.yml).
         "r_atmosphere": cfg["r_atmosphere"],
+        "stop_on_atmosphere": bool(cfg.get("stop_on_atmosphere", False)),
     }
 
     return params

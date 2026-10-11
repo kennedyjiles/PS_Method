@@ -147,6 +147,15 @@ dragt_monitor_rtol: 1.0e-4  # relative tolerance for Dragt conservation monitor
 # 1.0 = Earth's surface; 1.0157 ≈ 100 km altitude.
 r_atmosphere: 1.0157
 
+# Stop the run at the first sample with r < r_atmosphere (adaptive PS only;
+# the fixed-step integrator ignores this). The impact sample is kept as the
+# final output point and the run is treated like a halted adaptive run: the
+# h5 covers the shortened span and the summary/plots are reconciled to it.
+# Hash-neutral unless BOTH this is true AND solvers.adaptive is true, so
+# existing cache files keep their names; a stop-run (which can truncate the
+# trajectory) gets its own hash, as does its r_atmosphere threshold.
+stop_on_atmosphere: false
+
 # --- Bounce/Drift Detection ---
 # Controls how mirror-bounce crossings and azimuthal drift are detected.
 # Unlikely to need changing unless working with exotic orbits.

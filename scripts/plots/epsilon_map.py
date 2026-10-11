@@ -42,7 +42,7 @@ MP_MEV = 938.27208816        # proton rest mass, MeV
 # Defined as the *first* loss over the whole sweep, so it is a lower envelope,
 # not a separatrix: interspersed verdicts above it are expected, not a
 # contradiction. Change these two together.
-EPS_SYMBOL = r"\varepsilon_\ell"   # figure label (mathtext)
+EPS_SYMBOL = r"\varepsilon_{\ell,0}"   # figure label (mathtext); the 0 marks the launch value
 EPS_NAME   = "eps_l"            # console / plain-text name
 
 EPS_L_85 = 0.457             # measured at alpha_eq = 85 deg (last KAM curve destroyed)
