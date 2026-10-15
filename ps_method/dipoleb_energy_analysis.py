@@ -3,6 +3,7 @@ Kinetic energy and P_phi conservation diagnostics for dipole trajectories.
 
     compute_ke_errors            — KE errors for all enabled solvers
     compute_pphi_errors          — P_phi errors for all enabled solvers
+    compute_traj_errors          — |r − r_PS| for every other enabled solver (PS is the reference)
 
 Internal helpers:
     _vector_potential_batch      — vectorized dipole A for an (N,3) position array
@@ -152,11 +153,16 @@ def compute_ke_errors(
     USE_RKG=False, solution_rkg=None, rkg_step=None, rkg_y_initial=None,
     # RK45
     USE_RK45=False, y_rk45_common=None, rk45_y_initial=None,
+    # RK45b (SciPy solve_ivp backup; same (6, N) layout and grid as RK45)
+    USE_RK45B=False, y_rk45b_common=None, rk45b_y_initial=None,
+    # Boris — streamed to h5 in the PS layout; read chunked from cache_path["boris"]
+    USE_BORIS=False, boris_step=None, boris_decimate=1, steps_boris=None, e0_boris=None,
     # External h5 overlay files
     USE_EXTERNAL_H5_ps=False,  external_h5_ps=None,
     USE_EXTERNAL_H5_rk4=False, external_h5_rk4=None,
     USE_EXTERNAL_H5_rk45=False, external_h5_rk45=None,
     USE_EXTERNAL_H5_rkg=False,  external_h5_rkg=None,
+    USE_EXTERNAL_H5_boris=False, external_h5_boris=None,
     # Needed for RKG Hamiltonian energy (canonical p → v requires charge sign:
     # v = p - charge_sign * A, matching hamiltonian_rhs)
     vector_potential_func=None,
@@ -166,14 +172,16 @@ def compute_ke_errors(
 ):
     """Compute KE relative error arrays for every enabled solver.
 
-    Note: rel_drift_ps is decimated by `energy_stride` (the chunked PS reader
-    decimates inline to save memory). rel_drift_rk4/rk45/rkg are full-length.
+    Note: rel_drift_ps and rel_drift_boris are decimated by `energy_stride` /
+    `energy_stride_boris` (the chunked h5 readers decimate inline to save
+    memory). rel_drift_rk4/rk45/rkg are full-length.
 
     Returns a dict with keys:
         time_factor, energy_stride,
-        rel_drift_ps, rel_drift_rk4, rel_drift_rk45, rel_drift_rkg,
-        ke_ps, ke_rk4, ke_rk45, ke_rkg,           (plot-ready tuples or None)
-        ke_ext_ps, ke_ext_rk4, ke_ext_rk45, ke_ext_rkg  (external overlay tuples or None)
+        rel_drift_ps, rel_drift_rk4, rel_drift_rk45, rel_drift_rkg, rel_drift_boris,
+        ke_ps, ke_rk4, ke_rk45, ke_rkg, ke_boris,  (plot-ready tuples or None)
+        ke_ext_ps, ke_ext_rk4, ke_ext_rk45, ke_ext_rkg, ke_ext_boris
+                                                   (external overlay tuples or None)
     """
     time_factor = 1.0 / T_gyro
 
@@ -182,7 +190,7 @@ def compute_ke_errors(
         energy_stride = max(1, n_ps // max_plot_points)
 
     # --- External H5 overlays ---
-    ke_ext_ps = ke_ext_rk4 = ke_ext_rk45 = ke_ext_rkg = None
+    ke_ext_ps = ke_ext_rk4 = ke_ext_rk45 = ke_ext_rkg = ke_ext_boris = None
 
     if USE_EXTERNAL_H5_ps:
         with h5py.File(external_h5_ps, 'r') as external:
@@ -221,6 +229,26 @@ def compute_ke_errors(
         E_rk4_ext = 0.5 * np.sum(v_rk4_ext**2, axis=0)
         rel_drift_rk4_ext = np.abs(E_rk4_ext - E_rk4_ext[0]) / E_rk4_ext[0]
         ke_ext_rk4 = (t_eval_rk4_ext, rel_drift_rk4_ext)
+
+    if USE_EXTERNAL_H5_boris:
+        external_boris = load_results_h5_func(external_h5_boris)
+        ext_boris = external_boris["boris"]
+        y_boris_ext = ext_boris["y"]
+        if "t" in ext_boris and ext_boris["t"] is not None:
+            t_eval_boris_ext = ext_boris["t"]
+        elif "dt" in ext_boris and "steps" in ext_boris:
+            t_eval_boris_ext = ext_boris["dt"] * np.arange(ext_boris["steps"] + 1, dtype=ul.npfloat)
+        else:
+            raise RuntimeError(
+                "External Boris H5 file has no time information "
+                "(needs 't' or 'dt'+'steps')."
+            )
+        if y_boris_ext.shape[0] != 6:
+            y_boris_ext = y_boris_ext.T
+        v_boris_ext = y_boris_ext[3:6]
+        E_boris_ext = 0.5 * np.sum(v_boris_ext**2, axis=0)
+        rel_drift_boris_ext = np.abs(E_boris_ext - E_boris_ext[0]) / E_boris_ext[0]
+        ke_ext_boris = (t_eval_boris_ext, rel_drift_boris_ext)
 
     if USE_EXTERNAL_H5_rk45:
         externalb = load_results_h5_func(external_h5_rk45)
@@ -352,6 +380,18 @@ def compute_ke_errors(
             E_rk45_0 = E_rk45[0]
         rel_drift_rk45 = np.abs(E_rk45 - E_rk45_0) / E_rk45_0
 
+    # --- Current-run RK45b (same layout as RK45) ---
+    rel_drift_rk45b = None
+    if USE_RK45B:
+        v_b = y_rk45b_common[3:6]
+        E_b = 0.5 * np.sum(v_b**2, axis=0)
+        if rk45b_y_initial is not None:
+            v0 = rk45b_y_initial[3:6]
+            E_b_0 = 0.5 * float(np.sum(v0 * v0))
+        else:
+            E_b_0 = E_b[0]
+        rel_drift_rk45b = np.abs(E_b - E_b_0) / E_b_0
+
     # --- Current-run RK4 ---
     rel_drift_rk4 = None
     if USE_RK4:
@@ -364,10 +404,34 @@ def compute_ke_errors(
             E_rk4_0 = E_rk4[0]
         rel_drift_rk4 = np.abs(E_rk4 - E_rk4_0) / E_rk4_0
 
+    # --- Current-run Boris (chunked from h5, PS layout) ---
+    # Boris preserves |v| to round-off by construction, so this curve sits at
+    # ~1e-16..1e-14 for any step size; P_phi is where its (second-order)
+    # error shows. Same reader as PS: uniform decimation feeds the summary
+    # tail, log-spaced sampling feeds the plot.
+    rel_drift_boris = None
+    t_boris_log = drift_boris_log = None
+    energy_stride_boris = 1
+    if USE_BORIS:
+        if steps_boris is not None:
+            energy_stride_boris = max(1, int(steps_boris) // max_plot_points)
+        with h5py.File(cache_path, "r") as h5:
+            b_y_h5 = h5["boris"]["y"]
+            log_idx = log_spaced_indices(b_y_h5.shape[1], max_plot_points)
+            _, rel_drift_boris, t_boris_log, drift_boris_log = _compute_energy_ps_chunked(
+                ps_y_h5=b_y_h5,
+                e0_ps=e0_boris,
+                dt_ps_store=boris_step * (boris_decimate if boris_decimate > 1 else 1),
+                chunk_cols=max_plot_points,
+                stride=energy_stride_boris,
+                log_indices=log_idx,
+            )
+
     # --- Build time arrays ---
     t_rk4 = rk4_step * np.arange(len(rel_drift_rk4), dtype=ul.npfloat) if USE_RK4 else None
     t_rkg = rkg_step * np.arange(len(rel_drift_rkg), dtype=ul.npfloat) if USE_RKG else None
     t_rk45 = ps_step * np.arange(len(rel_drift_rk45), dtype=ul.npfloat) if USE_RK45 else None
+    t_rk45b = ps_step * np.arange(len(rel_drift_rk45b), dtype=ul.npfloat) if USE_RK45B else None
 
     # --- Assemble plot-ready tuples ---
     # Plot uses the LOG-spaced arrays; the summary uses uniform rel_drift_ps.
@@ -375,25 +439,33 @@ def compute_ke_errors(
     ke_rk4  = (t_rk4, rel_drift_rk4)      if USE_RK4  else None
     ke_rk45 = (t_rk45, rel_drift_rk45)    if USE_RK45 else None
     ke_rkg  = (t_rkg, rel_drift_rkg)       if USE_RKG  else None
+    ke_boris = (t_boris_log, drift_boris_log) if USE_BORIS else None
+    ke_rk45b = (t_rk45b, rel_drift_rk45b)    if USE_RK45B else None
 
     return {
         "time_factor":    time_factor,
         "energy_stride":  energy_stride,
+        "energy_stride_boris": energy_stride_boris,
         # raw arrays (needed by summary writer + CSV log)
         "rel_drift_ps":   rel_drift_ps,
         "rel_drift_rk4":  rel_drift_rk4,
         "rel_drift_rk45": rel_drift_rk45,
         "rel_drift_rkg":  rel_drift_rkg,
+        "rel_drift_boris": rel_drift_boris,
+        "rel_drift_rk45b": rel_drift_rk45b,
         # plot-ready tuples
         "ke_ps":   ke_ps,
         "ke_rk4":  ke_rk4,
         "ke_rk45": ke_rk45,
         "ke_rkg":  ke_rkg,
+        "ke_boris": ke_boris,
+        "ke_rk45b": ke_rk45b,
         # external overlays
         "ke_ext_ps":   ke_ext_ps,
         "ke_ext_rk4":  ke_ext_rk4,
         "ke_ext_rk45": ke_ext_rk45,
         "ke_ext_rkg":  ke_ext_rkg,
+        "ke_ext_boris": ke_ext_boris,
     }
 
 
@@ -416,6 +488,38 @@ def _pphi_drift(P_phi_initial, P_phi_array):
     return np.abs((P_phi_array - P_phi_initial) / P_phi_initial)
 
 
+def _pphi_chunked(cache_path, group, P0, dt_store, stride, max_plot_points, charge_sign):
+    """Chunked |ΔP_phi| from an h5 group in the compact PS layout.
+
+    Returns (rel_uniform, t_log, drift_log): the uniformly strided series
+    (summary tail) and a log-spaced sampling for the plot, collected in one
+    pass so the early decades of τ/T are visible.
+    """
+    chunk_cols = max_plot_points
+    with h5py.File(cache_path, "r") as h5:
+        ds = h5[group]["y"]
+        N = ds.shape[1]
+        log_idx = log_spaced_indices(N, max_plot_points)
+        err_dec, err_log, t_log = [], [], []
+        for i0 in range(0, N, chunk_cols):
+            i1 = min(i0 + chunk_cols, N)
+            ch = ds[:6, i0:i1]
+            pp = _pphi_from_xyz_v(ch[0], ch[1], ch[2], ch[3], ch[4], ch[5], charge_sign)
+            err = _pphi_drift(P0, pp)
+            err_dec.append(err[::stride])                    # uniform (summary)
+            lo = np.searchsorted(log_idx, i0, side="left")  # log (plot)
+            hi = np.searchsorted(log_idx, i1, side="left")
+            sel = log_idx[lo:hi]
+            if len(sel):
+                err_log.append(err[sel - i0])
+                t_log.append(sel)
+            del ch, pp, err
+    rel = np.concatenate(err_dec)
+    drift_log = np.concatenate(err_log)
+    t_log = np.concatenate(t_log).astype(ul.npfloat) * dt_store
+    return rel, t_log, drift_log
+
+
 def compute_pphi_errors(
     T_gyro, n_ps=None,
     max_plot_points=1_000_000,
@@ -427,6 +531,10 @@ def compute_pphi_errors(
     USE_RKG=False, solution_rkg=None, rkg_step=None, rkg_y_initial=None,
     # RK45
     USE_RK45=False, y_rk45_common=None, rk45_y_initial=None,
+    # RK45b (same layout/grid as RK45)
+    USE_RK45B=False, y_rk45b_common=None, rk45b_y_initial=None,
+    # Boris — streamed to h5 in the PS layout; read chunked from cache_path["boris"]
+    USE_BORIS=False, boris_step=None, boris_decimate=1, steps_boris=None,
     # For RKG: convert momentum → velocity via v = p - charge_sign * A
     vector_potential_func=None,
     charge_sign=1,
@@ -437,17 +545,18 @@ def compute_pphi_errors(
     tuples (t_array, drift_array) for each solver, plus the time_factor
     and the initial P_phi values.
 
-    For RK4 / RK45 / PS: state is (x,y,z, vx,vy,vz) — P_phi computed directly.
+    For RK4 / RK45 / Boris / PS: state is (x,y,z, vx,vy,vz) — P_phi computed directly.
     For RKG: state is (x,y,z, px,py,pz) — convert to velocity first with
     v = p - charge_sign * A(r), matching the Hamiltonian convention used
     in compute_ke_errors.
 
     Returns dict with keys:
         time_factor, energy_stride,
-        rel_pphi_ps, rel_pphi_rk4, rel_pphi_rk45, rel_pphi_rkg,
-        pphi_ps, pphi_rk4, pphi_rk45, pphi_rkg,   (plot-ready tuples or None)
-        P_phi_initial_ps, P_phi_initial_rk4, P_phi_initial_rk45, P_phi_initial_rkg
-        ylabel_ps, ylabel_rk4, ylabel_rk45, ylabel_rkg
+        rel_pphi_ps, rel_pphi_rk4, rel_pphi_rk45, rel_pphi_rkg, rel_pphi_boris,
+        pphi_ps, pphi_rk4, pphi_rk45, pphi_rkg, pphi_boris,  (plot-ready tuples or None)
+        P_phi_initial_ps, P_phi_initial_rk4, P_phi_initial_rk45, P_phi_initial_rkg,
+        P_phi_initial_boris
+        ylabel (shared)
     """
     time_factor = 1.0 / T_gyro
 
@@ -470,31 +579,10 @@ def compute_pphi_errors(
         vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
         P_phi_initial_ps = float((rho0 * vphi0) - charge_sign * (rho0**2 / r0**3))
 
-        chunk_cols = max_plot_points
         dt_ps_store = ps_step * (ps_decimate if ps_decimate > 1 else 1)
-        with h5py.File(cache_path, "r") as h5:
-            ds = h5["ps"]["y"]
-            N = ds.shape[1]
-            log_idx = log_spaced_indices(N, max_plot_points)
-            err_dec = []
-            err_log = []
-            t_log = []
-            for i0 in range(0, N, chunk_cols):
-                i1 = min(i0 + chunk_cols, N)
-                ch = ds[:6, i0:i1]
-                pp = _pphi_from_xyz_v(ch[0], ch[1], ch[2], ch[3], ch[4], ch[5], charge_sign)
-                err = _pphi_drift(P_phi_initial_ps, pp)
-                err_dec.append(err[::energy_stride])           # uniform (summary)
-                lo = np.searchsorted(log_idx, i0, side="left")  # log (plot)
-                hi = np.searchsorted(log_idx, i1, side="left")
-                sel = log_idx[lo:hi]
-                if len(sel):
-                    err_log.append(err[sel - i0])
-                    t_log.append(sel)
-                del ch, pp, err
-        rel_pphi_ps = np.concatenate(err_dec)
-        drift_pphi_log = np.concatenate(err_log)
-        t_pphi_log = np.concatenate(t_log).astype(ul.npfloat) * dt_ps_store
+        rel_pphi_ps, t_pphi_log, drift_pphi_log = _pphi_chunked(
+            cache_path, "ps", P_phi_initial_ps, dt_ps_store,
+            energy_stride, max_plot_points, charge_sign)
         ylabel_ps = (r"$|\Delta P_\phi|$" if P_phi_initial_ps == 0
                      else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
 
@@ -559,11 +647,46 @@ def compute_pphi_errors(
         ylabel_rkg = (r"$|\Delta P_\phi|$" if P_phi_initial_rkg == 0
                       else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
 
+    # --- RK45b (state in y_rk45b_common, shape (6, N)) ---
+    rel_pphi_rk45b = None; P_phi_initial_rk45b = None
+    if USE_RK45B:
+        rk = y_rk45b_common
+        pp_rk = _pphi_from_xyz_v(rk[0], rk[1], rk[2], rk[3], rk[4], rk[5], charge_sign)
+        if rk45b_y_initial is not None:
+            y0 = rk45b_y_initial
+            rho0 = np.sqrt(y0[0]**2 + y0[1]**2)
+            r0   = np.sqrt(y0[0]**2 + y0[1]**2 + y0[2]**2)
+            vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
+            P_phi_initial_rk45b = float((rho0*vphi0) - charge_sign*(rho0**2/r0**3))
+        else:
+            P_phi_initial_rk45b = float(pp_rk[0])
+        rel_pphi_rk45b = _pphi_drift(P_phi_initial_rk45b, pp_rk)
+
+    # --- Boris (chunked from h5, PS layout; same IC as PS so same P_phi,0) ---
+    rel_pphi_boris = None; P_phi_initial_boris = None; ylabel_boris = None
+    t_pphi_boris_log = drift_pphi_boris_log = None
+    if USE_BORIS:
+        y0 = ps_y_initial
+        rho0  = np.sqrt(y0[0]**2 + y0[1]**2)
+        r0    = np.sqrt(y0[0]**2 + y0[1]**2 + y0[2]**2)
+        vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
+        P_phi_initial_boris = float((rho0 * vphi0) - charge_sign * (rho0**2 / r0**3))
+        stride_boris = 1
+        if steps_boris is not None:
+            stride_boris = max(1, int(steps_boris) // max_plot_points)
+        dt_boris_store = boris_step * (boris_decimate if boris_decimate > 1 else 1)
+        rel_pphi_boris, t_pphi_boris_log, drift_pphi_boris_log = _pphi_chunked(
+            cache_path, "boris", P_phi_initial_boris, dt_boris_store,
+            stride_boris, max_plot_points, charge_sign)
+        ylabel_boris = (r"$|\Delta P_\phi|$" if P_phi_initial_boris == 0
+                        else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
+
     # --- Time arrays for non-PS solvers ---
     t_rk4  = (rk4_step  * np.arange(len(rel_pphi_rk4),  dtype=ul.npfloat)) if USE_RK4  else None
     t_rkg  = (rkg_step  * np.arange(len(rel_pphi_rkg),  dtype=ul.npfloat)) if USE_RKG  else None
     # RK45 was stored at PS-step cadence in the existing code path
     t_rk45 = (ps_step   * np.arange(len(rel_pphi_rk45), dtype=ul.npfloat)) if USE_RK45 else None
+    t_rk45b = (ps_step  * np.arange(len(rel_pphi_rk45b), dtype=ul.npfloat)) if USE_RK45B else None
 
     # --- Plot-ready tuples ---
     # Plot uses the LOG-spaced arrays; the summary uses uniform rel_pphi_ps.
@@ -571,9 +694,11 @@ def compute_pphi_errors(
     pphi_rk4  = (t_rk4,     rel_pphi_rk4)  if USE_RK4  else None
     pphi_rk45 = (t_rk45,    rel_pphi_rk45) if USE_RK45 else None
     pphi_rkg  = (t_rkg,     rel_pphi_rkg)  if USE_RKG  else None
+    pphi_boris = (t_pphi_boris_log, drift_pphi_boris_log) if USE_BORIS else None
+    pphi_rk45b = (t_rk45b, rel_pphi_rk45b) if USE_RK45B else None
 
     # Use the first solver's ylabel as the shared one
-    ylabel = next((y for y in (ylabel_ps, ylabel_rk4, ylabel_rk45, ylabel_rkg)
+    ylabel = next((y for y in (ylabel_ps, ylabel_rk4, ylabel_rk45, ylabel_rkg, ylabel_boris)
                    if y is not None), r"$|\Delta P_\phi|/|P_{\phi,0}|$")
 
     return {
@@ -583,13 +708,129 @@ def compute_pphi_errors(
         "rel_pphi_rk4":  rel_pphi_rk4,
         "rel_pphi_rk45": rel_pphi_rk45,
         "rel_pphi_rkg":  rel_pphi_rkg,
+        "rel_pphi_boris": rel_pphi_boris,
+        "rel_pphi_rk45b": rel_pphi_rk45b,
         "pphi_ps":   pphi_ps,
         "pphi_rk4":  pphi_rk4,
         "pphi_rk45": pphi_rk45,
         "pphi_rkg":  pphi_rkg,
+        "pphi_boris": pphi_boris,
+        "pphi_rk45b": pphi_rk45b,
         "P_phi_initial_ps":   P_phi_initial_ps,
         "P_phi_initial_rk4":  P_phi_initial_rk4,
         "P_phi_initial_rk45": P_phi_initial_rk45,
         "P_phi_initial_rkg":  P_phi_initial_rkg,
+        "P_phi_initial_boris": P_phi_initial_boris,
         "ylabel":     ylabel,
     }
+
+
+# ------------------------------------------------------------------
+#  compute_traj_errors — trajectory deviation from the PS reference
+# ------------------------------------------------------------------
+def _ps_positions_on_grid(cache_path, group, n_need, k_ps, k_m):
+    """Positions from an h5 group in the compact layout, sampled so that
+    stored index j·k_ps lines up in time with the other method's index i·k_m
+    (k_ps, k_m integers; one of them is 1). Returns (3, n) array."""
+    with h5py.File(cache_path, "r") as h5:
+        ds = h5[group]["y"]
+        n_store = ds.shape[1]
+        n_take = min(n_need, (n_store - 1) // k_ps + 1)
+        out = np.empty((3, n_take), dtype=ul.npfloat)
+        chunk = 1_000_000
+        for i0 in range(0, n_take, chunk):
+            i1 = min(i0 + chunk, n_take)
+            out[:, i0:i1] = ds[0:3, i0 * k_ps:(i1 - 1) * k_ps + 1:k_ps]
+    return out
+
+
+def _align_steps(dt_a, dt_b, rtol=1e-9):
+    """Integer sampling factors (k_a, k_b) so that k_a·dt_a == k_b·dt_b, with
+    one of them equal to 1. Returns None if the steps are not commensurate."""
+    r = dt_a / dt_b
+    if abs(r - round(r)) < rtol * max(1.0, abs(r)) and round(r) >= 1:
+        return 1, int(round(r))          # a coarser: a[i] ↔ b[i·r]
+    r = dt_b / dt_a
+    if abs(r - round(r)) < rtol * max(1.0, abs(r)) and round(r) >= 1:
+        return int(round(r)), 1          # b coarser: a[i·r] ↔ b[i]
+    return None
+
+
+def compute_traj_errors(
+    T_gyro, max_plot_points=1_000_000,
+    # PS reference (chunked from h5)
+    USE_PS=False, cache_path=None, ps_step=None, ps_decimate=1,
+    # RK4 (6, N) in memory
+    USE_RK4=False, solution_rk4=None, rk4_step=None,
+    # RKG (N, 6) in memory, positions in cols 0:3
+    USE_RKG=False, solution_rkg=None, rkg_step=None,
+    # RK45 (6, N) on the PS step grid
+    USE_RK45=False, y_rk45_common=None,
+    # RK45b (6, N) on the PS step grid
+    USE_RK45B=False, y_rk45b_common=None,
+    # Boris (h5 group "boris", compact layout)
+    USE_BORIS=False, boris_step=None, boris_decimate=1,
+):
+    """|r_method − r_PS| for every enabled non-PS solver, on the common time
+    grid, log-sampled for plotting (same convention as compute_ke_errors).
+
+    PS is the reference, so nothing is computed when USE_PS is False. A
+    method whose step is not an integer multiple (or divisor) of the PS
+    stored step is skipped with a note — the comparison needs coincident
+    sample times, not interpolation.
+
+    Returns dict with keys traj_rk4, traj_rk45, traj_rkg, traj_boris
+    (plot-ready (t, |Δr|) tuples or None), plus time_factor.
+    """
+    time_factor = 1.0 / T_gyro
+    out = {"time_factor": time_factor,
+           "traj_rk4": None, "traj_rk45": None, "traj_rkg": None, "traj_boris": None,
+           "traj_rk45b": None}
+    if not USE_PS:
+        return out
+
+    dt_ps_store = ps_step * (ps_decimate if ps_decimate > 1 else 1)
+
+    def _one(name, r_m, dt_m):
+        """r_m: (3, n) positions of the method at step dt_m."""
+        al = _align_steps(dt_m, dt_ps_store)
+        if al is None:
+            print(f"  Note: {name} step {dt_m:g} not commensurate with PS stored step "
+                  f"{dt_ps_store:g}; trajectory-error line skipped.")
+            return None
+        k_m, k_ps = al
+        r_m = r_m[:, ::k_m]
+        r_ps = _ps_positions_on_grid(cache_path, "ps", r_m.shape[1], k_ps, k_m)
+        n = min(r_m.shape[1], r_ps.shape[1])
+        d = np.linalg.norm(r_m[:, :n].astype(ul.npfloat) - r_ps[:, :n], axis=0)
+        t = np.arange(n, dtype=ul.npfloat) * (k_m * dt_m)
+        idx = log_spaced_indices(n, max_plot_points)
+        return (t[idx], d[idx])
+
+    if USE_RK4 and solution_rk4 is not None:
+        out["traj_rk4"] = _one("RK4", solution_rk4[0:3], rk4_step)
+    if USE_RKG and solution_rkg is not None:
+        out["traj_rkg"] = _one("RKG", solution_rkg[:, 0:3].T, rkg_step)
+    if USE_RK45 and y_rk45_common is not None:
+        out["traj_rk45"] = _one("RK45", y_rk45_common[0:3], ps_step)
+    if USE_RK45B and y_rk45b_common is not None:
+        out["traj_rk45b"] = _one("RK45b", y_rk45b_common[0:3], ps_step)
+    if USE_BORIS:
+        dt_b_store = boris_step * (boris_decimate if boris_decimate > 1 else 1)
+        al = _align_steps(dt_b_store, dt_ps_store)
+        if al is None:
+            print(f"  Note: Boris stored step {dt_b_store:g} not commensurate with PS stored "
+                  f"step {dt_ps_store:g}; trajectory-error line skipped.")
+        else:
+            k_b, k_ps = al
+            with h5py.File(cache_path, "r") as h5:
+                n_b = h5["boris"]["y"].shape[1]
+            n_need = (n_b - 1) // k_b + 1
+            r_b = _ps_positions_on_grid(cache_path, "boris", n_need, k_b, k_ps)
+            r_ps = _ps_positions_on_grid(cache_path, "ps", r_b.shape[1], k_ps, k_b)
+            n = min(r_b.shape[1], r_ps.shape[1])
+            d = np.linalg.norm(r_b[:, :n] - r_ps[:, :n], axis=0)
+            t = np.arange(n, dtype=ul.npfloat) * (k_b * dt_b_store)
+            idx = log_spaced_indices(n, max_plot_points)
+            out["traj_boris"] = (t[idx], d[idx])
+    return out

@@ -8,6 +8,8 @@ Core solvers:
     rkgl4_hamiltonian_step_fp    — single Gauss-Legendre step (s=2, order 4), fixed-point solver (active)
     rkgl4_hamiltonian_step       — same step via Newton/finite-diff Jacobian (retained for reference, not called)
     rkgl4_hamiltonian            — full symplectic integration loop
+    boris_fixed_step             — Boris pusher (2nd-order, volume-preserving), fixed step
+    run_boris_streaming          — Boris run streamed to h5 in the PS layout (chunked, decimated)
 
 Vector potential:
     vector_potential             — A_phi for canonical momentum
@@ -18,6 +20,7 @@ Streaming / decimation:
 
 """
 
+import os
 import numpy as np
 import h5py
 import time
@@ -432,6 +435,205 @@ def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
 
     avg_iters = total_iters / steps
     return d_out, n_failed, avg_iters, max_iters
+
+# ==========================
+# ==== Boris Functions ====
+# ==========================
+
+@ul.maybe_njit
+def boris_fixed_step(d0, dt, steps, charge_sign):
+    """Boris pusher for the dimensionless dipole problem, fixed step.
+
+    Integrates dr/dτ = v, dv/dτ = s v × B'(r) (Eqs. 1–2 of the paper) with
+    the standard Boris rotation (Boris 1970; Qin et al. 2013). Because the
+    relativistic mass is constant in a static magnetic field and is already
+    absorbed into τ0 = m_rel/(|q| B0), the relativistic form reduces to the
+    non-relativistic rotation in these units: the half-rotation vector is
+    t = s B'(r) Δτ/2, with no extra γ factor.
+
+    Synchronized (drift–rotate–drift) form so that position and velocity are
+    stored at the SAME time levels as RK4/PS, allowing a like-for-like
+    comparison of the exact invariants on the common output grid:
+
+        r_half = r_n + (Δτ/2) v_n
+        v_n+1  = R[B'(r_half), Δτ] v_n          (exact rotation of |v|)
+        r_n+1  = r_half + (Δτ/2) v_n+1
+
+    This is a symmetric composition of two exact position drifts about one
+    velocity rotation, so it is time-reversible and volume-preserving.
+    |v| (hence kinetic energy) is preserved to round-off at every step by
+    construction — the method's errors appear in gyrophase, in the position,
+    and therefore in the canonical momentum P_phi, not in E.
+
+    Parameters
+    ----------
+    d0          : length-6 initial state (x, y, z, vx, vy, vz), dimensionless
+    dt          : step size Δτ (npfloat)
+    steps       : number of integration steps
+    charge_sign : s = q/|q| (+1 proton, −1 electron), npfloat
+
+    Returns
+    -------
+    ndarray of shape (6, steps + 1) — same layout as ul.rk4_fixed_step
+    (each row is one state variable's time series).
+    """
+    d_out = np.zeros((steps + 1, 6), dtype=ul.npfloat)
+    d_out[0] = d0
+
+    half = ul.npfloat(0.5)
+    x, y, z = d0[0], d0[1], d0[2]
+    vx, vy, vz = d0[3], d0[4], d0[5]
+
+    for i in range(1, steps + 1):
+        # --- half drift ---
+        xh = x + half * dt * vx
+        yh = y + half * dt * vy
+        zh = z + half * dt * vz
+
+        # --- field at the midpoint (same expression as lorentz_force) ---
+        r2 = xh*xh + yh*yh + zh*zh
+        r5inv = r2**(-twopointfive) if r2 != 0 else ul.npfloat(0.0)
+        Bx = -three * xh * zh * r5inv
+        By = -three * yh * zh * r5inv
+        Bz = -(three * zh*zh - r2) * r5inv
+
+        # --- Boris rotation: t = s B dt/2 ; s_vec = 2 t / (1 + |t|^2) ---
+        tx = charge_sign * half * dt * Bx
+        ty = charge_sign * half * dt * By
+        tz = charge_sign * half * dt * Bz
+        t2 = tx*tx + ty*ty + tz*tz
+        f = two / (one + t2)
+        sx, sy, sz = f * tx, f * ty, f * tz
+
+        # v' = v + v × t
+        vpx = vx + (vy * tz - vz * ty)
+        vpy = vy + (vz * tx - vx * tz)
+        vpz = vz + (vx * ty - vy * tx)
+
+        # v+ = v + v' × s
+        vx = vx + (vpy * sz - vpz * sy)
+        vy = vy + (vpz * sx - vpx * sz)
+        vz = vz + (vpx * sy - vpy * sx)
+
+        # --- second half drift ---
+        x = xh + half * dt * vx
+        y = yh + half * dt * vy
+        z = zh + half * dt * vz
+
+        d_out[i, 0] = x
+        d_out[i, 1] = y
+        d_out[i, 2] = z
+        d_out[i, 3] = vx
+        d_out[i, 4] = vy
+        d_out[i, 5] = vz
+
+    return d_out.T
+
+
+def run_boris_streaming(
+    initial_pos_vel,
+    steps,
+    dt,
+    charge_sign,
+    n_steps_per_gyro,
+    cache_path,
+    chunk_steps,
+    decimate,
+):
+    """Boris run streamed to the h5 cache in the SAME layout as the PS group.
+
+    Integrates in chunks of ``chunk_steps`` with ``boris_fixed_step`` (only
+    the current state is carried between chunks), computes B at each kept
+    sample, and appends ``wr.n_save`` rows [x,y,z, vx,vy,vz, Bx,By,Bz] to
+    ``cache_path["boris"]["y"]`` with the same chunking / decimation /
+    attribute conventions as ``run_ps_streaming_with_decimation``. The
+    trajectory is therefore never held in memory, so Boris can be run to the
+    same lengths as the extended PS runs, and every chunked PS reader
+    (energy, P_phi, mu, slices, trim_h5) works on the Boris group unchanged.
+
+    The file is opened for append if it exists (PS has already streamed into
+    it) and created otherwise. An existing ``boris`` group is replaced.
+
+    Returns elapsed wall-clock seconds.
+    """
+    start_time = time.time()
+
+    cur_state = np.asarray(initial_pos_vel, dtype=ul.npfloat).copy()
+    remaining = int(steps)
+    global_index = 0
+
+    mode = "a" if os.path.exists(cache_path) else "w"
+    with h5py.File(cache_path, mode) as f:
+        if "boris" in f:
+            del f["boris"]
+        grp = f.create_group("boris")
+        grp.attrs["enabled"]            = True
+        grp.attrs["numberstepspergyro"] = int(n_steps_per_gyro)
+        grp.attrs["dt"]                 = ul.npfloat(dt)
+        grp.attrs["steps"]              = int(steps)
+        grp.attrs["streaming"]          = True
+        grp.attrs["chunksize"]          = int(chunk_steps)
+        grp.attrs["decimate"]           = int(decimate)
+        grp.attrs["t0"]                 = 0.0
+        grp.attrs["save_rows"]          = "pos_vel_B"
+        grp.attrs["n_save"]             = wr.n_save
+
+        dset_y = grp.create_dataset(
+            "y",
+            shape=(wr.n_save, 0),
+            maxshape=(wr.n_save, None),
+            dtype=ul.npfloat,
+            chunks=(wr.n_save, min(int(chunk_steps), int(steps) + 1)),
+            compression="gzip",
+            compression_opts=1,
+            shuffle=True,
+        )
+        # Source IC in the compact layout (lets trimmed replots recover E0/mu0).
+        grp.create_dataset("y_initial", data=_boris_compact_rows(cur_state[None, :].T.copy())[:, 0])
+
+        while remaining > 0:
+            this_chunk = min(int(chunk_steps), remaining)
+            sol_chunk = boris_fixed_step(cur_state, ul.npfloat(dt), this_chunk, charge_sign)  # (6, this_chunk+1)
+
+            idx_chunk = np.arange(global_index, global_index + this_chunk + 1)
+            if global_index == 0:
+                sol_eff, idx_eff = sol_chunk, idx_chunk
+            else:
+                sol_eff, idx_eff = sol_chunk[:, 1:], idx_chunk[1:]
+
+            if decimate <= 1:
+                keep = np.ones_like(idx_eff, dtype=bool)
+            else:
+                keep = (idx_eff % decimate == 0) | (idx_eff == steps)
+
+            sol_keep = sol_eff[:, keep]
+            if sol_keep.shape[1] > 0:
+                rows = _boris_compact_rows(sol_keep)
+                old_len = dset_y.shape[1]
+                new_len = old_len + rows.shape[1]
+                dset_y.resize((wr.n_save, new_len))
+                dset_y[:, old_len:new_len] = rows
+
+            cur_state = sol_chunk[0:6, -1].copy()
+            global_index += this_chunk
+            remaining -= this_chunk
+
+    return time.time() - start_time
+
+
+def _boris_compact_rows(sol6):
+    """(6, n) [pos, vel] → (wr.n_save, n) [pos, vel, B] compact h5 rows,
+    with B evaluated from position exactly as in lorentz_force."""
+    x, y, z = sol6[0], sol6[1], sol6[2]
+    r2 = x*x + y*y + z*z
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r5inv = np.where(r2 != 0, r2**(-2.5), 0.0)
+    out = np.empty((wr.n_save, sol6.shape[1]), dtype=ul.npfloat)
+    out[0:6] = sol6[0:6]
+    out[6] = -3.0 * x * z * r5inv
+    out[7] = -3.0 * y * z * r5inv
+    out[8] = -(3.0 * z*z - r2) * r5inv
+    return out
 
 # ===================================
 # === Decimate/Chunking Functions ===

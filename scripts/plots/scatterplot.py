@@ -96,6 +96,8 @@ color_map = {
     "RK4":  "#CC79A7",  # purple
     "RK45": "#E69F00",  # orange
     "RKG":  "#CC0000",  # deep red
+    "Boris": "#0072B2", # blue
+    "RK45b": "#A6761D", # brown-gold (SciPy solve_ivp RK45 backup)
     "PS":   "#009E73",  # bluish green
 }
 
@@ -160,7 +162,9 @@ elif USE_ELECTRON:
 
 # === Legend (custom order, circle markers, no lines) ===
 # Electrons don't run RKG, so drop it from the electron legend.
-method_order = ["RK45", "RK4", "PS"] if USE_ELECTRON else ["RK45", "RK4", "RKG", "PS"]
+method_order = ["RK45", "RK45b", "RK4", "Boris", "PS"] if USE_ELECTRON else ["RK45", "RK45b", "RK4", "RKG", "Boris", "PS"]
+# Only list methods that actually have data (older CSVs predate Boris).
+method_order = [m for m in method_order if m in set(df_energy["method"])]
 method_handles = [
     Line2D([0], [0], marker="o", linestyle="None",
            markerfacecolor=color_map[m], markeredgecolor=color_map[m],

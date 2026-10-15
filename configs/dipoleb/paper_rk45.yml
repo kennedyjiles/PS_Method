@@ -1,0 +1,33 @@
+# ===================================================================
+# Paper 1 — 100 keV proton, 30° pitch, 5 R_E
+# ===================================================================
+
+energy_eV: 1e8
+pitch_deg: 30
+particle: proton
+
+phi_deg: 0.0            # gyrophase angle (degrees)
+x_initial: 2.8           # initial x position (L-shell, in R_E)
+
+solvers:
+  rk4: false
+  rk45: false
+  rkg: false
+  boris: true
+  rk45b: false
+  adaptive: true
+  ps: true
+
+gyroperiods: 1e6
+
+
+steps_per_gyro:
+  ps: 20
+  boris: 300
+
+ps_order: 100
+
+window_time: 13.0428
+
+rtol_rk45: 1.0e-8        # RK45 relative tolerance
+atol_rk45: 1.0e-10        # RK45 absolute tolerance

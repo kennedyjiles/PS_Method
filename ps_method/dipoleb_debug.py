@@ -66,6 +66,7 @@ def redirect_logger(logger, new_path):
 def check_time_grids(norm_time, ps_step=None, steps_ps=None,
                      rk4_step=None, steps_rk4=None,
                      rkg_step=None, steps_rkg=None,
+                     boris_step=None, steps_boris=None,
                      rk45_t=None, rtol=1e-12):
     """Report each enabled method's time grid and flag drift from norm_time.
 
@@ -101,6 +102,8 @@ def check_time_grids(norm_time, ps_step=None, steps_ps=None,
         _report("RK4", rk4_step, steps_rk4)
     if rkg_step is not None and steps_rkg is not None:
         _report("RKG", rkg_step, steps_rkg)
+    if boris_step is not None and steps_boris is not None:
+        _report("Boris", boris_step, steps_boris)
     if rk45_t is not None:
         final_t = rk45_t[-1]
         lines.append(

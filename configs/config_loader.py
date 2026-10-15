@@ -99,7 +99,33 @@ def physics_hash(cfg):
     from ps_method.writers import run_hash
     physics = {k: _canonicalize_for_hash(v) for k, v in cfg.items()
                if k not in _NON_HASH_KEYS}
+    physics = _strip_disabled_boris(physics)
     return run_hash(physics)
+
+
+# Boris was added to the dipole configs after the paper's h5 caches were
+# generated. Its yml keys (solvers.boris, steps_per_gyro.boris,
+# step_overrides.boris) would otherwise enter the hash of EVERY config and
+# orphan every existing cache file. When Boris is off, those keys cannot
+# affect the trajectory, so they are removed before hashing — the hash of a
+# non-Boris run is identical to what it was before Boris existed. When Boris
+# is on, the keys stay in and the hash changes, exactly as enabling rk4/rkg
+# does. Same treatment applies to any later solver added to _OPTIONAL_SOLVERS.
+# "rk45b" is the SciPy solve_ivp RK45 kept as a backup; "rk45" is the compiled
+# (Numba) Dormand–Prince and hashes like it always did.
+_OPTIONAL_SOLVERS = ("boris", "rk45b")
+
+def _strip_disabled_boris(physics):
+    solvers = physics.get("solvers")
+    if not isinstance(solvers, dict):
+        return physics
+    out = dict(physics)
+    for name in _OPTIONAL_SOLVERS:
+        if not solvers.get(name):
+            for blk in ("solvers", "steps_per_gyro", "step_overrides"):
+                if isinstance(out.get(blk), dict) and name in out[blk]:
+                    out[blk] = {k: v for k, v in out[blk].items() if k != name}
+    return out
 
 
 def _deep_merge(base, override):
@@ -654,12 +680,14 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         "ps":  spg["ps"],
         "rk4": spg["rk4"],
         "rkg": spg["rkg"],
+        "boris": spg.get("boris", 65),
     }, round_decimals=round_dec)
     raw_steps = _apply_step_overrides(raw_steps, cfg["step_overrides"], npfloat)
 
     ps_step  = npfloat(raw_steps["ps"])
     rk4_step = npfloat(raw_steps["rk4"])
     rkg_step = npfloat(raw_steps["rkg"])
+    boris_step = npfloat(raw_steps["boris"])
 
     # --- Integration time ---
     if cfg.get("norm_time_override") is not None:
@@ -688,6 +716,7 @@ def compute_derived_dipoleb(cfg, npfloat=None):
     ext_rk4  = _resolve_ext_path(ext_root, ext.get("rk4"))
     ext_rk45 = _resolve_ext_path(ext_root, ext.get("rk45"))
     ext_rkg  = _resolve_ext_path(ext_root, ext.get("rkg"))
+    ext_boris = _resolve_ext_path(ext_root, ext.get("boris"))
 
     # --- Solvers ---
     solvers = cfg["solvers"]
@@ -696,8 +725,10 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         # Toggles
         "READ_DATA":       cfg["read_data"],
         "USE_RK45":        solvers["rk45"],
+        "USE_RK45B":       bool(solvers.get("rk45b", False)),
         "USE_RK4":         solvers["rk4"],
         "USE_RKG":         solvers["rkg"],
+        "USE_BORIS":       bool(solvers.get("boris", False)),
         "USE_PS":          solvers["ps"],
         "USE_ADAPTIVE":    solvers["adaptive"],
         "ps_decimate":     cfg["ps_decimate"],
@@ -717,10 +748,12 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         "USE_EXTERNAL_H5_rk4":  use_ext["rk4"],
         "USE_EXTERNAL_H5_rk45": use_ext["rk45"],
         "USE_EXTERNAL_H5_rkg":  use_ext["rkg"],
+        "USE_EXTERNAL_H5_boris": bool(use_ext.get("boris", False)),
         "external_h5_ps":   ext_ps,
         "external_h5_rk4":  ext_rk4,
         "external_h5_rk45": ext_rk45,
         "external_h5_rkg":  ext_rkg,
+        "external_h5_boris": ext_boris,
 
         # Output
         "output_folder": output_folder,
@@ -740,9 +773,11 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         "ps_step":              ps_step,
         "rk4_step":             rk4_step,
         "rkg_step":             rkg_step,
+        "boris_step":           boris_step,
         "n_steps_per_gyro_ps":  spg["ps"],
         "n_steps_per_gyro_rk4": spg["rk4"],
         "n_steps_per_gyro_rkg": spg["rkg"],
+        "n_steps_per_gyro_boris": spg.get("boris", 65),
 
         # Plotting windows
         "window_time": npfloat(cfg["window_time"]),

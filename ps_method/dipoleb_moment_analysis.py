@@ -108,7 +108,7 @@ def compute_mu_deviation_rk(
     Parameters
     ----------
     solution : ndarray
-        For RK4/RK45: shape (6, N) — columns are time steps.
+        For RK4/RK45/Boris: shape (6, N) — columns are time steps.
         For RKG: shape (N, 6) — rows are time steps (Hamiltonian format).
     steps : int
         Total number of integration steps.
@@ -123,7 +123,8 @@ def compute_mu_deviation_rk(
     time_factor : float
         Conversion from normalized time to gyroperiods (1/T_gyro).
     solver_type : str
-        "rk4", "rk45", or "rkg". Controls data layout and mu computation.
+        "rk4", "rk45", "boris", or "rkg". Controls data layout and mu computation
+        (boris shares the rk4 layout).
 
     Returns
     -------
@@ -135,7 +136,12 @@ def compute_mu_deviation_rk(
         "mu_ratio" : 1D mu/mu0 (instantaneous normalized moment, for shape plot)
     """
     window_steps = int(round(n_gyro * n_steps_per_gyro))
+    n_avail = solution.shape[0] if solver_type == "rkg" else solution.shape[1]
+    steps = min(int(steps), n_avail - 1)
     i0, i1 = _gyro_window_indices(gyro_window, steps, window_steps)
+    if i1 <= i0:
+        raise RuntimeError(f"Empty mu window for {solver_type}: solution has {n_avail} samples, "
+                           f"window [{i0}, {i1}) — the solver's output is shorter than expected.")
 
     if solver_type == "rkg":
         # RKG stores (N, 6) with canonical momentum — need to convert to velocity.
@@ -162,7 +168,7 @@ def compute_mu_deviation_rk(
         state_win = np.hstack((r_win, v_win))
         mu_win = compute_mu_rk(state_win)
     else:
-        # RK4 and RK45: shape (6, N) — columns are time steps.
+        # RK4, RK45 and Boris: shape (6, N) — columns are time steps.
         # See y_initial note above (rkg branch).
         if y_initial is not None:
             state0_src = y_initial.reshape(1, 6)
@@ -187,9 +193,13 @@ def compute_mu_deviation_ps(
     n_gyro, n_steps_per_gyro, mu0_ps,
     gyro_window, time_factor,
     max_plot_points=1_000_000,
+    group="ps",
 ):
     """
     Compute magnetic moment deviation for PS data from chunked h5.
+
+    ``group`` selects the h5 group; "boris" is stored in the same compact
+    layout and is read identically (its ps_order_label is None).
 
     Parameters
     ----------
@@ -232,16 +242,16 @@ def compute_mu_deviation_ps(
     j1 = int(np.ceil(i1_phys / ps_store_stride))
 
     with h5py.File(cache_path, "r") as ps_h5:
-        ps_grp = ps_h5["ps"]
+        ps_grp = ps_h5[group]
         ps_y = ps_grp["y"]
-        ps_order_label = ul.ps_order_label_from_attrs(ps_grp.attrs)
+        ps_order_label = ul.ps_order_label_from_attrs(ps_grp.attrs) if group == "ps" else None
         n_store = ps_y.shape[1]
 
         j0 = max(0, min(j0, n_store))
         j1 = max(0, min(j1, n_store))
 
         if j1 <= j0:
-            raise RuntimeError("Empty PS mu window (chunked)")
+            raise RuntimeError(f"Empty {group} mu window (chunked)")
 
         y_ps_win = wr.expand_h5_to_full(ps_y[:, j0:j1])
 

@@ -5,8 +5,9 @@
 This repository contains the simulation codes and analysis tools that compare the
 **Parker–Sochacki power series (PS) integration method** against several
 **Runge–Kutta-based solvers** — fixed-step fourth-order (RK4), adaptive Dormand–Prince
-(RK45), and the symplectic two-stage Gauss–Legendre Runge–Kutta (RKG) — for
-charged-particle motion in static magnetic fields. Across three field configurations of
+(RK45), and the symplectic two-stage Gauss–Legendre Runge–Kutta (RKG) — and against the
+**Boris pusher** (dipole field only; added in the revision in response to referee
+comments) for charged-particle motion in static magnetic fields. Across three field configurations of
 increasing complexity, the PS method achieves **4–13 orders of magnitude** better
 kinetic-energy conservation than the RK methods over long integrations.
 
@@ -65,7 +66,7 @@ at the end.
 │   ├── constants.py             #   shared physical constants (q_e, m_e, m_p, RE, B_0)
 │   ├── constb_physics.py        #   PS / analytical / Lorentz kernels — uniform field
 │   ├── hyperb_physics.py        #   PS / Lorentz kernels — hyperbolic field
-│   ├── dipoleb_physics.py       #   PS dipole integrator (fixed step, streaming) + RKG
+│   ├── dipoleb_physics.py       #   PS dipole integrator (fixed step, streaming) + RKG + Boris
 │   ├── dipoleb_adaptive.py      #   adaptive-step PS dipole integrator (streaming)
 │   ├── constb_hyperb_energy_analysis.py  # KE drift (constb/hyperb)
 │   ├── dipoleb_energy_analysis.py        # KE + P_phi drift (dipole, chunked)
@@ -231,8 +232,22 @@ launches many `dipoleb.py` runs in parallel and consolidates the results into a 
 
 ### Method-comparison tables (Appendices A.2 / A.3; Figs. 8, 12)
 
-`scripts/batch_runner_eandp.py` runs the proton and electron four-method (PS/RK4/RK45/RKG)
-comparison grid at L=5 used for the dipole accuracy/runtime tables and bubble plots.
+`scripts/batch_runner_eandp.py` runs the proton and electron method-comparison grid
+(PS/RK4/RK45/RKG/Boris) at L=5 used for the dipole accuracy/runtime tables and bubble plots.
+
+**Boris notes.** Enable with `solvers.boris: true` (step size from `steps_per_gyro.boris`,
+default 65, overridable via `step_overrides.boris`). The pusher is the synchronized
+drift–rotate–drift form, so (x, v) are stored at the same time levels as RK4. Unlike
+RK4/RKG, Boris is **streamed to the h5 cache exactly like PS** — chunked by
+`ps_chunk_steps`, decimated by `ps_decimate`, compact 9-row layout `[x,y,z,vx,vy,vz,Bx,By,Bz]`
+in group `boris` — so it can be run to the same lengths as the extended PS runs
+(10⁶–10⁹ gyroperiods) without holding the trajectory in memory; the energy, P_phi,
+mu, slice and trim readers all take the group name and treat it as PS data. Because the rotation preserves |v|
+exactly, Boris's kinetic-energy error sits at round-off for any step size — its
+second-order error shows up in P_phi and in the azimuthal phase, which is why both
+invariants are reported. Enabling Boris changes a config's physics hash (as enabling
+RKG does), so the cell's h5 is regenerated; configs with `boris: false` keep their
+original hashes and caches.
 
 ```bash
 # Phase 1 = protons (10 keV, 100 keV, 1 MeV, 10 MeV at 90° and 30°)

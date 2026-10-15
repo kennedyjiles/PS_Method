@@ -6,11 +6,24 @@ energy_eV: 100.0e3
 pitch_deg: 30.0
 
 solvers:
-  rk4: true
+  rk4: false
   rk45: true
-  rkg: true
+  rkg: false
+  boris: false
+  ps: true
 
-gyroperiods: 1.5e5
+ps_order: 40
+
+gyroperiods: 1e4
 
 window_time: 6209.0
 
+use_external_h5:
+  rkg:  false
+
+external_h5:
+  rkg: data/dipoleb/paper1_longRKG/_rawdata/294c05_full.h5
+
+
+rtol_rk45: 1.0e-18         # RK45 relative tolerance
+atol_rk45: 1.0e-20        # RK45 absolute tolerance

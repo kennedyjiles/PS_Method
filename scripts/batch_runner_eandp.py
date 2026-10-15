@@ -48,7 +48,7 @@ BATCH_TMP_DIR = os.path.join(SCRIPT_DIR, "batch_tmp")
 BASE_YML = os.path.join(PROJECT_ROOT, "configs", "dipoleb", "base.yml")
 
 
-# ─── Phase grid for e/p method-comparison table (PS / RK4 / RK45 / RKG) ─────
+# ─── Phase grid for e/p method-comparison table (PS / RK4 / RK45 / RKG / Boris) ─
 # All cells at L=5; varies (energy, pitch). Each cell runs the enabled solvers,
 # producing one CSV row per solver. Phase 1 = protons, Phase 2 = electrons;
 # each phase lands in its own group (protons / electrons).
@@ -106,11 +106,16 @@ DEFAULT_GROUPS = {
 # to vary between tables (user_min_phase, phi_deg, ps_chunk_steps, plotting
 # toggles, etc.), not for sweep axes. Nested dicts are deep-merged.
 #
-# solvers override enables RK4 / RK45 / RKG alongside PS for the four-method
-# comparison rows in the table. (base.yml has rk4/rk45/rkg false.)
+# solvers override enables RK4 / RK45 / RKG / Boris alongside PS for the
+# method-comparison rows in the table. (base.yml has rk4/rk45/rkg/boris false.)
+#
+# NOTE on Boris and the cache: enabling boris changes the physics hash of a
+# cell (like enabling rkg does), so the cell's h5 is regenerated — ALL its
+# solvers rerun, not just Boris. Set boris: False here to reproduce the
+# original (pre-revision) table from the existing caches untouched.
 OVERRIDES = {
-    1: {"solvers": {"rk4": True, "rk45": True, "rkg": True},},
-    2: {"solvers": {"rk4": True, "rk45": True, "rkg": False},},
+    1: {"solvers": {"rk4": True, "rk45": True, "rkg": True,  "boris": True},},
+    2: {"solvers": {"rk4": True, "rk45": True, "rkg": False, "boris": True},},
 }
 
 

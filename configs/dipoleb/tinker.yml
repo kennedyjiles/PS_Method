@@ -1,0 +1,33 @@
+# ===================================================================
+# Paper 1 — 100 keV proton, 30° pitch, 5 R_E
+# ===================================================================
+
+solvers:
+  rk4: false
+  rk45: false 
+  rkg: false
+  boris: true
+  adaptive: false
+
+gyroperiods: 1e6
+
+
+phi_deg: -15          # gyrophase angle (degrees)
+pitch_deg: 30.0
+energy_eV: 400.0e6       
+gyroperiods: 1e6
+
+
+x_initial: 2.0168398395915292
+y_initial: 0.0            # initial y position (R_E), usually 0
+z_initial: 0.0            # initial z position (R_E), usually 0
+
+
+# window_time: 14
+# particle: proton          # "proton" or "electron"
+# energy_eV: 1e8        # kinetic energy in eV
+# pitch_deg: 30.0           # pitch angle (degrees)
+# phi_deg: -90.0             # gyrophase angle (degrees)
+# x_initial: 2.453846846631629   # initial x position (L-shell, in R_E)
+# y_initial: 0.0            # initial y position (R_E), usually 0
+# z_initial: 0.0            # initial z position (R_E), usually 0

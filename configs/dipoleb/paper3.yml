@@ -9,6 +9,7 @@ pitch_deg: 30.0
 solvers:
   rk4: true
   rkg: true
+  boris: true
 
 ps_order: 16
 
@@ -22,6 +23,7 @@ steps_per_gyro:
   ps: 14.5
   rk4: 1570.8
   rkg: 100
+  boris: 14.5
 
 # norm_time set explicitly (not from gyroperiods × T_gyro)
 # Original expression: 6206.0 * 4 / 0.00033464094804535314

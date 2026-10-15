@@ -234,7 +234,7 @@ def save_results_h5_dipoleb(h5_path, results, summary):
     with h5py.File(h5_path, "w") as f:
         f.attrs["summary_json"] = json.dumps(summary, default=_to_serializable)
 
-        for k in ("ps", "rk4", "rk45", "rkg"):
+        for k in ("ps", "rk4", "rk45", "rk45b", "rkg", "boris"):
             if k not in results or results[k] is None:
                 continue
             grp = f.create_group(k)
@@ -279,7 +279,7 @@ def load_results_h5_dipoleb(h5_path):
                 out[k] = v
             return out
 
-        for k in ("ps", "rk4", "rk45", "rkg"):
+        for k in ("ps", "rk4", "rk45", "rk45b", "rkg", "boris"):
             loaded[k] = _read_grp(k)
 
         gmeta = f["meta"]
@@ -311,8 +311,17 @@ def append_results_h5_dipoleb(h5_path, results, summary):
             if sk in results["meta"]:
                 gmeta.attrs[sk] = results["meta"][sk]
 
-        for k in ("rk4", "rk45", "rkg"):
+        for k in ("rk4", "rk45", "rk45b", "rkg", "boris"):
             if results.get(k) is None:
+                continue
+            if k in f and bool(f[k].attrs.get("streaming", False)):
+                # Group was streamed to disk by the solver (PS-style); keep
+                # its datasets and only refresh the scalar attrs.
+                grp = f[k]
+                for name, val in results[k].items():
+                    if val is None or isinstance(val, np.ndarray):
+                        continue
+                    grp.attrs[name] = val
                 continue
             if k in f:
                 del f[k]
@@ -452,19 +461,21 @@ def summary_txt_dipoleb(
     summary, run_folder, stem, dragt_log, bounce_results, drift_results,
     gyroperiods, norm_time, cache_path,
     # Solver flags
-    USE_PS, USE_RK4, USE_RK45, USE_RKG,
+    USE_PS, USE_RK4, USE_RK45, USE_RKG, USE_BORIS=False, USE_RK45B=False,
     # Step sizes
-    ps_step, rk4_step=None, rkg_step=None,
+    ps_step=None, rk4_step=None, rkg_step=None, boris_step=None,
     # Energy drift arrays (already computed)
     rel_drift_ps=None, rel_drift_rk4=None, rel_drift_rk45=None, rel_drift_rkg=None,
+    rel_drift_boris=None, rel_drift_rk45b=None,
     # P_phi drift arrays (already computed)
     rel_pphi_ps=None, rel_pphi_rk4=None, rel_pphi_rk45=None, rel_pphi_rkg=None,
+    rel_pphi_boris=None, rel_pphi_rk45b=None,
     # Mu reference values
-    mu0_ps=None, mu0_rk4=None, mu0_rk45=None, mu0_rkg=None,
+    mu0_ps=None, mu0_rk4=None, mu0_rk45=None, mu0_rkg=None, mu0_boris=None, mu0_rk45b=None,
     # Solver solutions (for mu tail computation)
-    solution_rk4=None, solution_rkg=None, y_rk45_common=None,
-    # PS storage info
-    ps_store_stride=1,
+    solution_rk4=None, solution_rkg=None, y_rk45_common=None, y_rk45b_common=None,
+    # PS / Boris storage info (both streamed to h5 in the compact layout)
+    ps_store_stride=1, boris_store_stride=1,
     # npfloat type
     npfloat=np.float64,
     # Physics functions (injected to avoid circular imports)
@@ -482,7 +493,7 @@ def summary_txt_dipoleb(
     MAX_TAIL_STEPS = 500000
 
     # --- Build tail masks ---
-    j0_ps = j0_rk4 = j0_rk45 = j0_rkg = 0
+    j0_ps = j0_rk4 = j0_rk45 = j0_rkg = j0_boris = j0_rk45b = 0
 
     if USE_PS:
         step_ps = ps_store_stride * ps_step
@@ -491,11 +502,19 @@ def summary_txt_dipoleb(
     if USE_RK45:
         j0_rk45 = _tail_start_index(len(rel_drift_rk45), ps_step, tail_start, MAX_TAIL_STEPS)
 
+    if USE_RK45B:
+        j0_rk45b = _tail_start_index(len(rel_drift_rk45b), ps_step, tail_start, MAX_TAIL_STEPS)
+
     if USE_RK4:
         j0_rk4 = _tail_start_index(len(rel_drift_rk4), rk4_step, tail_start, MAX_TAIL_STEPS)
 
     if USE_RKG:
         j0_rkg = _tail_start_index(len(rel_drift_rkg), rkg_step, tail_start, MAX_TAIL_STEPS)
+
+    if USE_BORIS:
+        # Same convention as PS: rel_drift_boris is on the stored (decimated) grid.
+        step_boris = boris_store_stride * boris_step
+        j0_boris = _tail_start_index(rel_drift_boris.size, step_boris, tail_start, MAX_TAIL_STEPS)
 
     # --- Write file ---
     output_filename = build_filename(run_folder, stem,
@@ -510,10 +529,14 @@ def summary_txt_dipoleb(
         f.write("\n=== |delta E|/E0 (tail average) ===\n")
         if USE_RK45:
             summarize_to_file("RK45", rel_drift_rk45[j0_rk45:], f)
+        if USE_RK45B:
+            summarize_to_file("RK45b", rel_drift_rk45b[j0_rk45b:], f)
         if USE_RK4:
             summarize_to_file("RK4", rel_drift_rk4[j0_rk4:], f)
         if USE_RKG:
             summarize_to_file("RKG", rel_drift_rkg[j0_rkg:], f)
+        if USE_BORIS:
+            summarize_to_file("Boris", rel_drift_boris[j0_boris:], f)
         if USE_PS:
             summarize_to_file("PS", rel_drift_ps[j0_ps:], f)
 
@@ -523,10 +546,14 @@ def summary_txt_dipoleb(
         f.write("\n=== |delta P_phi|/|P_phi_0| (tail average) ===\n")
         if USE_RK45 and rel_pphi_rk45 is not None:
             summarize_to_file("RK45", rel_pphi_rk45[j0_rk45:], f)
+        if USE_RK45B and rel_pphi_rk45b is not None:
+            summarize_to_file("RK45b", rel_pphi_rk45b[j0_rk45b:], f)
         if USE_RK4 and rel_pphi_rk4 is not None:
             summarize_to_file("RK4", rel_pphi_rk4[j0_rk4:], f)
         if USE_RKG and rel_pphi_rkg is not None:
             summarize_to_file("RKG", rel_pphi_rkg[j0_rkg:], f)
+        if USE_BORIS and rel_pphi_boris is not None:
+            summarize_to_file("Boris", rel_pphi_boris[j0_boris:], f)
         if USE_PS and rel_pphi_ps is not None:
             summarize_to_file("PS", rel_pphi_ps[j0_ps:], f)
 
@@ -537,6 +564,13 @@ def summary_txt_dipoleb(
             y_tail = y_rk45_common[:, j0_rk45:]
             mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
+            del y_tail, mu_tail
+            gc.collect()
+
+        if USE_RK45B:
+            y_tail = y_rk45b_common[:, j0_rk45b:]
+            mu_tail = compute_mu_rk(y_tail.T)
+            summarize_to_file("RK45b", np.abs(mu_tail - mu0_rk45b) / mu0_rk45b, f)
             del y_tail, mu_tail
             gc.collect()
 
@@ -561,6 +595,21 @@ def summary_txt_dipoleb(
             mu_tail = compute_mu_rk(state_tail)
             summarize_to_file("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
             del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
+            gc.collect()
+
+        if USE_BORIS:
+            step_boris_store = boris_store_stride * boris_step
+            with h5py.File(cache_path, "r") as h5:
+                b_y = h5["boris"]["y"]
+                n_store = b_y.shape[1]
+                j0 = int(tail_start / step_boris_store)
+                j0 = max(0, min(j0, n_store - 1))
+                if n_store - j0 > MAX_TAIL_STEPS:
+                    j0 = n_store - MAX_TAIL_STEPS
+                y_tail = expand_h5_to_full(b_y[:, j0:])
+            mu_tail = compute_mu_ps(y_tail)
+            summarize_to_file("Boris", np.abs(mu_tail - mu0_boris) / mu0_boris, f)
+            del y_tail, mu_tail
             gc.collect()
 
         if USE_PS:
@@ -826,7 +875,7 @@ def master_csv(
 ):
     """Build records and append to master_simulation_log.csv with duplicate detection."""
     # Trajectory-derived diagnostics (eps_*, hit_atm_*, bounce/drift) come
-    # from the PS h5 only — they're meaningless for RK4/RK45/RKG rows. Blank
+    # from the PS h5 only — they're meaningless for RK4/RK45/RKG/Boris rows. Blank
     # those on non-PS rows. IC-derived dragt fields (L_eff, W0_sq, boundary,
     # mu_sq, orbit_character) are properties of the run setup, not the
     # integrator, so they stay populated on every row.

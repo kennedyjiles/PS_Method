@@ -133,7 +133,7 @@ def write_trimmed(src_path, dst_path, ps_grp_src, col_start, col_end,
         # t_eval=t_common in dipoleb.py), so column indices map 1:1 to PS.
         # Convention matches PS: t0 stays 0, the trimmed file restarts its
         # time axis at zero. Original-run offset is recorded for provenance.
-        for grp_name in ("rk4", "rk45", "rkg"):
+        for grp_name in ("rk4", "rk45", "rk45b", "rkg", "boris"):
             if grp_name not in f_src:
                 continue
             src_grp = f_src[grp_name]
@@ -148,7 +148,7 @@ def write_trimmed(src_path, dst_path, ps_grp_src, col_start, col_end,
                 continue
 
             y_src_rk = src_grp["y"]
-            # rkg stores y as (n_steps, n_dim); rk4/rk45 store (n_dim, n_steps).
+            # rkg stores y as (n_steps, n_dim); rk4/rk45/boris store (n_dim, n_steps).
             time_axis = 0 if grp_name == "rkg" else 1
             n_cols_grp = y_src_rk.shape[time_axis]
 
@@ -191,7 +191,7 @@ def write_trimmed(src_path, dst_path, ps_grp_src, col_start, col_end,
 
             # rk45 carries its own absolute-time array; rebase so trimmed
             # file's t starts at 0, matching PS/RK4/RKG plot convention.
-            if grp_name == "rk45" and "t" in src_grp:
+            if grp_name in ("rk45", "rk45b") and "t" in src_grp:
                 t_src = src_grp["t"][cs:ce]
                 t0_orig = float(t_src[0]) if t_src.size else 0.0
                 dst_grp.create_dataset(

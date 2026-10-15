@@ -105,6 +105,209 @@ def rk4_fixed_step(func, d0, dt, steps, args=()):
 
     return d_out.T
 
+# ================================================================
+# ========= Dormand–Prince RK5(4) adaptive, Numba (RK45) =========
+# ================================================================
+# A line-for-line port of SciPy's ``RK45`` (scipy/integrate/_ivp/rk.py and
+# common.py, v1.18): same Butcher tableau, same RMS error norm with
+# scale = atol + rtol·max(|y|,|y_new|), same controller (SAFETY 0.9, factor
+# clamped to [0.2, 10], exponent −1/5, no growth after a rejection), same
+# Hairer–Nørsett–Wanner initial-step heuristic, and the same quartic dense
+# output (Q = Kᵀ·P) evaluated at the requested output times. Given identical
+# inputs it therefore takes the same step sequence as scipy's solve_ivp and
+# returns the same nfev — the ONLY difference is that it is compiled, so the
+# wall-clock comparison with PS / RK4 / RKG / Boris is like-for-like.
+# Referee request (R2 #2): "is RK45 slow because of SciPy?" — this answers it.
+
+_DP_C = np.array([0.0, 1/5, 3/10, 4/5, 8/9, 1.0])
+_DP_A = np.array([
+    [0.0,          0.0,           0.0,          0.0,         0.0],
+    [1/5,          0.0,           0.0,          0.0,         0.0],
+    [3/40,         9/40,          0.0,          0.0,         0.0],
+    [44/45,       -56/15,         32/9,         0.0,         0.0],
+    [19372/6561,  -25360/2187,    64448/6561,  -212/729,     0.0],
+    [9017/3168,   -355/33,        46732/5247,   49/176,     -5103/18656]])
+_DP_B = np.array([35/384, 0.0, 500/1113, 125/192, -2187/6784, 11/84])
+_DP_E = np.array([-71/57600, 0.0, 71/16695, -71/1920, 17253/339200, -22/525, 1/40])
+_DP_P = np.array([
+    [1.0, -8048581381/2820520608,  8663915743/2820520608,  -12715105075/11282082432],
+    [0.0,  0.0,                    0.0,                     0.0],
+    [0.0,  131558114200/32700410799, -68118460800/10900136933, 87487479700/32700410799],
+    [0.0, -1754552775/470086768,   14199869525/1410260304, -10690763975/1880347072],
+    [0.0,  127303824393/49829197408, -318862633887/49829197408, 701980252875/199316789632],
+    [0.0, -282668133/205662961,    2019193451/616988883,   -1453857185/822651844],
+    [0.0,  40617522/29380423,     -110615467/29380423,     69997945/29380423]])
+
+
+@maybe_njit
+def _rms_norm(x):
+    s = 0.0
+    for i in range(x.shape[0]):
+        s += x[i] * x[i]
+    return np.sqrt(s / x.shape[0])
+
+
+@maybe_njit
+def rk45_numba(func, y0, t_bound, t_eval, rtol, atol, charge_sign):
+    """Adaptive Dormand–Prince 5(4) with SciPy-identical control, compiled.
+
+    Parameters
+    ----------
+    func        : njit callable(t, y, charge_sign) → dy/dt
+    y0          : 1-D initial state
+    t_bound     : end time (integration starts at t = 0, forward)
+    t_eval      : sorted output times in [0, t_bound]; t_eval[0] may be 0
+    rtol, atol  : tolerances (scalars), as in solve_ivp
+    charge_sign : forwarded to func
+
+    Returns
+    -------
+    y_out  : (nvars, len(t_eval)) solution at t_eval (dense output, as scipy)
+    nfev   : RHS evaluations (counted exactly as scipy counts them)
+    nsteps : accepted steps
+    nrej   : rejected step attempts
+    """
+    SAFETY = 0.9
+    MIN_FACTOR = 0.2
+    MAX_FACTOR = 10.0
+    ERR_EXP = -1.0 / 5.0           # -1/(error_estimator_order + 1), order 4
+    n = y0.shape[0]
+    n_out = t_eval.shape[0]
+    y_out = np.empty((n, n_out), dtype=npfloat)
+
+    t = 0.0
+    y = y0.copy()
+    f = func(t, y, charge_sign)
+    nfev = 1
+
+    # ---- select_initial_step (common.py) ----
+    scale0 = np.empty(n, dtype=npfloat)
+    for i in range(n):
+        scale0[i] = atol + abs(y[i]) * rtol
+    d0 = _rms_norm(y / scale0)
+    d1 = _rms_norm(f / scale0)
+    if d0 < 1e-5 or d1 < 1e-5:
+        h0 = 1e-6
+    else:
+        h0 = 0.01 * d0 / d1
+    h0 = min(h0, t_bound)
+    y1 = y + h0 * f
+    f1 = func(t + h0, y1, charge_sign)
+    nfev += 1
+    d2 = _rms_norm((f1 - f) / scale0) / h0
+    if d1 <= 1e-15 and d2 <= 1e-15:
+        h1 = max(1e-6, h0 * 1e-3)
+    else:
+        h1 = (0.01 / max(d1, d2)) ** (1.0 / 5.0)
+    h_abs = min(100.0 * h0, h1, t_bound)
+
+    K = np.empty((7, n), dtype=npfloat)
+    y_new = np.empty(n, dtype=npfloat)
+    ystage = np.empty(n, dtype=npfloat)
+    Q = np.empty((n, 4), dtype=npfloat)
+    p = np.empty(4, dtype=npfloat)
+
+    i_out = 0
+    if n_out > 0 and t_eval[0] == 0.0:
+        y_out[:, 0] = y
+        i_out = 1
+
+    nsteps = 0
+    nrej = 0
+    while t < t_bound:
+        min_step = 10.0 * abs(np.nextafter(t, np.inf) - t)
+        if h_abs < min_step:
+            h_abs = min_step
+
+        step_accepted = False
+        step_rejected = False
+        while not step_accepted:
+            if h_abs < min_step:
+                # scipy: TOO_SMALL_STEP → solver fails. Mirror by stopping.
+                return y_out[:, :i_out], nfev, nsteps, nrej
+            t_new = t + h_abs
+            if t_new > t_bound:
+                t_new = t_bound
+            h = t_new - t
+            h_abs = abs(h)
+
+            # ---- rk_step ----
+            for i in range(n):
+                K[0, i] = f[i]
+            for s in range(1, 6):
+                for i in range(n):
+                    acc = 0.0
+                    for j in range(s):
+                        acc += K[j, i] * _DP_A[s, j]
+                    ystage[i] = y[i] + acc * h
+                ks = func(t + _DP_C[s] * h, ystage, charge_sign)
+                for i in range(n):
+                    K[s, i] = ks[i]
+            for i in range(n):
+                acc = 0.0
+                for j in range(6):
+                    acc += K[j, i] * _DP_B[j]
+                y_new[i] = y[i] + h * acc
+            f_new = func(t + h, y_new, charge_sign)
+            for i in range(n):
+                K[6, i] = f_new[i]
+            nfev += 6
+
+            # ---- error norm ----
+            err_norm_sq = 0.0
+            for i in range(n):
+                e = 0.0
+                for j in range(7):
+                    e += K[j, i] * _DP_E[j]
+                e *= h
+                sc = atol + max(abs(y[i]), abs(y_new[i])) * rtol
+                err_norm_sq += (e / sc) * (e / sc)
+            error_norm = np.sqrt(err_norm_sq / n)
+
+            if error_norm < 1.0:
+                if error_norm == 0.0:
+                    factor = MAX_FACTOR
+                else:
+                    factor = min(MAX_FACTOR, SAFETY * error_norm ** ERR_EXP)
+                if step_rejected:
+                    factor = min(1.0, factor)
+                h_abs *= factor
+                step_accepted = True
+            else:
+                h_abs *= max(MIN_FACTOR, SAFETY * error_norm ** ERR_EXP)
+                step_rejected = True
+                nrej += 1
+
+        # ---- dense output on (t, t_new] (RkDenseOutput: Q = Kᵀ·P) ----
+        if i_out < n_out and t_eval[i_out] <= t_new:
+            for i in range(n):
+                for c in range(4):
+                    acc = 0.0
+                    for j in range(7):
+                        acc += K[j, i] * _DP_P[j, c]
+                    Q[i, c] = acc
+            while i_out < n_out and t_eval[i_out] <= t_new:
+                x = (t_eval[i_out] - t) / h
+                p[0] = x
+                p[1] = x * x
+                p[2] = p[1] * x
+                p[3] = p[2] * x
+                for i in range(n):
+                    acc = 0.0
+                    for c in range(4):
+                        acc += Q[i, c] * p[c]
+                    y_out[i, i_out] = y[i] + h * acc
+                i_out += 1
+
+        t = t_new
+        for i in range(n):
+            y[i] = y_new[i]
+            f[i] = f_new[i]
+        nsteps += 1
+
+    return y_out, nfev, nsteps, nrej
+
+
 # =======================================================
 # ============== Misc Assists for Plotting ==============
 # =======================================================
@@ -333,6 +536,10 @@ def prepare_slice_dipoleb(
     USE_RKG=False, solution_rkg=None, rkg_step=None,
     # RK45
     USE_RK45=False, y_rk45_common=None,
+    # Boris — streamed to h5 in the PS layout (read from cache_path["boris"])
+    USE_BORIS=False, boris_step=None, steps_boris=None, boris_decimate=1,
+    # RK45b (SciPy solve_ivp backup) — same layout/grid as RK45
+    USE_RK45B=False, y_rk45b_common=None,
 ):
     """Compute time-windowed trajectory slices for each enabled solver (dipoleb).
 
@@ -358,39 +565,41 @@ def prepare_slice_dipoleb(
         rk4_x_slice=None, rk4_y_slice=None, rk4_z_slice=None,
         rkg_x_slice=None, rkg_y_slice=None, rkg_z_slice=None,
         rk45_x_slice=None, rk45_y_slice=None, rk45_z_slice=None,
+        boris_x_slice=None, boris_y_slice=None, boris_z_slice=None,
+        rk45b_x_slice=None, rk45b_y_slice=None, rk45b_z_slice=None,
         ps_order_label=None,
     )
 
-    # ---------- PS ----------
-    if USE_PS:
-        i0_phys = int(np.floor(t_start / ps_step))
-        i1_phys = int(np.floor(t_end   / ps_step))
-        i0_phys = max(0, i0_phys)
-        i1_phys = min(i1_phys, steps_ps)
+    def _slice_from_h5(group, step, steps, decimate):
+        """Window [t_start, t_end] of an h5 group stored in the compact PS
+        layout, read directly from disk and strided for plotting."""
+        i0_phys = max(0, int(np.floor(t_start / step)))
+        i1_phys = min(int(np.floor(t_end / step)), steps)
         if i1_phys < i0_phys:
-            raise RuntimeError("Empty PS slice window")
-
-        ps_store_stride = ps_decimate if ps_decimate > 1 else 1
-        j0 = int(np.ceil(i0_phys / ps_store_stride))
-        j1 = int(np.floor(i1_phys / ps_store_stride))
+            raise RuntimeError(f"Empty {group} slice window")
+        store_stride = decimate if decimate > 1 else 1
+        j0 = int(np.ceil(i0_phys / store_stride))
+        j1 = int(np.floor(i1_phys / store_stride))
         if j1 < j0:
-            raise RuntimeError("Empty PS stored slice window")
-
-        with h5py.File(cache_path, "r") as ps_h5:
-            ps_grp = ps_h5["ps"]
-            ps_y   = ps_grp["y"]
-            n_store = ps_y.shape[1]
+            raise RuntimeError(f"Empty {group} stored slice window")
+        with h5py.File(cache_path, "r") as h5:
+            grp = h5[group]
+            ds  = grp["y"]
+            n_store = ds.shape[1]
             j0 = max(0, min(j0, n_store - 1))
             j1 = max(0, min(j1, n_store - 1))
             if j1 < j0:
-                raise RuntimeError("Empty PS stored slice")
-            y_win = ps_y[:, j0:j1+1]
-            result["ps_order_label"] = ps_order_label_from_attrs(ps_grp.attrs)
-
+                raise RuntimeError(f"Empty {group} stored slice")
+            y_win = ds[:, j0:j1+1]
+            label = ps_order_label_from_attrs(grp.attrs) if group == "ps" else None
         plot_stride = max(1, y_win.shape[1] // max_plot_points)
-        result["ps_x_slice"] = y_win[0, ::plot_stride]
-        result["ps_y_slice"] = y_win[1, ::plot_stride]
-        result["ps_z_slice"] = y_win[2, ::plot_stride]
+        return (y_win[0, ::plot_stride], y_win[1, ::plot_stride],
+                y_win[2, ::plot_stride], label)
+
+    # ---------- PS ----------
+    if USE_PS:
+        (result["ps_x_slice"], result["ps_y_slice"], result["ps_z_slice"],
+         result["ps_order_label"]) = _slice_from_h5("ps", ps_step, steps_ps, ps_decimate)
 
     # ---------- RK4 ----------
     if USE_RK4:
@@ -418,5 +627,19 @@ def prepare_slice_dipoleb(
         result["rk45_x_slice"] = rk45_x
         result["rk45_y_slice"] = rk45_y
         result["rk45_z_slice"] = rk45_z
+
+    # ---------- RK45b ----------
+    if USE_RK45B:
+        t_b = ps_step * np.arange(y_rk45b_common.shape[1], dtype=npfloat)
+        bx, by, bz = slice_solution_dipoleb(
+            t_b, y_rk45b_common, window_duration, norm_time, mode=slice_mode)[:3]
+        result["rk45b_x_slice"] = bx
+        result["rk45b_y_slice"] = by
+        result["rk45b_z_slice"] = bz
+
+    # ---------- Boris (h5, PS layout) ----------
+    if USE_BORIS:
+        (result["boris_x_slice"], result["boris_y_slice"], result["boris_z_slice"],
+         _) = _slice_from_h5("boris", boris_step, steps_boris, boris_decimate)
 
     return result

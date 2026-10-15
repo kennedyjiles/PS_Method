@@ -1,7 +1,7 @@
 """
 dipoleb.py — Main driver for charged particle trajectory simulation in a
              magnetic dipole field using the power series (PS) method with
-             optional RK4, RK45, and RKG (symplectic) solvers for comparison.
+             optional RK4, RK45, RKG (symplectic), and Boris solvers for comparison.
 
 Usage:
     python dipoleb.py                       # runs the default config (demo)
@@ -126,8 +126,10 @@ def main(cfg_path, replot=False):
     if replot:
         READ_DATA = True
     USE_RK45        = params["USE_RK45"]
+    USE_RK45B       = params.get("USE_RK45B", False)   # SciPy solve_ivp RK45 (reference/backup), same tolerances as RK45
     USE_RK4         = params["USE_RK4"]
     USE_RKG         = params["USE_RKG"]
+    USE_BORIS       = params.get("USE_BORIS", False)
     USE_PS          = params["USE_PS"]
     USE_ADAPTIVE    = params["USE_ADAPTIVE"]
     ps_decimate     = params["ps_decimate"]
@@ -146,10 +148,12 @@ def main(cfg_path, replot=False):
     USE_EXTERNAL_H5_rk4  = params["USE_EXTERNAL_H5_rk4"]
     USE_EXTERNAL_H5_rk45 = params["USE_EXTERNAL_H5_rk45"]
     USE_EXTERNAL_H5_rkg  = params["USE_EXTERNAL_H5_rkg"]
+    USE_EXTERNAL_H5_boris = params.get("USE_EXTERNAL_H5_boris", False)
     external_h5_ps       = params["external_h5_ps"]
     external_h5_rk4      = params["external_h5_rk4"]
     external_h5_rk45     = params["external_h5_rk45"]
     external_h5_rkg      = params["external_h5_rkg"]
+    external_h5_boris    = params.get("external_h5_boris", None)
 
     # --- Physics (set by all modes except manual, which load from h5) ---
     pitch_deg    = params.get("pitch_deg",    None)
@@ -165,9 +169,11 @@ def main(cfg_path, replot=False):
     ps_step              = params.get("ps_step",  None)
     rk4_step             = params.get("rk4_step", None)
     rkg_step             = params.get("rkg_step", None)
+    boris_step           = params.get("boris_step", None)
     n_steps_per_gyro_ps  = params.get("n_steps_per_gyro_ps",  None)
     n_steps_per_gyro_rk4 = params.get("n_steps_per_gyro_rk4", None)
     n_steps_per_gyro_rkg = params.get("n_steps_per_gyro_rkg", None)
+    n_steps_per_gyro_boris = params.get("n_steps_per_gyro_boris", None)
 
     # --- Optional overrides (only some modes set these) ---
     # compute_derived always populates these keys with its own defaults,
@@ -220,17 +226,26 @@ def main(cfg_path, replot=False):
     #     UnboundLocalError regardless of which path is taken. ---
     solution_rk4  = None
     solution_rk45 = None
+    solution_rk45b = None
+    rk45_stats    = None      # (nfev, nsteps, nrejected) from the compiled (Numba) RK45 run
+    rk45b_nfev    = None      # nfev from the SciPy solve_ivp backup run
     solution_rkg  = None
+    solution_boris = None     # Boris streams to h5 (PS layout); never held in memory
+    boris_decimate = None     # resolved below (== ps_decimate for fresh runs)
     y_rk45_common = None
+    y_rk45b_common = None
     summary       = {}
     timing        = {}
     stem          = ""
     max_ps_value  = None
     steps_rk4     = None
     steps_rkg     = None
+    steps_boris   = None
     rk4_y_initial  = None
     rk45_y_initial = None
+    rk45b_y_initial = None
     rkg_y_initial  = None
+    boris_y_initial = None
 
     # ===============================================
     # ============= Manual File Load ================
@@ -278,7 +293,12 @@ def main(cfg_path, replot=False):
                 # methods from the plots without re-running. So
                 # USE_X = yml_wants AND h5_has, matching constb's behavior.
                 _yml_wants = {"ps": USE_PS, "rk4": USE_RK4,
-                              "rk45": USE_RK45, "rkg": USE_RKG}
+                              "rk45": USE_RK45, "rkg": USE_RKG,
+                              "boris": USE_BORIS, "rk45b": USE_RK45B}
+                # Files written before Boris / RK45b existed have no entry in
+                # summary_json — treat that as "not run".
+                summary.setdefault("boris", {"enabled": False})
+                summary.setdefault("rk45b", {"enabled": False})
                 _missing = [m for m in _yml_wants
                             if _yml_wants[m] and not summary[m]["enabled"]]
                 if _missing:
@@ -317,12 +337,42 @@ def main(cfg_path, replot=False):
                 rtol_rk45 = rk45_cfg["rtol"]
                 atol_rk45 = rk45_cfg["atol"]
 
+                # ---- RK45b config (same tolerances as RK45) ----
+                USE_RK45B = USE_RK45B and summary["rk45b"]["enabled"]
+
+                # ---- engine provenance ----
+                # "rk45" is the compiled (Numba) Dormand–Prince and "rk45b" the
+                # SciPy solve_ivp backup. Files written before the swap carried
+                # the opposite assignment and no "engine" key; the trajectories
+                # follow the same step sequence, but the stored run time is the
+                # other engine's, so say so rather than silently reuse it.
+                rk45_engine  = rk45_cfg.get("engine", "scipy") if USE_RK45 else None
+                rk45b_engine = summary["rk45b"].get("engine", "numba") if USE_RK45B else None
+                if USE_RK45 and rk45_engine != "numba":
+                    print(f"  WARNING: cached RK45 data was produced by the {rk45_engine} engine "
+                          f"(file pre-dates the Numba/SciPy swap). Trajectory is used as-is; "
+                          f"its run time is NOT the compiled RK45's. Delete the h5 or set "
+                          f"read_data: false to re-run.")
+                if USE_RK45B and rk45b_engine != "scipy":
+                    print(f"  WARNING: cached RK45b data was produced by the {rk45b_engine} engine "
+                          f"(file pre-dates the Numba/SciPy swap). Trajectory is used as-is; "
+                          f"its run time is NOT SciPy's.")
+
                 # ---- RKG config ----
                 rkg_cfg = summary["rkg"]
                 USE_RKG = USE_RKG and rkg_cfg["enabled"]
                 rkg_step = rkg_cfg["dt"]
                 steps_rkg = rkg_cfg["steps"]
                 n_steps_per_gyro_rkg = rkg_cfg["numberstepspergyro"]
+
+                # ---- Boris config (streamed like PS; y stays on disk) ----
+                boris_cfg = summary["boris"]
+                USE_BORIS = USE_BORIS and boris_cfg["enabled"]
+                if USE_BORIS:
+                    boris_step = boris_cfg["dt"]
+                    steps_boris = boris_cfg["steps"]
+                    n_steps_per_gyro_boris = boris_cfg["numberstepspergyro"]
+                    boris_decimate = int(boris_cfg.get("decimate", 1) or 1)
 
 
                 # ---- Load solver data ------
@@ -339,13 +389,13 @@ def main(cfg_path, replot=False):
                 # physical_time) are stale. Recompute from actual data length using
                 # the highest-priority group available (PS > RK4 > RKG).
                 trim_attr_grp = None
-                for _g in ("ps", "rk4", "rkg"):
+                for _g in ("ps", "rk4", "rkg", "boris"):
                     if _g in cached and "trim_end" in cached[_g].attrs and "y" in cached[_g]:
                         trim_attr_grp = _g
                         break
                 if trim_attr_grp is not None:
                     _gsrc = cached[trim_attr_grp]
-                    if trim_attr_grp == "ps":
+                    if trim_attr_grp in ("ps", "boris"):
                         _stride = int(_gsrc.attrs.get("decimate", 1)) or 1
                         _n_eff = _gsrc["y"].shape[1] * _stride
                     elif trim_attr_grp == "rkg":
@@ -392,6 +442,12 @@ def main(cfg_path, replot=False):
                     if "y_initial" in cached["rk45"]:
                         rk45_y_initial = cached["rk45"]["y_initial"][()]
 
+                # === RK45b (SciPy solve_ivp backup; same layout as RK45) ===
+                if USE_RK45B and "rk45b" in cached:
+                    solution_rk45b = SimpleNamespace(t=cached["rk45b"]["t"][()], y=cached["rk45b"]["y"][()])
+                    if "y_initial" in cached["rk45b"]:
+                        rk45b_y_initial = cached["rk45b"]["y_initial"][()]
+
                 # === RKG ===
                 if USE_RKG and "rkg" in cached:
                     # rkg stores y as (n_steps, n_dim) — axis 0 is time
@@ -403,6 +459,18 @@ def main(cfg_path, replot=False):
                     solution_rkg = cached["rkg"]["y"][()]
                     if "y_initial" in cached["rkg"]:
                         rkg_y_initial = cached["rkg"]["y_initial"][()]
+
+                # === Boris (chunked like PS — data stays on disk) ===
+                if USE_BORIS and "boris" in cached:
+                    n_store_boris = cached["boris"]["y"].shape[1]
+                    _bstride = boris_decimate if boris_decimate > 1 else 1
+                    steps_boris_actual = n_store_boris * _bstride
+                    if steps_boris_actual < steps_boris:
+                        print(f"  Trimmed file detected (boris): {n_store_boris:,} stored columns "
+                              f"(original {steps_boris:,} steps)")
+                        steps_boris = steps_boris_actual
+                    if "y_initial" in cached["boris"]:
+                        boris_y_initial = cached["boris"]["y_initial"][()]
 
     # for file/plot naming
     if mass_si == m_e: particle_type = "Electron"
@@ -520,7 +588,12 @@ def main(cfg_path, replot=False):
                 # methods from the plots without re-running. So
                 # USE_X = yml_wants AND h5_has, matching constb's behavior.
                 _yml_wants = {"ps": USE_PS, "rk4": USE_RK4,
-                              "rk45": USE_RK45, "rkg": USE_RKG}
+                              "rk45": USE_RK45, "rkg": USE_RKG,
+                              "boris": USE_BORIS, "rk45b": USE_RK45B}
+                # Files written before Boris / RK45b existed have no entry in
+                # summary_json — treat that as "not run".
+                summary.setdefault("boris", {"enabled": False})
+                summary.setdefault("rk45b", {"enabled": False})
                 _missing = [m for m in _yml_wants
                             if _yml_wants[m] and not summary[m]["enabled"]]
                 if _missing:
@@ -559,12 +632,42 @@ def main(cfg_path, replot=False):
                 rtol_rk45 = rk45_cfg["rtol"]
                 atol_rk45 = rk45_cfg["atol"]
 
+                # ---- RK45b config (same tolerances as RK45) ----
+                USE_RK45B = USE_RK45B and summary["rk45b"]["enabled"]
+
+                # ---- engine provenance ----
+                # "rk45" is the compiled (Numba) Dormand–Prince and "rk45b" the
+                # SciPy solve_ivp backup. Files written before the swap carried
+                # the opposite assignment and no "engine" key; the trajectories
+                # follow the same step sequence, but the stored run time is the
+                # other engine's, so say so rather than silently reuse it.
+                rk45_engine  = rk45_cfg.get("engine", "scipy") if USE_RK45 else None
+                rk45b_engine = summary["rk45b"].get("engine", "numba") if USE_RK45B else None
+                if USE_RK45 and rk45_engine != "numba":
+                    print(f"  WARNING: cached RK45 data was produced by the {rk45_engine} engine "
+                          f"(file pre-dates the Numba/SciPy swap). Trajectory is used as-is; "
+                          f"its run time is NOT the compiled RK45's. Delete the h5 or set "
+                          f"read_data: false to re-run.")
+                if USE_RK45B and rk45b_engine != "scipy":
+                    print(f"  WARNING: cached RK45b data was produced by the {rk45b_engine} engine "
+                          f"(file pre-dates the Numba/SciPy swap). Trajectory is used as-is; "
+                          f"its run time is NOT SciPy's.")
+
                 # ---- RKG config ----
                 rkg_cfg = summary["rkg"]
                 USE_RKG = USE_RKG and rkg_cfg["enabled"]
                 rkg_step = rkg_cfg["dt"]
                 steps_rkg = rkg_cfg["steps"]
                 n_steps_per_gyro_rkg = rkg_cfg["numberstepspergyro"]
+
+                # ---- Boris config (streamed like PS; y stays on disk) ----
+                boris_cfg = summary["boris"]
+                USE_BORIS = USE_BORIS and boris_cfg["enabled"]
+                if USE_BORIS:
+                    boris_step = boris_cfg["dt"]
+                    steps_boris = boris_cfg["steps"]
+                    n_steps_per_gyro_boris = boris_cfg["numberstepspergyro"]
+                    boris_decimate = int(boris_cfg.get("decimate", 1) or 1)
 
 
                 # ---- Load solver data ------
@@ -574,13 +677,13 @@ def main(cfg_path, replot=False):
                 # axes, and labels reflect the trim regardless of which solver
                 # the user is replotting.
                 trim_attr_grp = None
-                for _g in ("ps", "rk4", "rkg"):
+                for _g in ("ps", "rk4", "rkg", "boris"):
                     if _g in cached and "trim_end" in cached[_g].attrs and "y" in cached[_g]:
                         trim_attr_grp = _g
                         break
                 if trim_attr_grp is not None:
                     _gsrc = cached[trim_attr_grp]
-                    if trim_attr_grp == "ps":
+                    if trim_attr_grp in ("ps", "boris"):
                         _stride = int(_gsrc.attrs.get("decimate", 1)) or 1
                         _n_eff = _gsrc["y"].shape[1] * _stride
                     elif trim_attr_grp == "rkg":
@@ -627,6 +730,12 @@ def main(cfg_path, replot=False):
                     if "y_initial" in cached["rk45"]:
                         rk45_y_initial = cached["rk45"]["y_initial"][()]
 
+                # === RK45b (SciPy solve_ivp backup; same layout as RK45) ===
+                if USE_RK45B and "rk45b" in cached:
+                    solution_rk45b = SimpleNamespace(t=cached["rk45b"]["t"][()], y=cached["rk45b"]["y"][()])
+                    if "y_initial" in cached["rk45b"]:
+                        rk45b_y_initial = cached["rk45b"]["y_initial"][()]
+
                 # === RKG ===
                 if USE_RKG and "rkg" in cached:
                     # rkg stores y as (n_steps, n_dim) — axis 0 is time
@@ -638,6 +747,18 @@ def main(cfg_path, replot=False):
                     solution_rkg = cached["rkg"]["y"][()]
                     if "y_initial" in cached["rkg"]:
                         rkg_y_initial = cached["rkg"]["y_initial"][()]
+
+                # === Boris (chunked like PS — data stays on disk) ===
+                if USE_BORIS and "boris" in cached:
+                    n_store_boris = cached["boris"]["y"].shape[1]
+                    _bstride = boris_decimate if boris_decimate > 1 else 1
+                    steps_boris_actual = n_store_boris * _bstride
+                    if steps_boris_actual < steps_boris:
+                        print(f"  Trimmed file detected (boris): {n_store_boris:,} stored columns "
+                              f"(original {steps_boris:,} steps)")
+                        steps_boris = steps_boris_actual
+                    if "y_initial" in cached["boris"]:
+                        boris_y_initial = cached["boris"]["y_initial"][()]
         else:
             print("No matching file or 'Read Data' skipped. Running solvers...\n")
 
@@ -694,20 +815,42 @@ def main(cfg_path, replot=False):
                 dragt_mon.summary()
                 end_time_ps = time.time()
 
-            # ====== Run RK45 ======
+            # ====== Run RK45 (compiled Dormand–Prince, SciPy-identical control) ======
             if USE_RK45:
-                start_time_rk45 = time.time()
                 t_common = ps_step * np.arange(steps_ps + 1, dtype=npfloat)
-                solution_rk45 = solve_ivp(
+                # Timed the same way as RK4/RKG/PS/Boris: first call, so the
+                # wall-clock includes Numba JIT compilation (a few seconds).
+                start_time_rk45 = time.time()
+                y_a, rk45_nfev, rk45_nsteps, rk45_nrej = ul.rk45_numba(
+                    dp.lorentz_force, initial_pos_vel, norm_time, t_common,
+                    rtol_rk45, atol_rk45, charge_sign)
+                end_time_rk45 = time.time()
+                solution_rk45 = SimpleNamespace(t=t_common[:y_a.shape[1]], y=y_a)
+                rk45_stats = (int(rk45_nfev), int(rk45_nsteps), int(rk45_nrej))
+                print(f"  RK45: nfev {rk45_nfev:,}, accepted steps {rk45_nsteps:,} "
+                      f"({rk45_nsteps / gyroperiods:.1f}/gyroperiod), rejected {rk45_nrej:,}")
+                if y_a.shape[1] < steps_ps + 1:
+                    print(f"  WARNING: RK45 stopped early — {y_a.shape[1]:,} of {steps_ps + 1:,} "
+                          f"output points filled (step size fell below the floor, the condition "
+                          f"under which SciPy's RK45 raises 'required step size is less than "
+                          f"spacing between numbers'). Downstream RK45 analyses use the "
+                          f"points that exist.")
+
+            # ====== Run RK45b (SciPy solve_ivp reference implementation, kept as backup) ======
+            if USE_RK45B:
+                start_time_rk45b = time.time()
+                t_common_b = ps_step * np.arange(steps_ps + 1, dtype=npfloat)
+                solution_rk45b = solve_ivp(
                     dp.lorentz_force,
                     (0.0, norm_time),
                     initial_pos_vel,
                     method="RK45",
                     args=(charge_sign,),
-                    t_eval=t_common,
+                    t_eval=t_common_b,
                     rtol=rtol_rk45,
                     atol=atol_rk45,)
-                end_time_rk45 = time.time()
+                end_time_rk45b = time.time()
+                rk45b_nfev = int(solution_rk45b.nfev)
 
             # ====== Run RK4 ======
             if USE_RK4:
@@ -756,11 +899,30 @@ def main(cfg_path, replot=False):
                           f"({pct:.2f}%) hit the sweep cap without converging. "
                           f"Consider reducing rkg_step or increasing max_iter.")
 
+            # ====== Run Boris (streamed to h5 in the PS layout) ======
+            # Shares ps_decimate / ps_chunk_steps so the stored grids match
+            # PS's when steps_per_gyro match (pointwise comparisons possible).
+            if USE_BORIS:
+                steps_boris = max(1, int(norm_time / boris_step))
+                boris_decimate = ps_decimate
+                elapsed_boris = dp.run_boris_streaming(
+                    initial_pos_vel,
+                    steps_boris,
+                    boris_step,
+                    charge_sign,
+                    n_steps_per_gyro_boris,
+                    cache_path,
+                    ps_chunk_steps,
+                    boris_decimate,
+                )
+
             results = {
                 "ps": None,
                 "rk4": None,
                 "rk45": None,
+                "rk45b": None,
                 "rkg": None,
+                "boris": None,
                 "meta": {
                     "timing": {},
                     "physical_time": float(physical_time),
@@ -826,8 +988,24 @@ def main(cfg_path, replot=False):
                     "t": solution_rk45.t,
                     "rtol": rtol_rk45,
                     "atol": atol_rk45,
+                    "nfev": rk45_stats[0],
+                    "nsteps": rk45_stats[1],
+                    "nrejected": rk45_stats[2],
+                    "engine": "numba",
                 })
                 results["meta"]["timing"]["rk45"] = end_time_rk45 - start_time_rk45
+
+            results["rk45b"] = { "enabled": bool(USE_RK45B),}
+            if USE_RK45B:
+                results["rk45b"].update({
+                    "y": solution_rk45b.y,
+                    "t": solution_rk45b.t,
+                    "rtol": rtol_rk45,
+                    "atol": atol_rk45,
+                    "nfev": rk45b_nfev,
+                    "engine": "scipy",
+                })
+                results["meta"]["timing"]["rk45b"] = end_time_rk45b - start_time_rk45b
 
             results["rkg"] = { "enabled": bool(USE_RKG),}
             if USE_RKG:
@@ -839,6 +1017,21 @@ def main(cfg_path, replot=False):
                     "t0": 0.0
                 })
                 results["meta"]["timing"]["rkg"] = end_time_rkg - start_time_rkg
+
+            results["boris"] = { "enabled": bool(USE_BORIS),}
+            if USE_BORIS:
+                # y is already on disk (streamed); the appender only refreshes attrs.
+                results["boris"].update({
+                    "y": None,
+                    "numberstepspergyro": n_steps_per_gyro_boris,
+                    "dt": npfloat(boris_step),
+                    "steps": int(steps_boris),
+                    "streaming": True,
+                    "chunksize": ps_chunk_steps,
+                    "decimate": boris_decimate,
+                    "t0": 0.0,
+                })
+                results["meta"]["timing"]["boris"] = elapsed_boris
 
             # =========================
             # ====== Save Results =====
@@ -893,8 +1086,19 @@ def main(cfg_path, replot=False):
                     },
                     "rk45": {
                         "enabled": USE_RK45,
+                        "engine": "numba",          # compiled Dormand–Prince (ul.rk45_numba)
                         "rtol": rtol_rk45 if USE_RK45 else None,
                         "atol": atol_rk45 if USE_RK45 else None,
+                        "nfev": rk45_stats[0] if USE_RK45 else None,
+                        "nsteps": rk45_stats[1] if USE_RK45 else None,
+                        "nrejected": rk45_stats[2] if USE_RK45 else None,
+                    },
+                    "rk45b": {
+                        "enabled": USE_RK45B,
+                        "engine": "scipy",          # scipy.integrate.solve_ivp(method="RK45") backup
+                        "rtol": rtol_rk45 if USE_RK45B else None,
+                        "atol": atol_rk45 if USE_RK45B else None,
+                        "nfev": rk45b_nfev if USE_RK45B else None,
                     },
                     "rkg": {
                         "enabled": USE_RKG,
@@ -902,10 +1106,21 @@ def main(cfg_path, replot=False):
                         "steps": int(steps_rkg) if USE_RKG else None,
                         "numberstepspergyro": n_steps_per_gyro_rkg if USE_RKG else None,
                     },
+                    "boris": {
+                        "enabled": USE_BORIS,
+                        "dt": float(boris_step) if USE_BORIS else None,
+                        "steps": int(steps_boris) if USE_BORIS else None,
+                        "numberstepspergyro": n_steps_per_gyro_boris if USE_BORIS else None,
+                        "streaming": True if USE_BORIS else None,
+                        "decimate": boris_decimate if USE_BORIS else None,
+                        "chunksize": ps_chunk_steps if USE_BORIS else None,
+                    },
                 }
 
                 # ====== h5 file creation =============
-                if USE_PS:
+                # PS and Boris both stream into cache_path as they run, so the
+                # file already exists when either is enabled → append.
+                if USE_PS or USE_BORIS:
                     wr.append_results_h5_dipoleb(cache_path, results, summary)
                     print(f"Updated streamed file → {os.path.basename(cache_path)}")
                 else:
@@ -924,6 +1139,8 @@ def main(cfg_path, replot=False):
         steps_rk4=steps_rk4 if USE_RK4 else None,
         rkg_step=rkg_step if USE_RKG else None,
         steps_rkg=steps_rkg if USE_RKG else None,
+        boris_step=boris_step if USE_BORIS else None,
+        steps_boris=steps_boris if USE_BORIS else None,
         rk45_t=solution_rk45.t if USE_RK45 else None,
     ))
 
@@ -948,6 +1165,7 @@ def main(cfg_path, replot=False):
         "externalrk4": external_h5_rk4 if USE_EXTERNAL_H5_rk4 else None,
         "externalrk45": external_h5_rk45 if USE_EXTERNAL_H5_rk45 else None,
         "externalrkg": external_h5_rkg if USE_EXTERNAL_H5_rkg else None,
+        "externalboris": external_h5_boris if USE_EXTERNAL_H5_boris else None,
     }
 
     # ===============================
@@ -964,6 +1182,8 @@ def main(cfg_path, replot=False):
 
     if USE_RK45:
         y_rk45_common = solution_rk45.y
+    if USE_RK45B:
+        y_rk45b_common = solution_rk45b.y
 
     # =====================================================
     # ============= Data Set Access for Stream ============
@@ -990,6 +1210,15 @@ def main(cfg_path, replot=False):
                 y_ps_plot = ps_y_h5[1, ::stride]
                 z_ps_plot = ps_y_h5[2, ::stride]
 
+    # Boris full-trajectory plot points: strided x,y,z straight from disk,
+    # packed (3, n) so the plot functions can index [0],[1],[2] as before.
+    boris_plot_xyz = None
+    if USE_BORIS and USE_FULL_PLOT:
+        with h5py.File(cache_path, "r") as b_h5:
+            b_y_h5 = b_h5["boris"]["y"]
+            stride_b = max(1, b_y_h5.shape[1] // max_plot_points_local)
+            boris_plot_xyz = np.vstack([b_y_h5[0, ::stride_b], b_y_h5[1, ::stride_b], b_y_h5[2, ::stride_b]])
+
     if DEBUG:
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
@@ -1003,10 +1232,14 @@ def main(cfg_path, replot=False):
     print(f"Particle        : {ke_particle:.1e} eV {particle_type}")
     if USE_RK45 and "rk45" in timing:
         print(f"Run Time RK45   : {timing['rk45']:.2f} s")
+    if USE_RK45B and "rk45b" in timing:
+        print(f"Run Time RK45b  : {timing['rk45b']:.2f} s")
     if USE_RK4 and "rk4" in timing:
         print(f"Run Time RK4    : {timing['rk4']:.2f} s")
     if USE_RKG and "rkg" in timing:
         print(f"Run Time RKG    : {timing['rkg']:.2f} s")
+    if USE_BORIS and "boris" in timing:
+        print(f"Run Time Boris  : {timing['boris']:.2f} s")
     if USE_PS and "ps" in timing:
         print(f"Run Time PS     : {timing['ps']:.2f} s")
 
@@ -1053,9 +1286,12 @@ def main(cfg_path, replot=False):
             particle_type=particle_type, plotbounds=plotbounds,
             ps_order_label=ps_order_label, USE_PLOT_TITLES=USE_PLOT_TITLES,
             USE_RK45=USE_RK45, USE_RK4=USE_RK4, USE_RKG=USE_RKG, USE_PS=USE_PS,
+            USE_BORIS=USE_BORIS, USE_RK45B=USE_RK45B,
             solution_rk45=solution_rk45 if USE_RK45 else None,
+            solution_rk45b=solution_rk45b if USE_RK45B else None,
             solution_rk4=solution_rk4 if USE_RK4 else None,
             solution_rkg=solution_rkg if USE_RKG else None,
+            solution_boris=boris_plot_xyz if USE_BORIS else None,
             x_ps_plot=x_ps_plot if USE_PS else None,
             y_ps_plot=y_ps_plot if USE_PS else None,
         )
@@ -1075,6 +1311,9 @@ def main(cfg_path, replot=False):
         USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
         USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
         USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
+        USE_BORIS=USE_BORIS, boris_step=boris_step, steps_boris=steps_boris,
+        boris_decimate=boris_decimate if USE_BORIS else 1,
+        USE_RK45B=USE_RK45B, y_rk45b_common=y_rk45b_common,
     )
     ps_x_slice   = _sw["ps_x_slice"]
     ps_y_slice   = _sw["ps_y_slice"]
@@ -1088,6 +1327,12 @@ def main(cfg_path, replot=False):
     rk45_x_slice = _sw["rk45_x_slice"]
     rk45_y_slice = _sw["rk45_y_slice"]
     rk45_z_slice = _sw["rk45_z_slice"]
+    boris_x_slice = _sw["boris_x_slice"]
+    boris_y_slice = _sw["boris_y_slice"]
+    boris_z_slice = _sw["boris_z_slice"]
+    rk45b_x_slice = _sw["rk45b_x_slice"]
+    rk45b_y_slice = _sw["rk45b_y_slice"]
+    rk45b_z_slice = _sw["rk45b_z_slice"]
     if _sw["ps_order_label"] is not None:
         ps_order_label = _sw["ps_order_label"]
 
@@ -1106,6 +1351,11 @@ def main(cfg_path, replot=False):
         particle_type=particle_type, ps_order_label=ps_order_label,
         USE_PLOT_TITLES=USE_PLOT_TITLES,
         USE_RK45=USE_RK45, USE_RK4=USE_RK4, USE_RKG=USE_RKG, USE_PS=USE_PS,
+        USE_BORIS=USE_BORIS, USE_RK45B=USE_RK45B,
+        boris_x_slice=boris_x_slice if USE_BORIS else None,
+        boris_y_slice=boris_y_slice if USE_BORIS else None,
+        rk45b_x_slice=rk45b_x_slice if USE_RK45B else None,
+        rk45b_y_slice=rk45b_y_slice if USE_RK45B else None,
         rk45_x_slice=rk45_x_slice if USE_RK45 else None,
         rk45_y_slice=rk45_y_slice if USE_RK45 else None,
         rk4_x_slice=rk4_x_slice if USE_RK4 else None,
@@ -1124,6 +1374,8 @@ def main(cfg_path, replot=False):
         rk45_z_slice=rk45_z_slice if USE_RK45 else None,
         rk4_z_slice=rk4_z_slice if USE_RK4 else None,
         rkg_z_slice=rkg_z_slice if USE_RKG else None,
+        boris_z_slice=boris_z_slice if USE_BORIS else None,
+        rk45b_z_slice=rk45b_z_slice if USE_RK45B else None,
         ps_z_slice=ps_z_slice if USE_PS else None,
     )
 
@@ -1143,10 +1395,15 @@ def main(cfg_path, replot=False):
         rkg_y_initial=rkg_y_initial,
         USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
         rk45_y_initial=rk45_y_initial,
+        USE_RK45B=USE_RK45B, y_rk45b_common=y_rk45b_common,
+        rk45b_y_initial=rk45b_y_initial,
+        USE_BORIS=USE_BORIS, boris_step=boris_step, steps_boris=steps_boris,
+        boris_decimate=boris_decimate if USE_BORIS else 1, e0_boris=e0_ps,
         USE_EXTERNAL_H5_ps=USE_EXTERNAL_H5_ps,   external_h5_ps=external_h5_ps,
         USE_EXTERNAL_H5_rk4=USE_EXTERNAL_H5_rk4, external_h5_rk4=external_h5_rk4,
         USE_EXTERNAL_H5_rk45=USE_EXTERNAL_H5_rk45, external_h5_rk45=external_h5_rk45,
         USE_EXTERNAL_H5_rkg=USE_EXTERNAL_H5_rkg,   external_h5_rkg=external_h5_rkg,
+        USE_EXTERNAL_H5_boris=USE_EXTERNAL_H5_boris, external_h5_boris=external_h5_boris,
         vector_potential_func=dp.vector_potential,
         charge_sign=charge_sign,
         load_results_h5_func=wr.load_results_h5_dipoleb,
@@ -1158,6 +1415,8 @@ def main(cfg_path, replot=False):
     rel_drift_rk4  = _ke["rel_drift_rk4"]
     rel_drift_rk45 = _ke["rel_drift_rk45"]
     rel_drift_rkg  = _ke["rel_drift_rkg"]
+    rel_drift_boris = _ke["rel_drift_boris"]
+    rel_drift_rk45b = _ke["rel_drift_rk45b"]
 
     dplt.ke_error(
         run_folder=fig_folder, stem=stem,
@@ -1165,9 +1424,11 @@ def main(cfg_path, replot=False):
         USE_PLOT_TITLES=USE_PLOT_TITLES, time_factor=time_factor, norm_time=norm_time,
         ps_data=_ke["ke_ps"], rk4_data=_ke["ke_rk4"],
         rk45_data=_ke["ke_rk45"], rkg_data=_ke["ke_rkg"],
+        boris_data=_ke["ke_boris"], rk45b_data=_ke["ke_rk45b"],
         ext_ps_data=_ke["ke_ext_ps"], ext_rk4_data=_ke["ke_ext_rk4"],
         ext_rk45_data=_ke["ke_ext_rk45"], ext_rkg_data=_ke["ke_ext_rkg"],
-        envelope=True,   # True = plot max-per-bin upper envelope (cleaner RKG band)
+        ext_boris_data=_ke["ke_ext_boris"],
+        envelope= False,   # True = all curves as max-per-bin upper envelope (cleaner RKG band); a set like {"rkg", "boris"} envelopes only those
     )
 
     if DEBUG:
@@ -1180,7 +1441,9 @@ def main(cfg_path, replot=False):
             logger.debug(f"[PS] E rel drift initial ={rel_drift_ps[0]:.2e}, E rel drift mid ={rel_drift_ps[midpoint_ps]:.2e}, E rel drift final ={rel_drift_ps[-1]:.2e}")
         for _lbl, _rd, _flag in [("RK4", rel_drift_rk4, USE_RK4),
                                   ("RKG", rel_drift_rkg, USE_RKG),
-                                  ("RK45", rel_drift_rk45, USE_RK45)]:
+                                  ("RK45", rel_drift_rk45, USE_RK45),
+                                  ("Boris", rel_drift_boris, USE_BORIS),
+                                  ("RK45b", rel_drift_rk45b, USE_RK45B)]:
             if _flag and _rd is not None:
                 _mid = int(round(len(_rd) / 2))
                 logger.debug(f"[{_lbl}] E rel drift initial ={_rd[0]:.2e}, E rel drift mid ={_rd[_mid]:.2e}, E rel drift final ={_rd[-1]:.2e}")
@@ -1209,7 +1472,7 @@ def main(cfg_path, replot=False):
     # Computes P_phi drift for every enabled solver (mirrors compute_ke_errors),
     # then plots them all on a single log-log axis using the same color /
     # linestyle scheme as the kinetic-energy plot.
-    if USE_PS or USE_RK4 or USE_RK45 or USE_RKG:
+    if USE_PS or USE_RK4 or USE_RK45 or USE_RKG or USE_BORIS or USE_RK45B:
         _pphi = ea.compute_pphi_errors(
             T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
             USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
@@ -1220,6 +1483,10 @@ def main(cfg_path, replot=False):
             rkg_y_initial=rkg_y_initial,
             USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
             rk45_y_initial=rk45_y_initial,
+            USE_RK45B=USE_RK45B, y_rk45b_common=y_rk45b_common,
+            rk45b_y_initial=rk45b_y_initial,
+            USE_BORIS=USE_BORIS, boris_step=boris_step, steps_boris=steps_boris,
+            boris_decimate=boris_decimate if USE_BORIS else 1,
             vector_potential_func=dp.vector_potential,
             charge_sign=charge_sign,
         )
@@ -1231,8 +1498,42 @@ def main(cfg_path, replot=False):
             ylabel_str=_pphi["ylabel"],
             ps_data=_pphi["pphi_ps"], rk4_data=_pphi["pphi_rk4"],
             rk45_data=_pphi["pphi_rk45"], rkg_data=_pphi["pphi_rkg"],
+            boris_data=_pphi["pphi_boris"], rk45b_data=_pphi["pphi_rk45b"],
+            envelope={"boris"},   # Boris P_phi error oscillates at the gyro frequency; draw its
+                                  # upper envelope. True = all curves, False = none.
+            envelope_window=1.0,  # trailing running max over this many gyroperiods (rides the
+                                  # peaks from the first sample); larger also smooths the bounce
+                                  # modulation. None = per-log-bin max only.
         )
 
+
+    # =========================================================
+    # ======= TRAJECTORY DEVIATION FROM THE PS REFERENCE ======
+    # =========================================================
+    # |r_method − r_PS| on the common grid for every other enabled solver.
+    # PS is the reference, so this needs USE_PS; it is the trajectory-level
+    # companion to the invariant plots above (a method can conserve E and
+    # P_phi while leaving the reference gyro-orbit — Boris does exactly that).
+    if USE_PS and (USE_RK4 or USE_RK45 or USE_RKG or USE_BORIS or USE_RK45B):
+        _traj = ea.compute_traj_errors(
+            T_gyro, max_plot_points=max_plot_points_local,
+            USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step, ps_decimate=ps_decimate,
+            USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
+            USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
+            USE_RK45=USE_RK45, y_rk45_common=y_rk45_common,
+            USE_RK45B=USE_RK45B, y_rk45b_common=y_rk45b_common,
+            USE_BORIS=USE_BORIS, boris_step=boris_step,
+            boris_decimate=boris_decimate if USE_BORIS else 1,
+        )
+        dplt.traj_error(
+            run_folder=fig_folder, stem=stem,
+            particle_type=particle_type, ps_order_label=ps_order_label,
+            USE_PLOT_TITLES=USE_PLOT_TITLES,
+            time_factor=_traj["time_factor"], norm_time=norm_time,
+            rk4_data=_traj["traj_rk4"], rk45_data=_traj["traj_rk45"],
+            rkg_data=_traj["traj_rkg"], boris_data=_traj["traj_boris"],
+            rk45b_data=_traj["traj_rk45b"],
+        )
 
     # ============================================================
     # ================ Magnetic Moment Deviations ================
@@ -1240,6 +1541,8 @@ def main(cfg_path, replot=False):
     if DEBUG: tracemalloc.start()
 
     mu_rk4_result = mu_rkg_result = mu_rk45_result = mu_ps_result = None
+    mu_boris_result = None
+    mu_rk45b_result = None
 
     if USE_RK4:
         mu_rk4_result = mp.compute_mu_deviation_rk(
@@ -1256,9 +1559,23 @@ def main(cfg_path, replot=False):
 
     if USE_RK45:
         mu_rk45_result = mp.compute_mu_deviation_rk(
-            y_rk45_common, steps_ps, ps_step,
+            y_rk45_common, min(steps_ps, y_rk45_common.shape[1] - 1), ps_step,
             n_gyro, n_steps_per_gyro_ps, gyro_window, time_factor,
             solver_type="rk45", y_initial=rk45_y_initial)
+
+    if USE_RK45B:
+        mu_rk45b_result = mp.compute_mu_deviation_rk(
+            y_rk45b_common, min(steps_ps, y_rk45b_common.shape[1] - 1), ps_step,
+            n_gyro, n_steps_per_gyro_ps, gyro_window, time_factor,
+            solver_type="rk45", y_initial=rk45b_y_initial)
+
+    if USE_BORIS:
+        # Same IC as PS → same mu0; read chunked from the boris h5 group.
+        mu_boris_result = mp.compute_mu_deviation_ps(
+            cache_path, steps_boris, boris_step, boris_decimate,
+            n_gyro, n_steps_per_gyro_boris, mu0_ps,
+            gyro_window, time_factor, max_plot_points=max_plot_points_local,
+            group="boris")
 
     if USE_PS:
         mu_ps_result = mp.compute_mu_deviation_ps(
@@ -1271,6 +1588,8 @@ def main(cfg_path, replot=False):
     mu0_rk4  = mu_rk4_result["mu0"]  if mu_rk4_result  else None
     mu0_rkg  = mu_rkg_result["mu0"]  if mu_rkg_result  else None
     mu0_rk45 = mu_rk45_result["mu0"] if mu_rk45_result else None
+    mu0_boris = mu0_ps if mu_boris_result else None
+    mu0_rk45b = mu_rk45b_result["mu0"] if mu_rk45b_result else None   # same IC as PS (compute_mu_deviation_ps returns no mu0)
 
     dplt.mu_deviation(
         fig_folder, stem, particle_type, ps_order_label,
@@ -1279,6 +1598,8 @@ def main(cfg_path, replot=False):
         rk4_data=(mu_rk4_result["t"], mu_rk4_result["mudrift"]) if mu_rk4_result else None,
         rk45_data=(mu_rk45_result["t"], mu_rk45_result["mudrift"]) if mu_rk45_result else None,
         rkg_data=(mu_rkg_result["t"], mu_rkg_result["mudrift"]) if mu_rkg_result else None,
+        boris_data=(mu_boris_result["t"], mu_boris_result["mudrift_plot"]) if mu_boris_result else None,
+        rk45b_data=(mu_rk45b_result["t"], mu_rk45b_result["mudrift"]) if mu_rk45b_result else None,
     )
 
     # Instantaneous μ/μ₀ shape over the same window (companion to mu_deviation).
@@ -1289,6 +1610,8 @@ def main(cfg_path, replot=False):
         rk4_data=(mu_rk4_result["t"], mu_rk4_result["mu_ratio"]) if mu_rk4_result else None,
         rk45_data=(mu_rk45_result["t"], mu_rk45_result["mu_ratio"]) if mu_rk45_result else None,
         rkg_data=(mu_rkg_result["t"], mu_rkg_result["mu_ratio"]) if mu_rkg_result else None,
+        boris_data=(mu_boris_result["t"], mu_boris_result["mu_ratio_plot"]) if mu_boris_result else None,
+        rk45b_data=(mu_rk45b_result["t"], mu_rk45b_result["mu_ratio"]) if mu_rk45b_result else None,
     )
 
 
@@ -1297,7 +1620,8 @@ def main(cfg_path, replot=False):
         tracemalloc.stop()
         logger.info(f"Peak memory usage for moment analysis: {peak / 1024**2:.2f} MB")
         for _lbl, _res in [("PS", mu_ps_result), ("RK4", mu_rk4_result),
-                            ("RKG", mu_rkg_result), ("RK45", mu_rk45_result)]:
+                            ("RKG", mu_rkg_result), ("RK45", mu_rk45_result),
+                            ("Boris", mu_boris_result), ("RK45b", mu_rk45b_result)]:
             if _res is not None:
                 _md = _res.get("mudrift", _res.get("mudrift_plot"))
                 _mid = int(round(len(_md) / 2))
@@ -1411,25 +1735,35 @@ def main(cfg_path, replot=False):
         dragt_log=dragt_log, bounce_results=bounce_results, drift_results=drift_results,
         gyroperiods=gyroperiods, norm_time=norm_time, cache_path=cache_path,
         USE_PS=USE_PS, USE_RK4=USE_RK4, USE_RK45=USE_RK45, USE_RKG=USE_RKG,
+        USE_BORIS=USE_BORIS, USE_RK45B=USE_RK45B,
         ps_step=ps_step,
         rk4_step=rk4_step if USE_RK4 else None,
         rkg_step=rkg_step if USE_RKG else None,
+        boris_step=boris_step if USE_BORIS else None,
         rel_drift_ps=rel_drift_ps if USE_PS else None,
         rel_drift_rk4=rel_drift_rk4 if USE_RK4 else None,
         rel_drift_rk45=rel_drift_rk45 if USE_RK45 else None,
         rel_drift_rkg=rel_drift_rkg if USE_RKG else None,
+        rel_drift_boris=rel_drift_boris if USE_BORIS else None,
+        rel_drift_rk45b=rel_drift_rk45b if USE_RK45B else None,
         rel_pphi_ps=_pphi.get("rel_pphi_ps")   if USE_PS   else None,
         rel_pphi_rk4=_pphi.get("rel_pphi_rk4") if USE_RK4  else None,
         rel_pphi_rk45=_pphi.get("rel_pphi_rk45") if USE_RK45 else None,
         rel_pphi_rkg=_pphi.get("rel_pphi_rkg") if USE_RKG  else None,
+        rel_pphi_boris=_pphi.get("rel_pphi_boris") if USE_BORIS else None,
+        rel_pphi_rk45b=_pphi.get("rel_pphi_rk45b") if USE_RK45B else None,
         mu0_ps=mu0_ps if USE_PS else None,
         mu0_rk4=mu0_rk4 if USE_RK4 else None,
         mu0_rk45=mu0_rk45 if USE_RK45 else None,
         mu0_rkg=mu0_rkg if USE_RKG else None,
+        mu0_boris=mu0_boris if USE_BORIS else None,
+        mu0_rk45b=mu0_rk45b if USE_RK45B else None,
         solution_rk4=solution_rk4 if USE_RK4 else None,
         solution_rkg=solution_rkg if USE_RKG else None,
         y_rk45_common=y_rk45_common if USE_RK45 else None,
+        y_rk45b_common=y_rk45b_common if USE_RK45B else None,
         ps_store_stride=ps_store_stride if USE_PS else 1,
+        boris_store_stride=(boris_decimate if boris_decimate and boris_decimate > 1 else 1) if USE_BORIS else 1,
         npfloat=npfloat,
         compute_mu_ps=mp.compute_mu_ps,
         compute_mu_rk=mp.compute_mu_rk,
@@ -1441,13 +1775,16 @@ def main(cfg_path, replot=False):
         if USE_RKG: logger.debug(f"  rkg step size = {rkg_step}")
         if USE_RK4: logger.debug(f"  rk4 steps     = {steps_rk4}")
         if USE_RKG: logger.debug(f"  rkg steps     = {steps_rkg}")
+        if USE_BORIS: logger.debug(f"  boris step size = {boris_step}; boris steps = {steps_boris}")
         if USE_PS: logger.debug(f"  ps steps      = {steps_ps}")
 
     # === Write to master simulation log CSV ===
     _method_records = []
     if USE_RK4:  _method_records.append(("RK4",  steps_rk4, rk4_step, rel_drift_rk4,  mu_rk4_result["mudrift"]))
     if USE_RK45: _method_records.append(("RK45", steps_ps,  ps_step,  rel_drift_rk45, mu_rk45_result["mudrift"]))
+    if USE_RK45B: _method_records.append(("RK45b", steps_ps, ps_step, rel_drift_rk45b, mu_rk45b_result["mudrift"]))
     if USE_RKG:  _method_records.append(("RKG",  steps_rkg, rkg_step, rel_drift_rkg,  mu_rkg_result["mudrift"]))
+    if USE_BORIS: _method_records.append(("Boris", steps_boris, boris_step, rel_drift_boris, mu_boris_result["mudrift"]))
     if USE_PS:   _method_records.append(("PS",   steps_ps,  ps_step,  rel_drift_ps,   mu_ps_result["mudrift"]))
 
     wr.master_csv(

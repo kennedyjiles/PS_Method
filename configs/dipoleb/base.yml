@@ -36,8 +36,10 @@ use_gyroradius_L_correction: false  # Uses gyroradius-corrected L_eff for T_gyro
 solvers:
   ps: true
   rk4: false
-  rk45: false
+  rk45: false          # adaptive Dormand–Prince RK45 compiled with Numba (line-for-line port of SciPy's RK45: same tolerances, same step sequence; like-for-like runtime)
+  rk45b: false         # SciPy solve_ivp RK45 — the original reference implementation, kept as a backup/cross-check
   rkg: false
+  boris: false         # Boris pusher (2nd-order, volume-preserving); KE exact by construction
   adaptive: false         # true = adaptive PS stepping
 
 # --- Plotting ---
@@ -88,6 +90,7 @@ steps_per_gyro:
   ps: 65
   rk4: 65
   rkg: 65
+  boris: 65
 
 # --- Step size overrides (optional) ---
 # If set, these OVERRIDE the computed step sizes from steps_per_gyro.
@@ -96,6 +99,7 @@ step_overrides:
   ps: null
   rk4: null
   rkg: null
+  boris: null
 
 # --- Step rounding ---
 round_decimals: 1         # decimal places for step size rounding
@@ -138,6 +142,7 @@ use_external_h5:
   rk4:  false
   rk45: false
   rkg:  false
+  boris: false
 
 external_h5:
   root: null
@@ -145,3 +150,4 @@ external_h5:
   rk4:  null
   rk45: null
   rkg:  null
+  boris: null

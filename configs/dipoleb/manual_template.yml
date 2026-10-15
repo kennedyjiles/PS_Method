@@ -38,8 +38,10 @@ manual_h5_path: "REPLACE_WITH_PATH_TO.h5"
 solvers:
   ps: true
   rk4: true
-  rk45: true
+  rk45: true           # adaptive Dormand–Prince RK45 compiled with Numba (SciPy-identical step sequence)
+  rk45b: false         # SciPy solve_ivp RK45 — reference implementation kept as a backup/cross-check
   rkg: true
+  boris: false         # Boris pusher (2nd-order, volume-preserving); KE exact by construction
   adaptive: false
 
 plotting:
@@ -76,6 +78,7 @@ use_external_h5:
   rk4:  false
   rk45: false
   rkg:  false
+  boris: false
 
 external_h5:
   root: null
@@ -83,6 +86,7 @@ external_h5:
   rk4:  null
   rk45: null
   rkg:  null
+  boris: null
 
 
 # ===================================================================
@@ -126,11 +130,13 @@ steps_per_gyro:
   ps: 65
   rk4: 65
   rkg: 65
+  boris: 65
 
 step_overrides:
   ps: null
   rk4: null
   rkg: null
+  boris: null
 
 round_decimals: 1
 
