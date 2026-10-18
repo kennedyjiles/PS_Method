@@ -1,0 +1,32 @@
+# ===================================================================
+# Paper 1 — 100 keV proton, 30° pitch, 5 R_E
+# ===================================================================
+
+# Figure R1 (reply to R1.1): surface of section, PS 20 vs Boris
+
+energy_eV: 100e6
+particle: proton
+pitch_deg: 30.0
+phi_deg: 15
+x_initial: 2.6812803139531813
+
+gyroperiods: 1e5
+round_decimals: 2
+r_atmosphere: 1.0157
+
+solvers:
+  rk4: false
+  rk45: false
+  rkg: false
+  boris: true
+  ps: true
+  adaptive: false
+
+steps_per_gyro:
+  ps: 20
+  boris: 650        # make one copy each with 65, 130, 260, 650
+
+ps_order: 40
+
+window_time: 7.23
+

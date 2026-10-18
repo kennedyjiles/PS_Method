@@ -1,0 +1,9 @@
+# Second regular-orbit check (run a5b47e): 100 MeV p+, 30 deg, phase 0, x0=2.5
+particle: proton
+energy_eV: 100000000
+pitch_deg: 30.0
+phi_deg: 0.0
+x_initial: 2.5
+gyroperiods: 2e4
+round_decimals: 2
+r_atmosphere: 1.0157
