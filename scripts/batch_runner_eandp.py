@@ -101,7 +101,7 @@ DEFAULT_GROUPS = {
 # comparison rows in the table. (base.yml has rk4/rk45/rkg false.)
 OVERRIDES = {
     1: {"solvers": {"rk4": True, "rk45": True, "rkg": True},},
-    2: {"solvers": {"rk4": True, "rk45": True, "rkg": False},},
+    2: {"solvers": {"rk4": True, "rk45": True, "rkg": True},},
 }
 
 
@@ -112,10 +112,7 @@ OVERRIDES = {
 #
 # Key:   (energy_eV, x_initial, pitch_deg)
 # Value: dict of solver flags to force False (True wouldn't make sense here)
-SKIP_SOLVERS = {
-    (1e4, 5, 30.0): {"rk45": False},   
-    (1e6, 5, 60.0): {"rk45": False},   
-}
+SKIP_SOLVERS = {}
 
 
 def _deep_merge(base, override):

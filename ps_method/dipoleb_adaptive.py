@@ -144,6 +144,7 @@ def _ps_adaptive_interval(
     order_low, order_high, grow_factor, shrink_factor, max_retries,
     steps_per_local_gyro, max_substeps,
     t_remaining, dt_override, t_msg,
+    horner=False,
 ):
     """Finish ONE output interval with adaptive substeps (scalar path).
 
@@ -190,7 +191,7 @@ def _ps_adaptive_interval(
         # accuracy warning would be pure log noise here.
         sol_batch, orders_batch = dp.ps_integrate(
             probe_order, n_sub, cur_state[:6].copy(),
-            tol, charge_sign, dt_actual, warn=False,
+            tol, charge_sign, dt_actual, warn=False, horner=horner,
         )
 
         # ---- find first bad step (vectorized) ----
@@ -294,6 +295,7 @@ def _ps_adaptive_chunk(
     t_internal,
     steps_per_local_gyro=200,
     max_substeps=2000,
+    horner=False,
 ):
     """
     Process n_output grid points with adaptive substeps.
@@ -354,7 +356,7 @@ def _ps_adaptive_chunk(
              halted) = _ps_adaptive_interval(*_scalar_args,
                                              t_remaining=ps_step,
                                              dt_override=0.0,
-                                             t_msg=t_internal)
+                                             t_msg=t_internal, horner=horner)
             max_ps = max(max_ps, i_max)
             substeps += i_sub
             rejections += i_rej
@@ -374,7 +376,7 @@ def _ps_adaptive_chunk(
 
         sol_batch, orders_batch = dp.ps_integrate(
             probe_order, total_sub, cur_state[:6].copy(),
-            tol, charge_sign, dt_actual, warn=False,
+            tol, charge_sign, dt_actual, warn=False, horner=horner,
         )
 
         batch_orders = orders_batch[1:total_sub + 1]
@@ -413,7 +415,7 @@ def _ps_adaptive_chunk(
                  halted) = _ps_adaptive_interval(
                     *_scalar_args, t_remaining=ps_step,
                     dt_override=max(float(dt_actual) * shrink_factor, dt_min),
-                    t_msg=t_internal)
+                    t_msg=t_internal, horner=horner)
                 max_ps = max(max_ps, i_max)
                 substeps += i_sub
                 rejections += i_rej
@@ -473,7 +475,7 @@ def _ps_adaptive_chunk(
          halted) = _ps_adaptive_interval(*_scalar_args,
                                          t_remaining=t_remaining,
                                          dt_override=entry_override,
-                                         t_msg=t_internal)
+                                         t_msg=t_internal, horner=horner)
         max_ps = max(max_ps, i_max)
         substeps += i_sub
         rejections += i_rej
@@ -522,6 +524,7 @@ def run_ps_streaming_adaptive(
     global_index_start=0,
     total_steps=None,
     segment_index=None,
+    horner=False,
 ):
     """
     Hybrid PS integration: uses the original fast ps_integrate when the
@@ -530,6 +533,7 @@ def run_ps_streaming_adaptive(
     Output format is identical to run_ps_streaming_with_decimation.
     """
     start_time_ps = time.time()
+    t_integ = 0.0      # time inside the PS kernel / adaptive chunk loop only (no h5 write, monitors, JIT)
     n_state = 17
     # wr.SAVE_ROWS and wr.n_save come from writers
 
@@ -581,6 +585,7 @@ def run_ps_streaming_adaptive(
         ps_grp.attrs["streaming"]        = True
         ps_grp.attrs["chunksize"]        = int(chunk_steps)
         ps_grp.attrs["decimate"]         = int(decimate)
+        ps_grp.attrs["horner"]           = bool(horner)
         ps_grp.attrs["tol"]              = ul.npfloat(tol)
         ps_grp.attrs["minphase"]         = ul.npfloat(user_min_phase)
         ps_grp.attrs["E0"]              = float(e0_ps)
@@ -630,10 +635,12 @@ def run_ps_streaming_adaptive(
                 #  FAST PATH: use ps_integrate batch
                 #  (ps_step is small enough for the local field)
                 # =============================================
+                _t0 = time.perf_counter()
                 sol_chunk, orders_chunk = dp.ps_integrate(
                     probe_order, this_chunk, cur_state[:6].copy(),
-                    tol, charge_sign, ps_step, warn=False,
+                    tol, charge_sign, ps_step, warn=False, horner=horner,
                 )
+                t_integ += time.perf_counter() - _t0
 
                 # ---- find first bad step (same quality bar as adaptive) ----
                 co = orders_chunk[1:this_chunk + 1]
@@ -683,6 +690,7 @@ def run_ps_streaming_adaptive(
                 #  ADAPTIVE PATH: local B says ps_step is too
                 #  large — subdivide with B-based dt
                 # =============================================
+                _t0 = time.perf_counter()
                 (sol_chunk, orders_chunk, cur_state, dt_internal,
                  t_internal, chunk_max_ps, chunk_substeps, chunk_rejections,
                  halted
@@ -692,7 +700,9 @@ def run_ps_streaming_adaptive(
                     order_low, order_high, grow_factor, shrink_factor, max_retries,
                     t_internal,
                     steps_per_local_gyro=steps_per_local_gyro,
+                    horner=horner,
                 )
+                t_integ += time.perf_counter() - _t0
 
                 max_ps_global    = max(max_ps_global, chunk_max_ps)
                 total_substeps  += chunk_substeps
@@ -787,6 +797,8 @@ def run_ps_streaming_adaptive(
         if write_data:
             ps_grp.attrs["max_ps"]           = max_ps_global
             ps_grp.attrs["mean_ps"]          = mean_ps
+            ps_grp.attrs["integ_time"]       = float(t_integ)                      # kernel/chunk loop only
+            ps_grp.attrs["wall_time_incl_h5_write"] = float(time.time() - start_time_ps)  # NOT an integrator timing
             ps_grp.attrs["sum_orders"]       = int(sum_orders)
             ps_grp.attrs["count_orders"]     = int(count_orders)
             ps_grp.attrs["total_substeps"]   = total_substeps
@@ -824,13 +836,14 @@ def run_ps_streaming_adaptive(
               f"\n    mean order      = {mean_ps:.1f}"
               f"\n    final dt        = {float(dt_internal):.4f}"
               f"  (nominal = {float(ps_step):.4f})"
+              f"\n    integration     = {t_integ:.1f} s   (reported run time; excludes h5 write, monitor, JIT)"
               f"\n    wall time       = {elapsed_ps:.1f} s")
         if hit_atmosphere:
             print(f"    *** ATMOSPHERE FLAG: particle crossed r < {r_atmosphere} R_E "
                   f"at step {hit_atm_step:,} (r_min = {hit_atm_r:.4f} R_E) ***")
         print()
 
-        return max_ps_global, elapsed_ps
+        return max_ps_global, t_integ   # integration-only, comparable with the RK timers
 
     finally:
         if f is not None:

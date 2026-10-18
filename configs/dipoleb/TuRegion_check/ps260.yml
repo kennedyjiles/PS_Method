@@ -1,0 +1,17 @@
+# Figure R1 particle (31a857): PS step-sensitivity check, PS only, stops on atmosphere
+energy_eV: 100000000
+pitch_deg: 30.0
+phi_deg: -90
+x_initial: 2.66901265587874
+round_decimals: 2
+steps_per_gyro:
+  ps: 260
+solvers:
+  rk4: false
+  rk45: false
+  rkg: false
+  adaptive: true
+stop_on_atmosphere: true
+gyroperiods: 1e5
+window_time: 7.23
+output_root: /sessions/rcw-017gp9fhqbh71m51rrii123v/tu_out

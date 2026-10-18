@@ -36,7 +36,6 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 import h5py
 import matplotlib.pyplot as plt
-from scipy.integrate import solve_ivp
 from ps_method.constants import q_e, m_e, m_p, evtoj, spdlight, RE, B_0
 from configs.config_loader import load_config, compute_derived_dipoleb as compute_derived, copy_config_to_output, physics_hash
 
@@ -141,7 +140,7 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
         print(f"  {_lbl}: continuing from segment {last_idx}{_extra} "
               f"at global step {resumed_index:,}/{steps_ps:,}\n")
 
-    t_start = time.time()
+    integ_total = 0.0        # integration-only time summed over segments
     for seg in range(start_seg, n_segments):
         seg_global_start = seg * seg_steps
         this_seg_steps = min(seg_steps, steps_ps - seg_global_start)
@@ -161,13 +160,17 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
               f"(global steps {seg_global_start:,}–{seg_global_start + this_seg_steps:,}) ---")
         _t_seg = time.time()
         run_fn(**args)
+        # Per-segment time = integration only (kernel calls), read back from
+        # the segment's own attrs; falls back to wall for files without it.
+        with h5py.File(seg_build, "r") as _f:
+            _seg_time = float(_f["ps"].attrs.get("integ_time", time.time() - _t_seg))
+        integ_total += _seg_time
         # Stamp per-segment identity summary on the temp BEFORE committing, so
         # the atomic rename publishes data + summary together (and committed
         # files are never reopened for write).
         if summary_stub is not None:
             _stamp_segment_summary(seg_build, summary_stub, hash_str, seg,
-                                   this_seg_steps, steps_ps,
-                                   time.time() - _t_seg)
+                                   this_seg_steps, steps_ps, _seg_time)
         os.replace(seg_build, seg_final)   # atomic commit of the segment
 
         with h5py.File(seg_final, "r") as f:
@@ -183,7 +186,7 @@ def _run_ps_segments(base_args, hash_str, run_storage, steps_ps, seg_steps,
                   f"(target {seg_global_start + this_seg_steps:,}) — stopping run.\n")
             break
 
-    elapsed = time.time() - t_start
+    elapsed = integ_total   # integration-only, summed over segments
 
     if offload:
         # The full set no longer lives locally — don't build a holey VDS.
@@ -260,7 +263,7 @@ def main(cfg_path, replot=False):
     builtins.npfloat = npfloat
     tol = 1.0 * np.finfo(npfloat).eps
 
-    plt.rcParams['agg.path.chunksize'] = 100000 if USE_FLOAT128 else 1000
+    plt.rcParams['agg.path.chunksize'] = 10000  # >~1500 so enveloped curves are never split (1000 left gaps); 0 fails on 1e6-pt raw curves
 
     # --- Import physics modules AFTER builtins.npfloat is set ---
     from ps_method import dipoleb_physics as dp
@@ -358,6 +361,7 @@ def main(cfg_path, replot=False):
     # so no module-level fallback is needed.
     ps_order        = params["ps_order"]
     ps_chunk_steps  = params["ps_chunk_steps"]
+    ps_horner       = bool(params.get("ps_horner", False))   # Horner evaluation of the PS step increment
     rtol_rk45       = params["rtol_rk45"]
     atol_rk45       = params["atol_rk45"]
     user_min_phase  = params["user_min_phase"]
@@ -410,6 +414,8 @@ def main(cfg_path, replot=False):
     #     UnboundLocalError regardless of which path is taken. ---
     solution_rk4  = None
     solution_rk45 = None
+    rk45_stats    = None      # (nfev, nsteps, nrejected) from the compiled RK45 run
+    ps_wall_time  = None      # PS stage wall clock incl. h5 write/monitor — NOT an integrator timing
     solution_rkg  = None
     y_rk45_common = None
     summary       = {}
@@ -488,6 +494,8 @@ def main(cfg_path, replot=False):
                 steps_ps = ps_cfg["steps"]
                 ps_decimate = ps_cfg["decimate"]
                 ps_chunk_steps = ps_cfg["chunksize"]
+                ps_horner = bool(ps_cfg.get("horner", False))   # files before the flag: running sum
+                ps_wall_time = ps_cfg.get("wall_time_incl_h5_write_s")   # None for files before this field
                 n_steps_per_gyro_ps = ps_cfg["numberstepspergyro"]
                 max_ps_value = ps_cfg["max_ps"]
                 e0_ps = ps_cfg["E0"]
@@ -506,6 +514,18 @@ def main(cfg_path, replot=False):
                 USE_RK45 = USE_RK45 and rk45_cfg["enabled"]
                 rtol_rk45 = rk45_cfg["rtol"]
                 atol_rk45 = rk45_cfg["atol"]
+
+                # ---- engine provenance ----
+                # "rk45" is the compiled (Numba) Dormand–Prince port. Files written
+                # before the swap hold SciPy solve_ivp data and no "engine" key; the
+                # trajectories follow the same step sequence, but the stored run
+                # time is SciPy's, so say so rather than silently reuse it.
+                rk45_engine = rk45_cfg.get("engine", "scipy") if USE_RK45 else None
+                if USE_RK45 and rk45_engine != "numba":
+                    print(f"  WARNING: cached RK45 data was produced by the {rk45_engine} engine "
+                          f"(file pre-dates the Numba RK45). Trajectory is used as-is; its run "
+                          f"time is NOT the compiled RK45's. Delete the h5 or set read_data: false "
+                          f"to re-run.")
 
                 # ---- RKG config ----
                 rkg_cfg = summary["rkg"]
@@ -747,6 +767,8 @@ def main(cfg_path, replot=False):
                 steps_ps = ps_cfg["steps"]
                 ps_decimate = ps_cfg["decimate"]
                 ps_chunk_steps = ps_cfg["chunksize"]
+                ps_horner = bool(ps_cfg.get("horner", False))   # files before the flag: running sum
+                ps_wall_time = ps_cfg.get("wall_time_incl_h5_write_s")   # None for files before this field
                 n_steps_per_gyro_ps = ps_cfg["numberstepspergyro"]
                 max_ps_value = ps_cfg["max_ps"]
                 e0_ps = ps_cfg["E0"]
@@ -765,6 +787,18 @@ def main(cfg_path, replot=False):
                 USE_RK45 = USE_RK45 and rk45_cfg["enabled"]
                 rtol_rk45 = rk45_cfg["rtol"]
                 atol_rk45 = rk45_cfg["atol"]
+
+                # ---- engine provenance ----
+                # "rk45" is the compiled (Numba) Dormand–Prince port. Files written
+                # before the swap hold SciPy solve_ivp data and no "engine" key; the
+                # trajectories follow the same step sequence, but the stored run
+                # time is SciPy's, so say so rather than silently reuse it.
+                rk45_engine = rk45_cfg.get("engine", "scipy") if USE_RK45 else None
+                if USE_RK45 and rk45_engine != "numba":
+                    print(f"  WARNING: cached RK45 data was produced by the {rk45_engine} engine "
+                          f"(file pre-dates the Numba RK45). Trajectory is used as-is; its run "
+                          f"time is NOT the compiled RK45's. Delete the h5 or set read_data: false "
+                          f"to re-run.")
 
                 # ---- RKG config ----
                 rkg_cfg = summary["rkg"]
@@ -864,6 +898,10 @@ def main(cfg_path, replot=False):
             # ====== Run PS ======
             max_ps = None
             if USE_PS:
+                # JIT warm-up OUTSIDE the timer: compile the PS kernel on a
+                # 2-step call so every solver is timed on integration alone.
+                dp.ps_integrate(ps_order, 2, initial_pos_vel, tol_local, charge_sign, ps_step,
+                                horner=ps_horner)
                 start_time_ps = time.time()
 
                 # --- Dragt conservation monitor ---
@@ -897,6 +935,7 @@ def main(cfg_path, replot=False):
                     user_min_phase=user_min_phase,
                     dragt_monitor=dragt_mon,
                     r_atmosphere=r_atmosphere,
+                    horner=ps_horner,
                 )
                 # Pick the streaming function; both the adaptive and fixed-step
                 # paths support segmented checkpointing identically.
@@ -957,6 +996,7 @@ def main(cfg_path, replot=False):
                             "max_ps": None,
                             "chunksize": int(ps_chunk_steps),
                             "decimate": int(ps_decimate),
+                            "horner": bool(ps_horner),
                             "numberstepspergyro": int(n_steps_per_gyro_ps),
                             "E0": float(e0_ps),
                             "mu0": float(mu0_ps),
@@ -999,31 +1039,59 @@ def main(cfg_path, replot=False):
                               f"configured span; norm_time/gyroperiods/physical_time "
                               f"reconciled to the data.")
 
-            # ====== Run RK45 ======
+            # ====== Run RK45 (compiled Dormand–Prince, SciPy-identical control) ======
+            # ul.rk45_numba is a line-for-line port of scipy's RK45: same step
+            # sequence and nfev for the same inputs, but compiled, so its wall
+            # time is comparable like-for-like with RK4/RKG/PS.
             if USE_RK45:
-                start_time_rk45 = time.time()
                 t_common = ps_step * np.arange(steps_ps + 1, dtype=npfloat)
-                solution_rk45 = solve_ivp(
-                    dp.lorentz_force,
-                    (0.0, norm_time),
-                    initial_pos_vel,
-                    method="RK45",
-                    args=(charge_sign,),
-                    t_eval=t_common,
-                    rtol=rtol_rk45,
-                    atol=atol_rk45,)
+                # Two runs of the SAME integration:
+                #   (1) timed, output only at the endpoints — the adaptive
+                #       integration alone, no dense-output evaluation;
+                #   (2) untimed, output on the PS grid — the trajectory used
+                #       for the error/trajectory comparisons.
+                # Dense output never touches the step controller, so both runs
+                # take an identical step sequence (asserted below via nfev).
+                # JIT warm-up OUTSIDE the timer (2 steps), as for every solver.
+                ul.rk45_numba(dp.lorentz_force_inplace, initial_pos_vel, 2 * ps_step,
+                              ps_step * np.arange(3, dtype=npfloat),
+                              rtol_rk45, atol_rk45, charge_sign)
+                t_ends = np.array([0.0, norm_time], dtype=npfloat)
+                start_time_rk45 = time.time()
+                y_end, rk45_nfev, rk45_nsteps, rk45_nrej = ul.rk45_numba(
+                    dp.lorentz_force_inplace, initial_pos_vel, norm_time, t_ends,
+                    rtol_rk45, atol_rk45, charge_sign)
                 end_time_rk45 = time.time()
+                y_a, _nfev_grid, _nsteps_grid, _ = ul.rk45_numba(
+                    dp.lorentz_force_inplace, initial_pos_vel, norm_time, t_common,
+                    rtol_rk45, atol_rk45, charge_sign)
+                if (_nfev_grid, _nsteps_grid) != (rk45_nfev, rk45_nsteps):
+                    print(f"  WARNING: RK45 timed run (nfev {rk45_nfev:,}) and grid run "
+                          f"(nfev {_nfev_grid:,}) took different step sequences; "
+                          f"reported RK45 time may not correspond to the stored trajectory.")
+                solution_rk45 = SimpleNamespace(t=t_common[:y_a.shape[1]], y=y_a)
+                rk45_stats = (int(rk45_nfev), int(rk45_nsteps), int(rk45_nrej))
+                print(f"  RK45: nfev {rk45_nfev:,}, accepted steps {rk45_nsteps:,} "
+                      f"({rk45_nsteps / gyroperiods:.1f}/gyroperiod), rejected {rk45_nrej:,}")
+                if y_a.shape[1] < steps_ps + 1:
+                    print(f"  WARNING: RK45 stopped early — {y_a.shape[1]:,} of {steps_ps + 1:,} "
+                          f"output points filled (step size fell below the floor, the condition "
+                          f"under which SciPy's RK45 raises 'required step size is less than "
+                          f"spacing between numbers'). Downstream RK45 analyses use the "
+                          f"points that exist.")
 
             # ====== Run RK4 ======
             if USE_RK4:
                 steps_rk4 = int(norm_time / rk4_step)
+                ul.rk4_fixed_step_inplace(dp.lorentz_force_inplace, initial_pos_vel,
+                                          rk4_step, 2, charge_sign)    # JIT warm-up, untimed
                 start_time_rk4 = time.time()
-                solution_rk4 = ul.rk4_fixed_step(
-                    dp.lorentz_force,
+                solution_rk4 = ul.rk4_fixed_step_inplace(
+                    dp.lorentz_force_inplace,
                     initial_pos_vel,
                     rk4_step,
                     steps_rk4,
-                    args=(charge_sign,),)
+                    charge_sign)
                 end_time_rk4 = time.time()
 
             # ====== Run RKG ======
@@ -1033,19 +1101,24 @@ def main(cfg_path, replot=False):
                 v_tau_vec = np.array([vx_initial, vy_initial, vz_initial], dtype=npfloat)
 
                 A0 = dp.vector_potential(r0)
-                p0 = v_tau_vec + A0
+                # Canonical momentum p = v + charge_sign*A, the inverse of the
+                # v = p - charge_sign*A used by hamiltonian_rhs and the analysis.
+                # (Was v + A: correct for protons, 47x too fast for electrons.)
+                p0 = v_tau_vec + charge_sign * A0
                 y0 = np.concatenate((r0, p0))   # for Hamiltonian in RKG
 
                 steps_rkg = int(norm_time / rkg_step)
                 steps_rkg = max(1, steps_rkg)
 
+                dp.rkgl4_hamiltonian(dp.hamiltonian_rhs_inplace, y0, rkg_step, 2,
+                                     charge_sign)                      # JIT warm-up, untimed
                 start_time_rkg = time.time()
                 solution_rkg, rkg_n_failed, rkg_avg_iters, rkg_max_iters = dp.rkgl4_hamiltonian(
-                    dp.hamiltonian_rhs,
+                    dp.hamiltonian_rhs_inplace,
                     y0,
                     rkg_step,
                     steps_rkg,
-                    args=(charge_sign,),
+                    charge_sign,
                 )
                 end_time_rkg = time.time()
                 # Fixed-point (functional iteration) diagnostics for the implicit
@@ -1105,13 +1178,20 @@ def main(cfg_path, replot=False):
                     "streaming": True,
                     "chunksize": ps_chunk_steps,
                     "decimate": ps_decimate,
+                    "horner": ps_horner,
                     "tol": tol_local,
                     "minphase" : user_min_phase,
                     "E0": float(e0_ps),
                     "mu0": float(mu0_ps),
                     "t0": 0.0,
                 })
-                results["meta"]["timing"]["ps"] = end_time_ps - start_time_ps
+                # "ps" = integration only (kernel calls; no h5 write, monitor or
+                # JIT) so it is comparable with the RK timers. The wall clock of
+                # the whole PS stage is NOT a timing of the integrator; it is kept
+                # out of the timing dict and recorded separately (summary "ps"
+                # block and the h5 ps attrs) under an explicit name.
+                results["meta"]["timing"]["ps"] = float(elapsed_ps)
+                ps_wall_time = end_time_ps - start_time_ps
 
             results["rk4"] = { "enabled": bool(USE_RK4),}
             if USE_RK4:
@@ -1131,6 +1211,11 @@ def main(cfg_path, replot=False):
                     "t": solution_rk45.t,
                     "rtol": rtol_rk45,
                     "atol": atol_rk45,
+                    "nfev": rk45_stats[0],
+                    "nsteps": rk45_stats[1],
+                    "nrejected": rk45_stats[2],
+                    "engine": "numba",
+                    "timed_output": "endpoints",   # time excludes dense output on the PS grid
                 })
                 results["meta"]["timing"]["rk45"] = end_time_rk45 - start_time_rk45
 
@@ -1184,6 +1269,10 @@ def main(cfg_path, replot=False):
                         "max_ps": max_ps_value,
                         "chunksize": ps_chunk_steps if USE_PS else None,
                         "decimate": ps_decimate if USE_PS else None,
+                        "horner": ps_horner if USE_PS else None,
+                        # PS stage wall clock incl. gzip h5 write + Dragt monitor.
+                        # Not comparable with the solver run times (meta.timing).
+                        "wall_time_incl_h5_write_s": ps_wall_time if USE_PS else None,
                         "numberstepspergyro": n_steps_per_gyro_ps if USE_PS else None,
                         "E0": float(e0_ps) if USE_PS else None,
                         "mu0": float(mu0_ps) if USE_PS else None,
@@ -1198,8 +1287,13 @@ def main(cfg_path, replot=False):
                     },
                     "rk45": {
                         "enabled": USE_RK45,
+                        "engine": "numba",          # compiled Dormand–Prince (ul.rk45_numba)
+                        "timed_output": "endpoints",  # RK45 time = integration only; grid output untimed
                         "rtol": rtol_rk45 if USE_RK45 else None,
                         "atol": atol_rk45 if USE_RK45 else None,
+                        "nfev": rk45_stats[0] if USE_RK45 else None,
+                        "nsteps": rk45_stats[1] if USE_RK45 else None,
+                        "nrejected": rk45_stats[2] if USE_RK45 else None,
                     },
                     "rkg": {
                         "enabled": USE_RKG,
@@ -1331,6 +1425,10 @@ def main(cfg_path, replot=False):
         print(f"Run Time RKG    : {timing['rkg']:.2f} s")
     if USE_PS and "ps" in timing:
         print(f"Run Time PS     : {timing['ps']:.2f} s")
+        if ps_wall_time is not None:
+            print(f"  (PS stage wall clock incl. h5 write/monitor: {ps_wall_time:.2f} s — not an integrator timing)")
+    print("  Run times are integration only: JIT compile excluded (warm-up call), "
+          "output I/O excluded; RK45 timed without dense output on the PS grid.")
 
     print(f"Norm Time       : {norm_time:.2e}")
     print(f"Physical Time   : {physical_time:.2e} s")
@@ -1522,7 +1620,9 @@ def main(cfg_path, replot=False):
             rk45_data=_ke["ke_rk45"], rkg_data=_ke["ke_rkg"],
             ext_ps_data=_ke["ke_ext_ps"], ext_rk4_data=_ke["ke_ext_rk4"],
             ext_rk45_data=_ke["ke_ext_rk45"], ext_rkg_data=_ke["ke_ext_rkg"],
-            envelope=True,   # True = plot max-per-bin upper envelope (cleaner RKG band)
+            envelope=False,   # True = all curves as max-per-bin upper envelope (cleaner RKG band);
+                             # False = raw; a set like {"rkg"} envelopes only those solver keys.
+                             # envelope_window=<gyroperiods> adds a trailing running max first.
         )
 
     if DEBUG:
@@ -1585,6 +1685,10 @@ def main(cfg_path, replot=False):
                 rk45_data=_pphi["pphi_rk45"], rkg_data=_pphi["pphi_rkg"],
                 ext_ps_data=_pphi["pphi_ext_ps"], ext_rk4_data=_pphi["pphi_ext_rk4"],
                 ext_rk45_data=_pphi["pphi_ext_rk45"], ext_rkg_data=_pphi["pphi_ext_rkg"],
+                envelope=False,       # raw samples (unchanged). True = all curves as upper envelope;
+                                      # a set like {"rkg"} envelopes only those solver keys.
+                envelope_window=None, # trailing running max in gyroperiods (e.g. 1.0) applied
+                                      # before the log-bin envelope; rides the gyro peaks.
             )
 
     # =========================================================
@@ -1937,6 +2041,21 @@ def main(cfg_path, replot=False):
     # ===========================================================
 
     if DEBUG: tracemalloc.start()
+
+    # Mean PS order over the run (read from the h5 attrs above, so it is also
+    # right for cached / manual replots). Inserted right after max_ps so the
+    # summary reads ordercap / max_ps / mean_ps together.
+    if USE_PS and ps_order_mean is not None and isinstance(summary.get("ps"), dict):
+        _ps = {}
+        for _k, _v in summary["ps"].items():
+            if _k == "mean_ps":
+                continue
+            _ps[_k] = _v
+            if _k == "max_ps":
+                _ps["mean_ps"] = round(float(ps_order_mean), 2)
+        if "mean_ps" not in _ps:
+            _ps["mean_ps"] = round(float(ps_order_mean), 2)
+        summary["ps"] = _ps
 
     wr.summary_txt_dipoleb(
         summary=summary, run_folder=run_folder, stem=stem,

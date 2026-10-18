@@ -63,6 +63,11 @@ def _to_serializable(x):
         return x.tolist()
     if isinstance(x, np.bool_):
         return bool(x)
+    # Native JSON types pass through unchanged. get_run_params_constb/hyperb
+    # call this directly on plain Python floats (not via json.dumps), so
+    # without this the constb/hyperb drivers fail before running anything.
+    if x is None or isinstance(x, (bool, int, float, str)):
+        return x
     # json.dumps only calls `default` for objects it cannot serialise, so
     # returning x unchanged here makes it report "Circular reference
     # detected" instead of naming the offending type.
@@ -590,12 +595,15 @@ def load_results_h5_dipoleb(h5_path, groups=None):
         for k in ("ps", "rk4", "rk45", "rkg"):
             loaded[k] = _read_grp(k) if k in groups else None
 
-        gmeta = f["meta"]
-        for a in gmeta.attrs:
-            if a.startswith("timing_"):
-                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
-            else:
-                loaded["meta"][a] = gmeta.attrs[a]
+        # PS-only streaming files and segment files have no "meta" group;
+        # leave the timing dict empty rather than fail.
+        if "meta" in f:
+            gmeta = f["meta"]
+            for a in gmeta.attrs:
+                if a.startswith("timing_"):
+                    loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+                else:
+                    loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
 
@@ -683,12 +691,15 @@ def load_results_h5_constb(h5_path):
         for k in ("ps", "rk4", "rk45"):
             loaded[k] = _read_grp(k)
 
-        gmeta = f["meta"]
-        for a in gmeta.attrs:
-            if a.startswith("timing_"):
-                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
-            else:
-                loaded["meta"][a] = gmeta.attrs[a]
+        # PS-only streaming files and segment files have no "meta" group;
+        # leave the timing dict empty rather than fail.
+        if "meta" in f:
+            gmeta = f["meta"]
+            for a in gmeta.attrs:
+                if a.startswith("timing_"):
+                    loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+                else:
+                    loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
 
@@ -742,12 +753,15 @@ def load_results_h5_hyperb(h5_path):
         for k in ("ps", "rk4", "rk45", "rkg"):
             loaded[k] = _read_grp(k)
 
-        gmeta = f["meta"]
-        for a in gmeta.attrs:
-            if a.startswith("timing_"):
-                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
-            else:
-                loaded["meta"][a] = gmeta.attrs[a]
+        # PS-only streaming files and segment files have no "meta" group;
+        # leave the timing dict empty rather than fail.
+        if "meta" in f:
+            gmeta = f["meta"]
+            for a in gmeta.attrs:
+                if a.startswith("timing_"):
+                    loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+                else:
+                    loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
 

@@ -1,0 +1,16 @@
+energy_eV: 100000000
+pitch_deg: 30.0
+phi_deg: 15.0
+x_initial: 2.6812803139531813
+round_decimals: 2
+steps_per_gyro:
+  ps: 65
+solvers:
+  rk4: false
+  rk45: false
+  rkg: false
+  adaptive: true
+stop_on_atmosphere: true
+gyroperiods: 2e4
+window_time: 7.23
+output_root: /sessions/rcw-017gp9fhqbh71m51rrii123v/tu_out

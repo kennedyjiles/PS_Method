@@ -135,6 +135,13 @@ def physics_hash(cfg):
         if k == "stop_on_atmosphere":
             if not _stop_atm:
                 continue
+        elif k == "ps_horner":
+            # Horner summation changes the trajectory at round-off level, so
+            # it is physics — but it is hashed ONLY when on, so every config
+            # written before the flag existed (and any with it false/absent)
+            # keeps its hash and its cached h5.
+            if not v:
+                continue
         elif k in _NON_HASH_KEYS and not (k == "r_atmosphere" and _stop_atm):
             continue
         if k in ("solvers", "steps_per_gyro", "step_overrides") \
@@ -144,6 +151,14 @@ def physics_hash(cfg):
             v = {**v, "order_high": 300, "steps_per_local_gyro": 200,
                  "min_fast_path_N": 100}
         pruned[k] = v
+    # RK45 ENGINE: solvers.rk45 now runs the compiled Dormand–Prince port
+    # (ul.rk45_numba) instead of scipy.integrate.solve_ivp. The trajectories
+    # follow the same step sequence, but the run time — the quantity the RK45
+    # comparison exists to measure — does not carry over, so RK45-enabled
+    # configs hash into a new namespace rather than reuse pre-swap caches.
+    # Configs with rk45 off are unaffected.
+    if bool((cfg.get("solvers") or {}).get("rk45", False)):
+        pruned["rk45_engine"] = "numba"
     physics = {k: _canonicalize_for_hash(v) for k, v in pruned.items()}
     return run_hash(physics)
 
@@ -219,12 +234,26 @@ def _resolve_ext_path(root, path):
 def _compute_step_sizes(T_gyro, steps_per_gyro, round_decimals=1):
     """Compute step sizes from T_gyro and a {solver: N} dict.
 
-    Returns a dict of {solver: step_size}.
+    Returns a dict of {solver: step_size}, each rounded to `round_decimals`
+    decimals. The derived step is NOT part of the run hash (only
+    steps_per_gyro / round_decimals / step_overrides are), so this rounding
+    must stay exactly as it is or cached runs would silently stop matching
+    their configs.
+
+    A fixed decimal count quantises small steps: at L = 5 with one decimal,
+    steps_per_gyro of 1100 and 1200 both give 0.7, and anything above 6500
+    gives 0.1 (7854 steps/gyro). A note is printed whenever the realised
+    steps-per-gyro is more than 2% from the request; use step_overrides (or
+    a larger round_decimals, which changes the hash) for an exact value.
     """
     steps = {}
     for solver, N in steps_per_gyro.items():
         raw = T_gyro / N
         steps[solver] = round(raw, round_decimals)
+        realised = T_gyro / steps[solver] if steps[solver] else float("inf")
+        if abs(realised - N) / N > 0.02:
+            print(f"  Note: steps_per_gyro.{solver} = {N:g} rounds (round_decimals={round_decimals}) to a step "
+                  f"of {steps[solver]:g} = {realised:.1f} steps/gyro; set step_overrides.{solver} for an exact value.")
     return steps
 
 
@@ -841,6 +870,9 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         # Optional overrides
         "ps_order":        cfg["ps_order"],
         "ps_chunk_steps":  int(cfg["ps_chunk_steps"]),
+        # Horner evaluation of the PS step increment (results-changing at the
+        # round-off level). Hashed only when true — see physics_hash.
+        "ps_horner":       bool(cfg.get("ps_horner", False)),
         # Segmented-checkpoint granularity, expressed as PS steps per segment.
         # 0 = disabled. Derived from gyroperiods so the yml stays in physical
         # units; the driver tiles [0, steps_ps] with a shorter final segment.

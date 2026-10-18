@@ -31,6 +31,8 @@ Conservation:
 
 Internal helpers:
     _log_envelope        — per-log-bin upper envelope for readable log-log curves
+    _trailing_max        — running max over a trailing window (numba)
+    _make_env            — envelope selector: True/False/set of solver keys, optional window
 """
 
 import numpy as np
@@ -57,8 +59,11 @@ LINESTYLES = {
     "ps":   "-",     # solid — PS is the reference solver, drawn on top
 }
 
-# PS line thickness, shared by every PS curve. Change once, applies everywhere.
+# PS line thickness for the trajectory plots. Change once, applies everywhere.
 PS_LINEWIDTH = 0.45
+# Line thickness for EVERY curve on the energy and canonical-momentum error
+# plots (all drawn solid, colour alone distinguishes the solvers).
+PS_ERR_LINEWIDTH = 0.8
 
 
 # =====================================================
@@ -109,6 +114,64 @@ def _log_envelope(x, y, n_bins=1500):
     centers = 10.0 ** (0.5 * (edges[:-1] + edges[1:]))
     keep = np.isfinite(ymax) & (ymax > 0)
     return centers[keep], ymax[keep]
+
+
+@ul.maybe_njit
+def _trailing_max(x, y, window):
+    """y_env[i] = max(y[j]) over all j with x[i] - window <= x[j] <= x[i].
+
+    x must be sorted ascending (it is a time axis). Monotone-deque sliding
+    maximum, O(n), so a 1e6-point curve is instant.
+    """
+    n = x.shape[0]
+    out = np.empty_like(y)
+    dq = np.empty(n, dtype=np.int64)
+    head = 0
+    tail = 0
+    for i in range(n):
+        while tail > head and y[dq[tail - 1]] <= y[i]:
+            tail -= 1
+        dq[tail] = i
+        tail += 1
+        while x[dq[head]] < x[i] - window:
+            head += 1
+        out[i] = y[dq[head]]
+    return out
+
+
+def _make_env(envelope, window=None):
+    """Return env(key, x, y) -> (x, |y|) honouring the ``envelope`` option.
+
+    envelope : bool or collection of solver keys
+        True  → every curve is drawn as its upper envelope
+        False → every curve is drawn raw
+        {"rkg", ...} → only those solver keys are enveloped; the rest are
+                drawn raw. Keys match COLORS: "ps", "rk4", "rk45", "rkg".
+    window : float or None
+        Width, in units of the x axis (τ/T, i.e. gyroperiods), of a trailing
+        running maximum applied before the per-log-bin reduction. The log-bin
+        envelope alone only hides an oscillation once a bin is wider than its
+        period, so the early decades of a gyro-frequency band still show every
+        dip; a window of ~1 gyroperiod rides the peaks from the first sample
+        on. The initial monotone rise is preserved because the maximum is
+        trailing (causal).
+    """
+    if isinstance(envelope, bool):
+        keys = None
+    else:
+        keys = {str(k).lower() for k in envelope}
+
+    def env(key, x, y):
+        use = envelope if keys is None else (key in keys)
+        x = np.asarray(x); y = np.abs(np.asarray(y))
+        if not use:
+            return x, y
+        if window is not None and window > 0 and x.size > 1:
+            y = _trailing_max(np.ascontiguousarray(x, dtype=np.float64),
+                              np.ascontiguousarray(y, dtype=np.float64),
+                              float(window))
+        return _log_envelope(x, y)
+    return env
 
 
 # =====================================================
@@ -253,7 +316,7 @@ def slice_3d(
     if USE_RKG:
         ax.plot(rkg_x_slice, rkg_y_slice, rkg_z_slice, label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"], linewidth=0.5)
     if USE_PS:
-        ax.plot(ps_x_slice, ps_y_slice, ps_z_slice, label=f"PS{ps_order_label}", alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"], linewidth=PS_LINEWIDTH)
+        ax.plot(ps_x_slice, ps_y_slice, ps_z_slice, label=f"PS{ps_order_label}", alpha=0.6, color=COLORS["ps"], linestyle=LINESTYLES["ps"], linewidth=PS_LINEWIDTH)
 
     ax.set_xlim(-plotbounds, plotbounds)
     ax.set_ylim(-plotbounds, plotbounds)
@@ -282,7 +345,7 @@ def ke_error(
     USE_PLOT_TITLES, time_factor, norm_time,
     ps_data=None, rk4_data=None, rk45_data=None, rkg_data=None,
     ext_ps_data=None, ext_rk4_data=None, ext_rk45_data=None, ext_rkg_data=None,
-    envelope=True,
+    envelope=True, envelope_window=None,
 ):
     """
     Kinetic energy relative error (log-log) for all enabled solvers.
@@ -294,64 +357,64 @@ def ke_error(
     envelope : when True (default), each curve is shown as its upper envelope
         (max |error| per log-spaced bin) so the dense symplectic RKG oscillation
         reads as a clean bound instead of a noisy band. Smooth curves (PS/RK4/
-        RK45) are essentially unchanged. Set False to plot every raw sample.
+        RK45) are essentially unchanged. Set False to plot every raw sample, or
+        pass a set of solver keys (e.g. {"rkg"}) to envelope only those.
+    envelope_window : optional trailing running-max width in gyroperiods
+        applied to enveloped curves first (see ``_make_env``).
     """
     fig, ax = plt.subplots(figsize=(10, 5))
 
-    def _env(x, y):
-        return _log_envelope(x, y) if envelope else (np.asarray(x), np.abs(np.asarray(y)))
+    _envk = _make_env(envelope, envelope_window)
 
     # ---- external comparison lines (plotted first, behind main lines) ----
     ln_ext = ln_extrk4 = ln_extb = ln_extc = None
     ye_ps = ye_rk4 = ye_rk45 = ye_rkg = None
     if ext_ps_data is not None:
         t_ext, drift_ext, _ = ext_ps_data
-        xe, ye_ps = _env(t_ext[1:] * time_factor, drift_ext[1:])
+        xe, ye_ps = _envk("ps", t_ext[1:] * time_factor, drift_ext[1:])
         ln_ext, = ax.semilogy(xe, ye_ps,
-                              alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"],
-                              linewidth=PS_LINEWIDTH,
+                              alpha=0.8, color=COLORS["ps"], linestyle="-", linewidth=PS_ERR_LINEWIDTH,
                               zorder=9)   # external PS also above the RKG band
     if ext_rk4_data is not None:
         t_ext, drift_ext = ext_rk4_data
-        xe, ye_rk4 = _env(t_ext[1:] * time_factor, drift_ext[1:])
+        xe, ye_rk4 = _envk("rk4", t_ext[1:] * time_factor, drift_ext[1:])
         ln_extrk4, = ax.semilogy(xe, ye_rk4,
-                                 alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+                                 alpha=0.8, color=COLORS["rk4"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if ext_rk45_data is not None:
         t_ext, drift_ext = ext_rk45_data
-        xe, ye_rk45 = _env(t_ext[1:] * time_factor, drift_ext[1:])
+        xe, ye_rk45 = _envk("rk45", t_ext[1:] * time_factor, drift_ext[1:])
         ln_extb, = ax.semilogy(xe, ye_rk45,
-                               alpha=0.8, color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+                               alpha=0.8, color=COLORS["rk45"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if ext_rkg_data is not None:
         t_ext, drift_ext = ext_rkg_data
-        xe, ye_rkg = _env(t_ext[1:] * time_factor, drift_ext[1:])
+        xe, ye_rkg = _envk("rkg", t_ext[1:] * time_factor, drift_ext[1:])
         ln_extc, = ax.semilogy(xe, ye_rkg,
-                               alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+                               alpha=0.8, color=COLORS["rkg"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
 
     # ---- main solver lines ----
     lnps = lnrk4 = lnrkg = lnrk45 = None
     y_ps = y_rk4 = y_rkg = y_rk45 = None
     if ps_data is not None:
         t_ps, drift_ps = ps_data
-        x_ps, y_ps = _env(t_ps[1:] * time_factor, drift_ps[1:])
+        x_ps, y_ps = _envk("ps", t_ps[1:] * time_factor, drift_ps[1:])
         lnps, = ax.semilogy(x_ps, y_ps,
-                            label=f"PS{ps_order_label}", alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"],
-                            linewidth=PS_LINEWIDTH,
+                            label=f"PS{ps_order_label}", alpha=0.8, color=COLORS["ps"], linestyle="-", linewidth=PS_ERR_LINEWIDTH,
                             zorder=10)   # draw PS on top so the noisy RKG band can't obscure it
     if rk4_data is not None:
         t_rk4, drift_rk4 = rk4_data
-        x_rk4, y_rk4 = _env(t_rk4[1:] * time_factor, drift_rk4[1:])
+        x_rk4, y_rk4 = _envk("rk4", t_rk4[1:] * time_factor, drift_rk4[1:])
         lnrk4, = ax.semilogy(x_rk4, y_rk4,
-                             label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+                             label='RK4', alpha=0.8, color=COLORS["rk4"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if rkg_data is not None:
         t_rkg, drift_rkg = rkg_data
-        x_rkg, y_rkg = _env(t_rkg[1:] * time_factor, drift_rkg[1:])
+        x_rkg, y_rkg = _envk("rkg", t_rkg[1:] * time_factor, drift_rkg[1:])
         lnrkg, = ax.semilogy(x_rkg, y_rkg,
-                             label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+                             label='RKG', alpha=0.8, color=COLORS["rkg"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if rk45_data is not None:
         t_rk45, drift_rk45 = rk45_data
-        x_rk45, y_rk45 = _env(t_rk45[1:] * time_factor, drift_rk45[1:])
+        x_rk45, y_rk45 = _envk("rk45", t_rk45[1:] * time_factor, drift_rk45[1:])
         lnrk45, = ax.semilogy(x_rk45, y_rk45,
-                              label='RK45', color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+                              label='RK45', color=COLORS["rk45"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
 
     # ---- axis formatting ----
     ul.setup_log_axes(ax)
@@ -611,8 +674,8 @@ def meridian_plane_RE(run_folder, rho_arr, z_arr, stem="", use_titles=True):
     Saved as <stem>_meridian.png.
     """
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.plot(rho_arr, z_arr, color=COLORS["ps"], linestyle=LINESTYLES["ps"],
-            linewidth=PS_LINEWIDTH, alpha=0.8)
+    ax.plot(rho_arr, z_arr, color=COLORS["ps"], linestyle="-", linewidth=PS_ERR_LINEWIDTH,
+            alpha=0.8)
     ax.axhline(0, color='black', lw=0.8, ls='--')
     ax.set_xlabel(r"$\rho$")
     ax.set_ylabel(r"$z$")
@@ -658,6 +721,7 @@ def pphi_error(
     ylabel_str=r"$|\Delta P_\phi|/|P_{\phi,0}|$",
     ps_data=None, rk4_data=None, rk45_data=None, rkg_data=None,
     ext_ps_data=None, ext_rk4_data=None, ext_rk45_data=None, ext_rkg_data=None,
+    envelope=False, envelope_window=None,
 ):
     """
     Canonical angular momentum (P_phi) relative error (log-log) for all
@@ -666,59 +730,69 @@ def pphi_error(
     Each *_data argument is a tuple ``(t_array, drift_array)`` or ``None``.
     External comparisons also include an order label for PS:
         ext_ps_data = (t_array, drift_array, PS_order_ext)
+
+    envelope : False (default) draws every raw sample; True draws every curve
+        as its per-log-bin upper envelope (max |error| per bin); a set of
+        solver keys such as {"rkg"} envelopes only those curves.
+    envelope_window : trailing running-max width in gyroperiods (x-axis
+        units) applied before the log-bin reduction; ~1 rides the gyro peaks
+        from the first sample. None = log-bin envelope only.
     """
     fig, ax = plt.subplots(figsize=(10, 5))
+    _envk = _make_env(envelope, envelope_window)
 
     # ---- external comparison lines (plotted first, behind main lines) ----
     ln_ext = ln_extrk4 = ln_extb = ln_extc = None
     ye_ps = ye_rk4 = ye_rk45 = ye_rkg = None
     if ext_ps_data is not None:
         t_ext, drift_ext, _ = ext_ps_data
-        ye_ps = np.abs(drift_ext[1:])
-        ln_ext, = ax.semilogy(t_ext[1:] * time_factor, ye_ps,
-                              alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"],
-                              linewidth=PS_LINEWIDTH,
+        xe, ye_ps = _envk("ps", t_ext[1:] * time_factor, drift_ext[1:])
+        ln_ext, = ax.semilogy(xe, ye_ps,
+                              alpha=0.8, color=COLORS["ps"], linestyle="-", linewidth=PS_ERR_LINEWIDTH,
                               zorder=9)   # external PS also above the RKG band
     if ext_rk4_data is not None:
         t_ext, drift_ext = ext_rk4_data
-        ye_rk4 = np.abs(drift_ext[1:])
-        ln_extrk4, = ax.semilogy(t_ext[1:] * time_factor, ye_rk4,
-                                 alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+        xe, ye_rk4 = _envk("rk4", t_ext[1:] * time_factor, drift_ext[1:])
+        ln_extrk4, = ax.semilogy(xe, ye_rk4,
+                                 alpha=0.8, color=COLORS["rk4"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if ext_rk45_data is not None:
         t_ext, drift_ext = ext_rk45_data
-        ye_rk45 = np.abs(drift_ext[1:])
-        ln_extb, = ax.semilogy(t_ext[1:] * time_factor, ye_rk45,
-                               alpha=0.8, color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+        xe, ye_rk45 = _envk("rk45", t_ext[1:] * time_factor, drift_ext[1:])
+        ln_extb, = ax.semilogy(xe, ye_rk45,
+                               alpha=0.8, color=COLORS["rk45"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if ext_rkg_data is not None:
         t_ext, drift_ext = ext_rkg_data
-        ye_rkg = np.abs(drift_ext[1:])
-        ln_extc, = ax.semilogy(t_ext[1:] * time_factor, ye_rkg,
-                               alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+        xe, ye_rkg = _envk("rkg", t_ext[1:] * time_factor, drift_ext[1:])
+        ln_extc, = ax.semilogy(xe, ye_rkg,
+                               alpha=0.8, color=COLORS["rkg"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
 
     # ---- main solver lines ----
     lnps = lnrk4 = lnrkg = lnrk45 = None
     if ps_data is not None:
         t_ps, drift_ps = ps_data
-        lnps, = ax.semilogy(t_ps[1:] * time_factor, np.abs(drift_ps[1:]),
+        x_ps, y_ps = _envk("ps", t_ps[1:] * time_factor, drift_ps[1:])
+        lnps, = ax.semilogy(x_ps, y_ps,
                             label=f"PS{ps_order_label}", alpha=0.8,
-                            color=COLORS["ps"], linestyle=LINESTYLES["ps"],
-                            linewidth=PS_LINEWIDTH,
+                            color=COLORS["ps"], linestyle="-", linewidth=PS_ERR_LINEWIDTH,
                             zorder=10)   # draw PS on top so the noisy RKG band can't obscure it
     if rk4_data is not None:
         t_rk4, drift_rk4 = rk4_data
-        lnrk4, = ax.semilogy(t_rk4[1:] * time_factor, np.abs(drift_rk4[1:]),
+        x_rk4, y_rk4 = _envk("rk4", t_rk4[1:] * time_factor, drift_rk4[1:])
+        lnrk4, = ax.semilogy(x_rk4, y_rk4,
                              label='RK4', alpha=0.8,
-                             color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+                             color=COLORS["rk4"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if rkg_data is not None:
         t_rkg, drift_rkg = rkg_data
-        lnrkg, = ax.semilogy(t_rkg[1:] * time_factor, np.abs(drift_rkg[1:]),
+        x_rkg, y_rkg = _envk("rkg", t_rkg[1:] * time_factor, drift_rkg[1:])
+        lnrkg, = ax.semilogy(x_rkg, y_rkg,
                              label='RKG', alpha=0.8,
-                             color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+                             color=COLORS["rkg"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if rk45_data is not None:
         t_rk45, drift_rk45 = rk45_data
-        lnrk45, = ax.semilogy(t_rk45[1:] * time_factor, np.abs(drift_rk45[1:]),
+        x_rk45, y_rk45 = _envk("rk45", t_rk45[1:] * time_factor, drift_rk45[1:])
+        lnrk45, = ax.semilogy(x_rk45, y_rk45,
                               label='RK45',
-                              color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+                              color=COLORS["rk45"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
 
     # ---- axis formatting ----
     ul.setup_log_axes(ax)
@@ -737,16 +811,16 @@ def pphi_error(
     #     endpoints.append((t_ps[-1] * time_factor, np.abs(drift_ps[-1]),
     #                      f"PS13", lnps.get_color()))
     if ps_data is not None:
-        endpoints.append((t_ps[-1] * time_factor, np.abs(drift_ps[-1]),
+        endpoints.append((x_ps[-1], y_ps[-1],
                          f"PS{ps_order_label}", lnps.get_color()))        
     if rk4_data is not None:
-        endpoints.append((t_rk4[-1] * time_factor, np.abs(drift_rk4[-1]),
+        endpoints.append((x_rk4[-1], y_rk4[-1],
                          "RK4", lnrk4.get_color()))
     if rkg_data is not None:
-        endpoints.append((t_rkg[-1] * time_factor, np.abs(drift_rkg[-1]),
+        endpoints.append((x_rkg[-1], y_rkg[-1],
                          "RKG", lnrkg.get_color()))
     if rk45_data is not None:
-        endpoints.append((t_rk45[-1] * time_factor, np.abs(drift_rk45[-1]),
+        endpoints.append((x_rk45[-1], y_rk45[-1],
                          "RK45", lnrk45.get_color()))
 
     if ext_ps_data is not None:
@@ -802,24 +876,23 @@ def mu_error(
         t_ext, drift_ext, _ = ext_ps_data
         ye_ps = np.abs(drift_ext[1:])
         ln_ext, = ax.semilogy(t_ext[1:] * time_factor, ye_ps,
-                              alpha=0.8, color=COLORS["ps"], linestyle=LINESTYLES["ps"],
-                              linewidth=PS_LINEWIDTH,
+                              alpha=0.8, color=COLORS["ps"], linestyle="-", linewidth=PS_ERR_LINEWIDTH,
                               zorder=9)   # external PS also above the RKG band
     if ext_rk4_data is not None:
         t_ext, drift_ext = ext_rk4_data
         ye_rk4 = np.abs(drift_ext[1:])
         ln_extrk4, = ax.semilogy(t_ext[1:] * time_factor, ye_rk4,
-                                 alpha=0.8, color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+                                 alpha=0.8, color=COLORS["rk4"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if ext_rk45_data is not None:
         t_ext, drift_ext = ext_rk45_data
         ye_rk45 = np.abs(drift_ext[1:])
         ln_extb, = ax.semilogy(t_ext[1:] * time_factor, ye_rk45,
-                               alpha=0.8, color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+                               alpha=0.8, color=COLORS["rk45"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if ext_rkg_data is not None:
         t_ext, drift_ext = ext_rkg_data
         ye_rkg = np.abs(drift_ext[1:])
         ln_extc, = ax.semilogy(t_ext[1:] * time_factor, ye_rkg,
-                               alpha=0.8, color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+                               alpha=0.8, color=COLORS["rkg"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
 
     # ---- main solver lines ----
     lnps = lnrk4 = lnrkg = lnrk45 = None
@@ -827,24 +900,23 @@ def mu_error(
         t_ps, drift_ps = ps_data
         lnps, = ax.semilogy(t_ps[1:] * time_factor, np.abs(drift_ps[1:]),
                             label=f"PS{ps_order_label}", alpha=0.8,
-                            color=COLORS["ps"], linestyle=LINESTYLES["ps"],
-                            linewidth=PS_LINEWIDTH,
+                            color=COLORS["ps"], linestyle="-", linewidth=PS_ERR_LINEWIDTH,
                             zorder=10)   # draw PS on top so the noisy RKG band can't obscure it
     if rk4_data is not None:
         t_rk4, drift_rk4 = rk4_data
         lnrk4, = ax.semilogy(t_rk4[1:] * time_factor, np.abs(drift_rk4[1:]),
                              label='RK4', alpha=0.8,
-                             color=COLORS["rk4"], linestyle=LINESTYLES["rk4"])
+                             color=COLORS["rk4"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if rkg_data is not None:
         t_rkg, drift_rkg = rkg_data
         lnrkg, = ax.semilogy(t_rkg[1:] * time_factor, np.abs(drift_rkg[1:]),
                              label='RKG', alpha=0.8,
-                             color=COLORS["rkg"], linestyle=LINESTYLES["rkg"])
+                             color=COLORS["rkg"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
     if rk45_data is not None:
         t_rk45, drift_rk45 = rk45_data
         lnrk45, = ax.semilogy(t_rk45[1:] * time_factor, np.abs(drift_rk45[1:]),
                               label='RK45',
-                              color=COLORS["rk45"], linestyle=LINESTYLES["rk45"])
+                              color=COLORS["rk45"], linestyle="-", linewidth=PS_ERR_LINEWIDTH)
 
     # ---- axis formatting ----
     ul.setup_log_axes(ax)

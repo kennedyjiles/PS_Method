@@ -3,6 +3,8 @@ Shared utilities for all field drivers (constb, hyperb, dipoleb).
 
 Numba:
     maybe_njit                  — compile with njit for float64, pass through for float128
+    rk45_numba                  — Dormand–Prince RK5(4), line-for-line SciPy RK45 port, compiled (in-place RHS)
+    rk4_fixed_step_inplace      — allocation-free RK4 for in-place RHS (bit-identical to rk4_fixed_step)
 
 Solver:
     rk4_fixed_step              — classical 4th-order Runge-Kutta integrator
@@ -105,9 +107,251 @@ def rk4_fixed_step(func, d0, dt, steps, args=()):
 
     return d_out.T
 
+
+@maybe_njit
+def rk4_fixed_step_inplace(func, d0, dt, steps, charge_sign):
+    """Allocation-free twin of rk4_fixed_step for in-place right-hand sides.
+
+    func : callable(y, charge_sign, out) writing dy/dt into out
+    Same arithmetic as rk4_fixed_step, expression by expression and in the
+    same order (y + (dt/2)*k, then y + (dt/6)*(((k1 + 2k2) + 2k3) + k4)), so
+    the trajectory is bit-identical; the stage vectors are reused instead of
+    being allocated four-plus times per step.
+    Returns (nvars, steps + 1) like rk4_fixed_step.
+    """
+    n = d0.shape[0]
+    d_out = np.zeros((steps + 1, n), dtype=npfloat)
+    d_out[0] = d0
+    k1 = np.empty(n, dtype=npfloat); k2 = np.empty(n, dtype=npfloat)
+    k3 = np.empty(n, dtype=npfloat); k4 = np.empty(n, dtype=npfloat)
+    ys = np.empty(n, dtype=npfloat)
+    hdt = dt / two
+    sdt = dt / six
+    for i in range(1, steps + 1):
+        y = d_out[i - 1]
+        func(y, charge_sign, k1)
+        for j in range(n):
+            ys[j] = y[j] + hdt * k1[j]
+        func(ys, charge_sign, k2)
+        for j in range(n):
+            ys[j] = y[j] + hdt * k2[j]
+        func(ys, charge_sign, k3)
+        for j in range(n):
+            ys[j] = y[j] + dt * k3[j]
+        func(ys, charge_sign, k4)
+        for j in range(n):
+            acc = k1[j] + two * k2[j]
+            acc = acc + two * k3[j]
+            acc = acc + k4[j]
+            d_out[i, j] = y[j] + sdt * acc
+    return d_out.T
+
 # =======================================================
 # ============== Misc Assists for Plotting ==============
 # =======================================================
+# ================================================================
+# ========= Dormand–Prince RK5(4) adaptive, Numba (RK45) =========
+# ================================================================
+# A line-for-line port of SciPy's ``RK45`` (scipy/integrate/_ivp/rk.py and
+# common.py, v1.18): same Butcher tableau, same RMS error norm with
+# scale = atol + rtol·max(|y|,|y_new|), same controller (SAFETY 0.9, factor
+# clamped to [0.2, 10], exponent −1/5, no growth after a rejection), same
+# Hairer–Nørsett–Wanner initial-step heuristic, and the same quartic dense
+# output (Q = Kᵀ·P) evaluated at the requested output times. Given identical
+# inputs it therefore takes the same step sequence as scipy's solve_ivp and
+# returns the same nfev — the ONLY difference is that it is compiled, so the
+# wall-clock comparison with PS / RK4 / RKG / Boris is like-for-like.
+# Referee request (R2 #2): "is RK45 slow because of SciPy?" — this answers it.
+
+_DP_C = np.array([0.0, 1/5, 3/10, 4/5, 8/9, 1.0])
+_DP_A = np.array([
+    [0.0,          0.0,           0.0,          0.0,         0.0],
+    [1/5,          0.0,           0.0,          0.0,         0.0],
+    [3/40,         9/40,          0.0,          0.0,         0.0],
+    [44/45,       -56/15,         32/9,         0.0,         0.0],
+    [19372/6561,  -25360/2187,    64448/6561,  -212/729,     0.0],
+    [9017/3168,   -355/33,        46732/5247,   49/176,     -5103/18656]])
+_DP_B = np.array([35/384, 0.0, 500/1113, 125/192, -2187/6784, 11/84])
+_DP_E = np.array([-71/57600, 0.0, 71/16695, -71/1920, 17253/339200, -22/525, 1/40])
+_DP_P = np.array([
+    [1.0, -8048581381/2820520608,  8663915743/2820520608,  -12715105075/11282082432],
+    [0.0,  0.0,                    0.0,                     0.0],
+    [0.0,  131558114200/32700410799, -68118460800/10900136933, 87487479700/32700410799],
+    [0.0, -1754552775/470086768,   14199869525/1410260304, -10690763975/1880347072],
+    [0.0,  127303824393/49829197408, -318862633887/49829197408, 701980252875/199316789632],
+    [0.0, -282668133/205662961,    2019193451/616988883,   -1453857185/822651844],
+    [0.0,  40617522/29380423,     -110615467/29380423,     69997945/29380423]])
+
+
+@maybe_njit
+def _rms_norm(x):
+    s = 0.0
+    for i in range(x.shape[0]):
+        s += x[i] * x[i]
+    return np.sqrt(s / x.shape[0])
+
+
+@maybe_njit
+def rk45_numba(func, y0, t_bound, t_eval, rtol, atol, charge_sign):
+    """Adaptive Dormand–Prince 5(4) with SciPy-identical control, compiled.
+
+    Parameters
+    ----------
+    func        : njit callable(y, charge_sign, out) writing dy/dt into out
+                  (in-place, e.g. dipoleb_physics.lorentz_force_inplace); no
+                  array is allocated per evaluation
+    y0          : 1-D initial state
+    t_bound     : end time (integration starts at t = 0, forward)
+    t_eval      : sorted output times in [0, t_bound]; t_eval[0] may be 0
+    rtol, atol  : tolerances (scalars), as in solve_ivp
+    charge_sign : forwarded to func
+
+    Returns
+    -------
+    y_out  : (nvars, len(t_eval)) solution at t_eval (dense output, as scipy)
+    nfev   : RHS evaluations (counted exactly as scipy counts them)
+    nsteps : accepted steps
+    nrej   : rejected step attempts
+    """
+    SAFETY = 0.9
+    MIN_FACTOR = 0.2
+    MAX_FACTOR = 10.0
+    ERR_EXP = -1.0 / 5.0           # -1/(error_estimator_order + 1), order 4
+    n = y0.shape[0]
+    n_out = t_eval.shape[0]
+    y_out = np.empty((n, n_out), dtype=npfloat)
+
+    t = 0.0
+    y = y0.copy()
+    f = np.empty(n, dtype=npfloat)
+    func(y, charge_sign, f)
+    nfev = 1
+
+    # ---- select_initial_step (common.py) ----
+    scale0 = np.empty(n, dtype=npfloat)
+    for i in range(n):
+        scale0[i] = atol + abs(y[i]) * rtol
+    d0 = _rms_norm(y / scale0)
+    d1 = _rms_norm(f / scale0)
+    if d0 < 1e-5 or d1 < 1e-5:
+        h0 = 1e-6
+    else:
+        h0 = 0.01 * d0 / d1
+    h0 = min(h0, t_bound)
+    y1 = y + h0 * f
+    f1 = np.empty(n, dtype=npfloat)
+    func(y1, charge_sign, f1)
+    nfev += 1
+    d2 = _rms_norm((f1 - f) / scale0) / h0
+    if d1 <= 1e-15 and d2 <= 1e-15:
+        h1 = max(1e-6, h0 * 1e-3)
+    else:
+        h1 = (0.01 / max(d1, d2)) ** (1.0 / 5.0)
+    h_abs = min(100.0 * h0, h1, t_bound)
+
+    K = np.empty((7, n), dtype=npfloat)
+    y_new = np.empty(n, dtype=npfloat)
+    ystage = np.empty(n, dtype=npfloat)
+    Q = np.empty((n, 4), dtype=npfloat)
+    p = np.empty(4, dtype=npfloat)
+
+    i_out = 0
+    if n_out > 0 and t_eval[0] == 0.0:
+        y_out[:, 0] = y
+        i_out = 1
+
+    nsteps = 0
+    nrej = 0
+    while t < t_bound:
+        min_step = 10.0 * abs(np.nextafter(t, np.inf) - t)
+        if h_abs < min_step:
+            h_abs = min_step
+
+        step_accepted = False
+        step_rejected = False
+        while not step_accepted:
+            if h_abs < min_step:
+                # scipy: TOO_SMALL_STEP → solver fails. Mirror by stopping.
+                return y_out[:, :i_out], nfev, nsteps, nrej
+            t_new = t + h_abs
+            if t_new > t_bound:
+                t_new = t_bound
+            h = t_new - t
+            h_abs = abs(h)
+
+            # ---- rk_step ----
+            for i in range(n):
+                K[0, i] = f[i]
+            for s in range(1, 6):
+                for i in range(n):
+                    acc = 0.0
+                    for j in range(s):
+                        acc += K[j, i] * _DP_A[s, j]
+                    ystage[i] = y[i] + acc * h
+                func(ystage, charge_sign, K[s])
+            for i in range(n):
+                acc = 0.0
+                for j in range(6):
+                    acc += K[j, i] * _DP_B[j]
+                y_new[i] = y[i] + h * acc
+            func(y_new, charge_sign, K[6])
+            nfev += 6
+
+            # ---- error norm ----
+            err_norm_sq = 0.0
+            for i in range(n):
+                e = 0.0
+                for j in range(7):
+                    e += K[j, i] * _DP_E[j]
+                e *= h
+                sc = atol + max(abs(y[i]), abs(y_new[i])) * rtol
+                err_norm_sq += (e / sc) * (e / sc)
+            error_norm = np.sqrt(err_norm_sq / n)
+
+            if error_norm < 1.0:
+                if error_norm == 0.0:
+                    factor = MAX_FACTOR
+                else:
+                    factor = min(MAX_FACTOR, SAFETY * error_norm ** ERR_EXP)
+                if step_rejected:
+                    factor = min(1.0, factor)
+                h_abs *= factor
+                step_accepted = True
+            else:
+                h_abs *= max(MIN_FACTOR, SAFETY * error_norm ** ERR_EXP)
+                step_rejected = True
+                nrej += 1
+
+        # ---- dense output on (t, t_new] (RkDenseOutput: Q = Kᵀ·P) ----
+        if i_out < n_out and t_eval[i_out] <= t_new:
+            for i in range(n):
+                for c in range(4):
+                    acc = 0.0
+                    for j in range(7):
+                        acc += K[j, i] * _DP_P[j, c]
+                    Q[i, c] = acc
+            while i_out < n_out and t_eval[i_out] <= t_new:
+                x = (t_eval[i_out] - t) / h
+                p[0] = x
+                p[1] = x * x
+                p[2] = p[1] * x
+                p[3] = p[2] * x
+                for i in range(n):
+                    acc = 0.0
+                    for c in range(4):
+                        acc += Q[i, c] * p[c]
+                    y_out[i, i_out] = y[i] + h * acc
+                i_out += 1
+
+        t = t_new
+        for i in range(n):
+            y[i] = y_new[i]
+            f[i] = K[6, i]
+        nsteps += 1
+
+    return y_out, nfev, nsteps, nrej
+
+
 def f64(arr):
     """Convert array to float64 (needed when plotting float128 data)."""
     return np.asarray(arr, dtype=np.float64)

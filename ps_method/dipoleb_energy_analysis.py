@@ -40,6 +40,23 @@ def _vector_potential_batch(R):
     return A
 
 
+def _external_group(load_fn, path, group):
+    """Load one solver group from an external h5 for overlay plotting.
+
+    Returns the group dict, or None (with a printed note) when the file has
+    no such group or no trajectory in it — e.g. a PS-only streaming file
+    pointed at by external_h5.rk45 — so the overlay is skipped instead of
+    the whole post-processing crashing.
+    """
+    ext = load_fn(path, groups=(group,))
+    g = ext.get(group)
+    if g is None or "y" not in g or g["y"] is None:
+        print(f"  Note: external_h5.{group} file has no '{group}' trajectory "
+              f"({path}); {group} overlay skipped.")
+        return None
+    return g
+
+
 def log_spaced_indices(n, max_points):
     """Sorted global indices sampled ~uniformly in log(index).
 
@@ -325,9 +342,9 @@ def compute_ke_errors(
             ps_order_ext = ext_ps.attrs.get("max_ps", None)
         ke_ext_ps = (t_eval_ps_ext, rel_drift_ps_ext, ps_order_ext)
 
-    if USE_EXTERNAL_H5_rk4:
-        external_rk4 = load_results_h5_func(external_h5_rk4, groups=("rk4",))
-        ext_rk4 = external_rk4["rk4"]
+    ext_rk4 = (_external_group(load_results_h5_func, external_h5_rk4, "rk4")
+               if USE_EXTERNAL_H5_rk4 else None)
+    if ext_rk4 is not None:
         y_rk4_ext = ext_rk4["y"]
         if "t" in ext_rk4 and ext_rk4["t"] is not None:
             t_eval_rk4_ext = ext_rk4["t"]
@@ -344,9 +361,9 @@ def compute_ke_errors(
         rel_drift_rk4_ext = np.abs(E_rk4_ext - E_rk4_ext[0]) / E_rk4_ext[0]
         ke_ext_rk4 = (t_eval_rk4_ext, rel_drift_rk4_ext)
 
-    if USE_EXTERNAL_H5_rk45:
-        externalb = load_results_h5_func(external_h5_rk45, groups=("rk45",))
-        ext_rk45 = externalb["rk45"]
+    ext_rk45 = (_external_group(load_results_h5_func, external_h5_rk45, "rk45")
+                if USE_EXTERNAL_H5_rk45 else None)
+    if ext_rk45 is not None:
         y_rk45_ext = ext_rk45["y"]
         if y_rk45_ext.shape[0] != 6:
             y_rk45_ext = y_rk45_ext.T
@@ -623,9 +640,9 @@ def compute_pphi_errors(
             ps_order_ext = ext_ps.attrs.get("max_ps", None)
         pphi_ext_ps = (t_eval_ps_ext, rel_pphi_ps_ext, ps_order_ext)
 
-    if USE_EXTERNAL_H5_rk4:
-        external_rk4 = load_results_h5_func(external_h5_rk4, groups=("rk4",))
-        ext_rk4 = external_rk4["rk4"]
+    ext_rk4 = (_external_group(load_results_h5_func, external_h5_rk4, "rk4")
+               if USE_EXTERNAL_H5_rk4 else None)
+    if ext_rk4 is not None:
         y_rk4_ext = np.asarray(ext_rk4["y"])
         if "t" in ext_rk4 and ext_rk4["t"] is not None:
             t_eval_rk4_ext = np.asarray(ext_rk4["t"])
@@ -642,9 +659,9 @@ def compute_pphi_errors(
         rel_pphi_rk4_ext = _pphi_drift(float(pp_ext[0]), pp_ext)
         pphi_ext_rk4 = (t_eval_rk4_ext, rel_pphi_rk4_ext)
 
-    if USE_EXTERNAL_H5_rk45:
-        externalb = load_results_h5_func(external_h5_rk45, groups=("rk45",))
-        ext_rk45 = externalb["rk45"]
+    ext_rk45 = (_external_group(load_results_h5_func, external_h5_rk45, "rk45")
+                if USE_EXTERNAL_H5_rk45 else None)
+    if ext_rk45 is not None:
         y_rk45_ext = np.asarray(ext_rk45["y"])
         if y_rk45_ext.shape[0] != 6:
             y_rk45_ext = y_rk45_ext.T
@@ -995,9 +1012,9 @@ def compute_mu_errors(
             ps_order_ext = ext_ps.attrs.get("max_ps", None)
         mu_ext_ps = (t_eval_ps_ext, rel_mu_ps_ext, ps_order_ext)
 
-    if USE_EXTERNAL_H5_rk4:
-        external_rk4 = load_results_h5_func(external_h5_rk4, groups=("rk4",))
-        ext_rk4 = external_rk4["rk4"]
+    ext_rk4 = (_external_group(load_results_h5_func, external_h5_rk4, "rk4")
+               if USE_EXTERNAL_H5_rk4 else None)
+    if ext_rk4 is not None:
         y_rk4_ext = np.asarray(ext_rk4["y"])
         if "t" in ext_rk4 and ext_rk4["t"] is not None:
             t_eval_rk4_ext = np.asarray(ext_rk4["t"])
@@ -1014,9 +1031,9 @@ def compute_mu_errors(
         rel_mu_rk4_ext = _mu_drift(float(mu_ext[0]), mu_ext)
         mu_ext_rk4 = (t_eval_rk4_ext, rel_mu_rk4_ext)
 
-    if USE_EXTERNAL_H5_rk45:
-        externalb = load_results_h5_func(external_h5_rk45, groups=("rk45",))
-        ext_rk45 = externalb["rk45"]
+    ext_rk45 = (_external_group(load_results_h5_func, external_h5_rk45, "rk45")
+                if USE_EXTERNAL_H5_rk45 else None)
+    if ext_rk45 is not None:
         y_rk45_ext = np.asarray(ext_rk45["y"])
         if y_rk45_ext.shape[0] != 6:
             y_rk45_ext = y_rk45_ext.T
