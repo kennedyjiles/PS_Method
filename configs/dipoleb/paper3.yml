@@ -1,13 +1,11 @@
 # ===================================================================
 # Paper 3 — paper1 physics with mismatched step sizes
 #           PS takes huge steps, RK4 takes tiny steps
+#           RKG intermediate. RK45 at looser tol.
 # ===================================================================
 
 energy_eV: 100.0e3
 pitch_deg: 30.0
-phi_deg: 90.0
-
-ps_orders: 40
 
 solvers:
   rk4: true
@@ -19,15 +17,14 @@ gyroperiods: 1e5
 round_decimals: 2        
 
 steps_per_gyro:
-  ps: 10
+  ps: 14.5
   rk4: 1570.8
   rkg: 100
 
-rtol_rk45: 1.0e-13         # RK45 relative tolerance
+rtol_rk45: 1.0e-13        # RK45 relative tolerance
 atol_rk45: 1.0e-15        # RK45 absolute tolerance
 
-# norm_time set explicitly (not from gyroperiods × T_gyro)
-# Original expression: 6206.0 * 4 / 0.00033464094804535314
+# Original expression: 6206.0 * 4 / 0.00033464094804535314 (tau)
 norm_time_override: 74180999.50110008
 
 window_time: 6209.0

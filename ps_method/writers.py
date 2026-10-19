@@ -424,6 +424,20 @@ def summarize(err):
     }
 
 
+def summarize_value_to_file(label, stats, f):
+    """Write an invariant's tail VALUE statistics; stats = (mean, min, max)."""
+    mean, lo, hi = (float(v) for v in stats)
+    f.write(f"  {label:<8}: mean = {mean:.6e}, min = {lo:.6e}, max = {hi:.6e}\n")
+
+
+def pphi_from_state(x, y, z, vx, vy, charge_sign):
+    """Canonical angular momentum P_phi = rho*v_phi - charge_sign*rho^2/r^3
+    (normalised units, same expression as the energy analysis)."""
+    rho2 = x * x + y * y
+    r = np.sqrt(rho2 + z * z)
+    return (x * vy - y * vx) - charge_sign * rho2 / (r * r * r)
+
+
 def summarize_to_file(label, err, f):
     """Compute summarize(err) and write a formatted line to file handle *f*."""
     s = summarize(err)
@@ -868,11 +882,17 @@ def summary_txt_dipoleb(
 
         # --- Mu tail errors ---
         f.write("\n=== |delta mu|/mu0 (tail average) ===\n")
+        # Tail VALUES of the invariants (not errors), collected alongside the
+        # error statistics and written in their own blocks below.
+        mu_vals, pphi_vals = {}, {}
 
         if USE_RK45 and mu0_rk45 is not None:
             y_tail = y_rk45_common[:, j0_rk45:]
             mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
+            mu_vals["RK45"] = (mu_tail.mean(), mu_tail.min(), mu_tail.max())
+            _pp = pphi_from_state(y_tail[0], y_tail[1], y_tail[2], y_tail[3], y_tail[4], charge_sign)
+            pphi_vals["RK45"] = (_pp.mean(), _pp.min(), _pp.max()); del _pp
             del y_tail, mu_tail
             gc.collect()
 
@@ -880,6 +900,9 @@ def summary_txt_dipoleb(
             y_tail = solution_rk4[:, j0_rk4:]
             mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
+            mu_vals["RK4"] = (mu_tail.mean(), mu_tail.min(), mu_tail.max())
+            _pp = pphi_from_state(y_tail[0], y_tail[1], y_tail[2], y_tail[3], y_tail[4], charge_sign)
+            pphi_vals["RK4"] = (_pp.mean(), _pp.min(), _pp.max()); del _pp
             del y_tail, mu_tail
             gc.collect()
 
@@ -896,6 +919,9 @@ def summary_txt_dipoleb(
 
             mu_tail = compute_mu_rk(state_tail)
             summarize_to_file("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
+            mu_vals["RKG"] = (mu_tail.mean(), mu_tail.min(), mu_tail.max())
+            _pp = pphi_from_state(r_tail[:, 0], r_tail[:, 1], r_tail[:, 2], v_tail[:, 0], v_tail[:, 1], charge_sign)
+            pphi_vals["RKG"] = (_pp.mean(), _pp.min(), _pp.max()); del _pp
             del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
             gc.collect()
 
@@ -916,8 +942,24 @@ def summary_txt_dipoleb(
 
             mu_tail = compute_mu_ps(y_tail)
             summarize_to_file("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
+            mu_vals["PS"] = (mu_tail.mean(), mu_tail.min(), mu_tail.max())
+            _pp = pphi_from_state(y_tail[0], y_tail[1], y_tail[2], y_tail[3], y_tail[4], charge_sign)
+            pphi_vals["PS"] = (_pp.mean(), _pp.min(), _pp.max()); del _pp
             del y_tail, mu_tail
             gc.collect()
+
+        # --- Invariant VALUES over the same tail window (normalised units) ---
+        # mu = v_perp^2 / (2|B|);  P_phi = rho v_phi - charge_sign rho^2 / r^3.
+        if mu_vals:
+            f.write("\n=== mu (tail average, normalised units) ===\n")
+            for lab in ("RK45", "RK4", "RKG", "PS"):
+                if lab in mu_vals:
+                    summarize_value_to_file(lab, mu_vals[lab], f)
+        if pphi_vals:
+            f.write("\n=== P_phi (tail average, normalised units) ===\n")
+            for lab in ("RK45", "RK4", "RKG", "PS"):
+                if lab in pphi_vals:
+                    summarize_value_to_file(lab, pphi_vals[lab], f)
 
         if mu_max_run is not None:
             f.write("\n=== |delta mu|/mu0 (whole run) ===\n")
