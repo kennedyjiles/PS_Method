@@ -26,6 +26,7 @@ Slicing (single-solution):
     slice_solution_dipoleb       — extract a time window from one solution array (dipoleb)
 
 Slicing (multi-solver orchestration, dipoleb only):
+    read_rows_decimated          — decimated multi-row h5 read in one sequential pass
     prepare_slice_dipoleb        — calls slice_solution_dipoleb for each enabled solver,
                                    reads PS data from h5 cache, returns one dict ready to plot
 
@@ -146,9 +147,6 @@ def rk4_fixed_step_inplace(func, d0, dt, steps, charge_sign):
             d_out[i, j] = y[j] + sdt * acc
     return d_out.T
 
-# =======================================================
-# ============== Misc Assists for Plotting ==============
-# =======================================================
 # ================================================================
 # ========= Dormand–Prince RK5(4) adaptive, Numba (RK45) =========
 # ================================================================
@@ -159,9 +157,8 @@ def rk4_fixed_step_inplace(func, d0, dt, steps, charge_sign):
 # Hairer–Nørsett–Wanner initial-step heuristic, and the same quartic dense
 # output (Q = Kᵀ·P) evaluated at the requested output times. Given identical
 # inputs it therefore takes the same step sequence as scipy's solve_ivp and
-# returns the same nfev — the ONLY difference is that it is compiled, so the
-# wall-clock comparison with PS / RK4 / RKG / Boris is like-for-like.
-# Referee request (R2 #2): "is RK45 slow because of SciPy?" — this answers it.
+# returns the same nfev — the only difference is that it is compiled, so the
+# wall-clock comparison with PS / RK4 / RKG is like-for-like.
 
 _DP_C = np.array([0.0, 1/5, 3/10, 4/5, 8/9, 1.0])
 _DP_A = np.array([
@@ -352,6 +349,10 @@ def rk45_numba(func, y0, t_bound, t_eval, rtol, atol, charge_sign):
     return y_out, nfev, nsteps, nrej
 
 
+# =======================================================
+# ============== Misc Assists for Plotting ==============
+# =======================================================
+
 def f64(arr):
     """Convert array to float64 (needed when plotting float128 data)."""
     return np.asarray(arr, dtype=np.float64)
@@ -421,19 +422,12 @@ def data_to_fig(x, y, ax, fig):
 
 def place_endpoint_labels(fig, ax, endpoints, fontsize=11, min_gap=0.025,
                           x_pad=0.005):
-    """Place non-overlapping labels just past the END OF EACH CURVE.
+    """Place non-overlapping labels just past the end of each curve.
 
-    Each label is positioned at its own curve's final data x (converted to
-    figure coords), nudged right by ``x_pad``. When curves have different
-    lengths the label tracks where that curve actually stops — so a short
-    RK45 run is labelled near τ/T≈1e5 while a long PS run is labelled out near
-    τ/T≈1e9, instead of all labels piling up at the axis edge. When every
-    curve runs the full length their endpoints coincide at the right edge, so
-    this degrades to the old "stacked at the edge" look automatically.
-
-    The vertical de-overlap (``min_gap``) still runs, so labels that would
-    collide in y get spread apart — which is what keeps the all-at-edge case
-    readable.
+    Each label sits at its own curve's final data x (in figure coords),
+    nudged right by ``x_pad``, so curves of different lengths are labelled
+    where they stop. Labels that would collide in y are spread apart by at
+    least ``min_gap``.
 
     Parameters
     ----------

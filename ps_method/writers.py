@@ -9,7 +9,21 @@ Shared utilities:
     build_filename     — assemble a figure/output path from stem + tag
     summarize          — mean / max / rms statistics for an error array
     summarize_to_file  — write summarize() output to an open file handle
+    summarize_value_to_file — write (mean, min, max) of an invariant's tail values
+    pphi_from_state    — canonical angular momentum from a state row
     write_dict         — pretty-print a nested dict to a file handle
+
+Segmented checkpoints / VDS (dipoleb PS runs, see dipoleb._run_ps_segments):
+    seg_path_for                  — <hash>_segNNN.h5 path
+    find_committed_segments       — all cleanly-committed segments
+    contiguous_committed_segments — unbroken 0,1,2,… prefix (resume / stitch set)
+    latest_committed_segment      — highest local segment (offload resume)
+    clear_building_segments       — remove stray .building temps
+    build_vds                     — stitch segments into a virtual <hash>_full.h5
+    synthesize_full_summary       — rebuild summary_json on a VDS built outside the driver
+    missing_vds_sources           — segment files a VDS references but cannot reach
+    vds_has_missing_sources       — bool wrapper used by the cache check
+    check_vds_readable            — raise with the fix if a VDS can't reach its segments
 
 Field-specific run-param builders (saved as params_json in h5 for manual-
 mode identity recovery — not used for cache hashing; that's physics_hash):
@@ -63,9 +77,7 @@ def _to_serializable(x):
         return x.tolist()
     if isinstance(x, np.bool_):
         return bool(x)
-    # Native JSON types pass through unchanged. get_run_params_constb/hyperb
-    # call this directly on plain Python floats (not via json.dumps), so
-    # without this the constb/hyperb drivers fail before running anything.
+    # Native JSON types pass through (get_run_params_* call this directly).
     if x is None or isinstance(x, (bool, int, float, str)):
         return x
     # json.dumps only calls `default` for objects it cannot serialise, so
@@ -109,7 +121,7 @@ def stem_from_h5(h5_path):
 
 
 # ---------------------------------------------------------------------------
-# Segmented-checkpoint runs (see run_ps_streaming_with_decimation + driver)
+# Segmented-checkpoint runs (driven by dipoleb._run_ps_segments)
 # ---------------------------------------------------------------------------
 # A long run is split into fixed-size segments, each written to its own
 # cleanly-closed <hash>_segNNN.h5 (via a .building temp + atomic rename), then
@@ -185,11 +197,8 @@ def vds_has_missing_sources(h5_path):
     NaNs downstream). Callers use this to refuse to trust such a file. Returns
     False for non-VDS files, unreadable files, or fully-intact VDSes.
 
-    Delegates to missing_vds_sources so that the staleness decision uses the
-    same search order HDF5 itself uses ($HDF5_VDS_PREFIX, the file's folder,
-    the cwd). A separate folder-only check here used to declare a VDS stale
-    even when HDF5_VDS_PREFIX made every source readable, which sent the
-    driver into a full re-simulation.
+    Delegates to missing_vds_sources so the staleness decision uses the same
+    search order HDF5 itself uses ($HDF5_VDS_PREFIX, the file's folder, cwd).
     """
     if not os.path.exists(h5_path):
         return False
@@ -234,7 +243,7 @@ def synthesize_full_summary(hash_str, output_folder, full_path=None):
     for _, path in segs:
         with h5py.File(path, "r") as f:
             if "summary_json" not in f.attrs:
-                return False  # pre-2026-07 segments — can't synthesize
+                return False  # segments without per-segment summaries
             per_seg.append(json.loads(f.attrs["summary_json"]))
 
     s = json.loads(json.dumps(per_seg[0]))  # deep copy
@@ -577,9 +586,8 @@ def load_results_h5_dipoleb(h5_path, groups=None):
     """Load solver arrays and metadata from an HDF5 cache file.
 
     Note: dipoleb's save writes ``summary_json``, not ``params_json``,
-    so no params dict is returned. The cache filename is derived from
-    a hash of the run-params dict in the driver, not from anything in
-    the file itself, so consumers don't need it.
+    so no params dict is returned; the cache filename comes from
+    physics_hash(cfg) in the driver, not from the file.
 
     groups : iterable of group names to actually read into memory, or None
         for all of ("ps", "rk4", "rk45", "rkg"). This loads whole datasets,
@@ -814,8 +822,7 @@ def summary_txt_dipoleb(
     # case only the tail-window figures above are reported.
     mu_max_run=None,
     # Charge sign for the RKG canonical -> kinetic velocity conversion
-    # (v = p - charge_sign * A). Defaults to +1 (proton); electron+RKG runs
-    # previously got the wrong mu tail here.
+    # (v = p - charge_sign * A).
     charge_sign=1,
 ):
     """Write the dipoleb summary text file, including tail-averaged energy
@@ -866,10 +873,9 @@ def summary_txt_dipoleb(
             summarize_to_file("PS", rel_drift_ps[j0_ps:], f)
 
         # --- P_phi (canonical angular momentum) tail errors ---
-        # Same tail-window indices as the energy block. For PS this relies on
+        # Same tail-window indices as the energy block; for PS this relies on
         # compute_ps_invariants_fused aligning all three uniform series on the
-        # global index (true since 2026-10-02; before that the P_phi/mu arrays
-        # could be longer than KE and j0_ps landed far too early).
+        # global index.
         f.write("\n=== |delta P_phi|/|P_phi_0| (tail average) ===\n")
         if USE_RK45 and rel_pphi_rk45 is not None:
             summarize_to_file("RK45", rel_pphi_rk45[j0_rk45:], f)
