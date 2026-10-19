@@ -296,7 +296,7 @@ def compute_ke_errors(
     USE_EXTERNAL_H5_rk45=False, external_h5_rk45=None,
     USE_EXTERNAL_H5_rkg=False,  external_h5_rkg=None,
     # Needed for RKG Hamiltonian energy (canonical p → v requires charge sign:
-    # v = p - charge_sign * A, matching hamiltonian_rhs)
+    # v = p - charge_sign * A, matching hamiltonian_rhs_inplace)
     vector_potential_func=None,
     charge_sign=1,
     # For loading external rk4/rk45 files
@@ -475,7 +475,7 @@ def compute_ke_errors(
         r_rkg = solution_rkg[:, 0:3]
         p_rkg = solution_rkg[:, 3:6]
         A_rkg = _vector_potential_batch(r_rkg)
-        # v = p - charge_sign * A (matches hamiltonian_rhs)
+        # v = p - charge_sign * A (matches hamiltonian_rhs_inplace)
         v_rkg = p_rkg - charge_sign * A_rkg
         E_rkg = ul.npfloat(0.5) * np.sum(v_rkg**2, axis=1, dtype=ul.npfloat)
         if rkg_y_initial is not None:
@@ -901,7 +901,7 @@ def compute_pphi_errors(
 def _mu_from_xyz_v(x, y, z, vx, vy, vz):
     """Normalized magnetic moment mu = v_perp^2 / (2|B|) from state arrays.
 
-    B is recomputed from position (same formulas as lorentz_force), so the
+    B is recomputed from position (same formulas as lorentz_force_inplace), so the
     reader stays h5-layout-agnostic — works whether the cache stores the
     17-row full layout or the 9-row compact one (rows 0-5 are always state).
     Uses the identity |v_perp|^2 = |v|^2 - (v.B)^2/B^2 (vectorized version of

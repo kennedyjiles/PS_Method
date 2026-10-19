@@ -1010,8 +1010,8 @@ def main(cfg_path, replot=False):
 
                 A0 = dp.vector_potential(r0)
                 # Canonical momentum p = v + charge_sign*A, the inverse of the
-                # v = p - charge_sign*A in hamiltonian_rhs. Plain v + A was wrong
-                # for electrons.
+                # v = p - charge_sign*A in hamiltonian_rhs_inplace. Plain v + A
+                # was wrong for electrons.
                 p0 = v_tau_vec + charge_sign * A0
                 y0 = np.concatenate((r0, p0))
 
@@ -1030,7 +1030,7 @@ def main(cfg_path, replot=False):
                 )
                 end_time_rkg = time.time()
                 # Fixed-point iteration diagnostics for the implicit RKG stages
-                # (tol 1e-15, cap 100 sweeps; see dp.rkgl4_hamiltonian_step_fp).
+                # (tol 1e-15, cap 100 sweeps; see dp._rkgl4_step_fp_inplace).
                 # The tol must stay well below the truncation error or the
                 # residual drifts the energy.
                 print(f"  RKG fixed-point: avg {rkg_avg_iters:.2f} sweeps/step, "

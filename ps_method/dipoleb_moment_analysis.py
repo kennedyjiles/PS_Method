@@ -187,7 +187,7 @@ def compute_mu_deviation_rk(
             r0 = solution[0, 0:3]
             p0 = solution[0, 3:6]
         A0 = dp.vector_potential(r0)
-        # v = p - charge_sign * A (matches hamiltonian_rhs in dipoleb_physics)
+        # v = p - charge_sign * A (matches hamiltonian_rhs_inplace in dipoleb_physics)
         v0 = p0 - charge_sign * A0
         state0 = np.hstack((r0, v0))[None, :]
         mu0 = compute_mu_rk(state0)[0]

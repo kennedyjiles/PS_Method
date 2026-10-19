@@ -205,7 +205,7 @@ def compute_adiabaticity(x_arr, y_arr, z_arr, vx_arr, vy_arr, vz_arr):
     r5 = r**5
 
     # Dipole B field components in normalized units (downward moment / upward B at equator)
-    # Sign convention matches the simulator (lorentz_force): Bz = +1/r^3 at equator
+    # Sign convention matches the simulator (lorentz_force_inplace): Bz = +1/r^3 at equator
     Bx = -3.0 * x_arr * z_arr / r5
     By = -3.0 * y_arr * z_arr / r5
     Bz = -(3.0 * z_arr**2 - r**2) / r5
