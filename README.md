@@ -5,7 +5,8 @@
 This repository contains the simulation codes and analysis tools that compare the
 **Parker–Sochacki power series (PS) integration method** against several
 **Runge–Kutta-based solvers** — fixed-step fourth-order (RK4), adaptive Dormand–Prince
-(RK45), and the symplectic two-stage Gauss–Legendre Runge–Kutta (RKG) — for
+(RK45; a compiled, step-for-step port of SciPy's `RK45`), and the symplectic two-stage
+Gauss–Legendre Runge–Kutta (RKG) — for
 charged-particle motion in static magnetic fields. Across three field configurations of
 increasing complexity, the PS method achieves **4–13 orders of magnitude** better
 kinetic-energy conservation than the RK methods over long integrations.
@@ -68,18 +69,19 @@ at the end.
 │   ├── dipoleb_physics.py       #   PS dipole integrator (fixed step, streaming) + RKG
 │   ├── dipoleb_adaptive.py      #   adaptive-step PS dipole integrator (streaming)
 │   ├── constb_hyperb_energy_analysis.py  # KE drift (constb/hyperb)
-│   ├── dipoleb_energy_analysis.py        # KE + P_phi drift (dipole, chunked)
+│   ├── dipoleb_energy_analysis.py        # KE, P_phi and μ drift (dipole, one chunked pass)
 │   ├── dipoleb_moment_analysis.py        # magnetic-moment μ diagnostics (dipole)
 │   ├── dipoleb_bouncedrift_analysis.py   # bounce/drift period detection (dipole)
 │   ├── dipoleb_dragt_analysis.py         # Dragt (1965) diagnostics — RESEARCH
 │   ├── constb_hyperb_plots.py / dipoleb_plots.py   # plotting
-│   ├── utils.py                 #   shared numerical + plotting utilities, RK4
+│   ├── utils.py                 #   shared numerical + plotting utilities, RK4 + compiled RK45
 │   └── writers.py               #   HDF5 I/O, run hashing, summaries, master CSV
 │
 ├── scripts/                     # Stand-alone tools (not imported by the drivers)
 │   ├── batch_runner_eandp.py    #   PAPER: proton/electron method-comparison sweeps
 │   ├── batch_runner_walt.py     #   PAPER: electron/proton bounce–drift period sweeps
 │   ├── batch_runner_fluxmap.py  #   RESEARCH: dwell-occupancy parameter sweeps
+│   ├── batch_runner_trappedplots.py  # RESEARCH: trapped-particle L sweeps with phased refinement
 │   ├── dragt.py / si_to_dragt.py            # RESEARCH: Dragt-unit conversions
 │   ├── test_dragt_roundtrip.py / test_dragt_thorough.py  # Dragt-unit validation tests
 │   ├── inspect_hdf5.py / trim_h5.py / benchmark_compression.py  # h5 utilities
@@ -88,6 +90,7 @@ at the end.
 │   └── plots/                   #   post-processing figure scripts
 │       ├── scatterplot.py / build_summary_results.py  # method-comparison plots (paper)
 │       ├── trappedbands.py / flux_map_builder.py / launch_fate_map.py  # RESEARCH
+│       ├── epsilon_map.py / fma_map.py                # RESEARCH: (L, E) μ-verdict maps, frequency maps
 │       ├── waltplot.py / timestepplots.py             # supplementary plots
 │       ├── animate_merged.py                          # trajectory animation (animate.py is legacy)
 │       └── animate_section.py / animate_mu_kicks.py   # explainer videos (section_demo runs)
@@ -180,10 +183,12 @@ inline documentation.
 
 ### Replotting from cached data
 
-Once a run has written its `.h5`, you can regenerate plots without re-integrating:
+Once a run has written its `.h5`, you can regenerate plots without re-integrating. Every
+run folder holds a provenance copy of its config; passing any yml that lives under
+`data/` replots that run:
 
 ```bash
-python run.py data/dipoleb/demo/demo.yml          # data/ path auto-triggers replot mode
+python run.py data/dipoleb/demo/<hash>/demo.yml   # yml under data/ → replot mode
 python run.py configs/dipoleb/manual_template.yml --replot
 ```
 
@@ -281,11 +286,14 @@ On first run a `data/` directory is created. Outputs are organized by field and 
 data/
 └── <field>/                     # constb | hyperb | dipoleb
     └── <config-or-group>/       # demo, paper1, protons, electrons, fluxmap_10mev, ...
-        ├── <hash>_*.png         # trajectory, slice, and error plots
-        ├── <hash>_summary.txt   # initial conditions, per-method runtimes, error stats
         ├── master_simulation_log.csv   # (dipole) parameters + Dragt diagnostics per run
+        ├── <hash>/                     # one folder per run
+        │   ├── figures/<hash>_*.png    # trajectory, slice, and error plots
+        │   ├── <hash>_summary.txt      # initial conditions, per-method runtimes, error stats
+        │   └── <config>.yml            # provenance copy of the config (replot with it)
         └── _rawdata/
-            └── <hash>_full.h5   # raw streamed trajectory (if write_data: true)
+            ├── <hash>_full.h5          # streamed trajectory (a virtual dataset when segmented)
+            └── <hash>_segNNN.h5        # checkpoint segments (dipole, ps_segment_gyroperiods > 0)
 ```
 
 Each run's identity is a hash of its physics parameters, so re-running with the same
@@ -316,13 +324,13 @@ python scripts/inspect_hdf5.py data/dipoleb/demo/_rawdata/<hash>_full.h5
 ## Precision and Truncation Control
 
 - **Floating point.** Runs default to `float64`. Set `use_float128: true` in a config to
-  engage extended precision (`float128` / `longdouble`) for the `constb` and `hyperb`
-  cases — useful only for studying the error floor, and much slower. **The dipole
-  integrator runs in `float64` only.** (`float128` requires platform support; Windows
-  typically maps it to `longdouble`.)
+  engage extended precision (`float128` / `longdouble`) — useful only for studying the
+  error floor, and much slower. For the dipole it also disables the Numba JIT and the RKG
+  solver, so it is practical only for short runs. (`float128` requires platform support;
+  Windows typically maps it to `longdouble`.)
 - **Adaptive PS order.** The PS series is truncated dynamically: each step adds orders
-  until the largest relative term contribution falls below a tolerance (machine epsilon by
-  default, or a user value). This gives efficient convergence without sacrificing accuracy.
+  until the largest relative term contribution falls below machine epsilon for the working
+  precision. This gives efficient convergence without sacrificing accuracy.
 
 ---
 
