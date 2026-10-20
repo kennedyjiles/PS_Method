@@ -8,7 +8,7 @@ dipoleb_moment_analysis.py — Magnetic moment diagnostics for dipole trajectori
 
 Internal helpers:
     _gyro_window_indices          — index range for a gyro-window slice
-    _equatorial_crossing_indices  — sample indices where z changes sign
+    _equatorial_crossing_indices  — sample indices where z changes sign or is exactly 0
 """
 
 import numpy as np
@@ -20,15 +20,11 @@ from . import dipoleb_physics as dp
 
 @ul.maybe_njit
 def compute_mu_ps(solution_ps):
-    # Uses the identity |v_perp|² = |v|² − (v·B)²/B² to avoid per-step
-    # 3-vector allocations. Numerically equivalent to the v_par/v_perp
-    # decomposition; saves N small allocations on long runs.
-    #
-    # Returns μ in NORMALIZED units: v_perp² / (2|B|), with v and B
-    # already normalized by the dipoleb non-dimensionalization. The mass
-    # factor that would convert this to SI J/T is left out — every
-    # consumer uses μ as a baseline-relative drift, so the constant
-    # cancels in (μ - μ₀)/μ₀.
+    """mu = v_perp^2 / (2|B|) per column of a 17-row PS state (B from rows 14-16).
+
+    Uses |v_perp|^2 = |v|^2 - (v.B)^2/B^2. Normalised units, no mass factor:
+    every consumer takes (mu - mu0)/mu0, so the constant cancels.
+    """
     x = solution_ps[0]
     vx, vy, vz = solution_ps[3], solution_ps[4], solution_ps[5]
     Bx, By, Bz = solution_ps[14], solution_ps[15], solution_ps[16]
@@ -47,10 +43,11 @@ def compute_mu_ps(solution_ps):
 
 @ul.maybe_njit
 def compute_mu_rk(solution_rk):
-    # Same scalar identity as compute_mu_ps; B is recomputed from position
-    # (RK state doesn't carry it). Sign convention matches the simulator
-    # (downward dipole moment, upward B at equator). μ is in normalized
-    # units (see compute_mu_ps note).
+    """mu per row of an (N, 6) pos/vel state; B is recomputed from position.
+
+    Same identity and units as compute_mu_ps; B sign convention matches
+    lorentz_force_inplace (upward B at the equator).
+    """
     mu = np.zeros(len(solution_rk))
     for i in range(len(solution_rk)):
         x, y, z = solution_rk[i, 0:3]
@@ -163,23 +160,26 @@ def compute_mu_deviation_rk(
         Conversion from normalized time to gyroperiods (1/T_gyro).
     solver_type : str
         "rk4", "rk45", or "rkg". Controls data layout and mu computation.
+    y_initial : ndarray, optional
+        Source initial condition; mu0 is taken from it (rather than the first
+        sample) so a trimmed file keeps the true baseline.
+    charge_sign : float
+        Used by the rkg branch to convert canonical momentum to velocity.
 
     Returns
     -------
     dict with keys:
         "t"        : 1D time array in gyroperiods
         "mudrift"  : 1D relative mu deviation array
-        "mu0"      : float, initial magnetic moment (normalized units —
-                     see compute_mu_rk doc).
-        "mu_ratio" : 1D mu/mu0 (instantaneous normalized moment, for shape plot)
+        "mu0"      : float, initial magnetic moment (normalised units)
+        "mu_ratio" : 1D mu/mu0 (instantaneous moment, for the shape plot)
+        "eq_t", "eq_mudrift", "eq_mu_ratio" : the same at equatorial crossings
     """
     window_steps = int(round(n_gyro * n_steps_per_gyro))
     i0, i1 = _gyro_window_indices(gyro_window, steps, window_steps)
 
     if solver_type == "rkg":
-        # RKG stores (N, 6) with canonical momentum — need to convert to velocity.
-        # For trimmed files, y_initial preserves the source IC so mu0 is the
-        # true baseline rather than mu at trim-start.
+        # RKG stores (N, 6) with canonical momentum; convert to velocity.
         if y_initial is not None:
             r0 = y_initial[0:3]
             p0 = y_initial[3:6]
@@ -202,8 +202,7 @@ def compute_mu_deviation_rk(
         mu_win = compute_mu_rk(state_win)
         z_win = r_win[:, 2]
     else:
-        # RK4 and RK45: shape (6, N) — columns are time steps.
-        # See y_initial note above (rkg branch).
+        # RK4 and RK45: shape (6, N), columns are time steps.
         if y_initial is not None:
             state0_src = y_initial.reshape(1, 6)
         else:
@@ -274,6 +273,8 @@ def compute_mu_deviation_ps(
         "mudrift_plot"   : 1D decimated mu deviation for plotting
         "mu_ratio_plot"  : 1D decimated mu/mu0 for the shape plot
         "ps_order_label" : int, plot label (mean PS order) from h5 attrs
+        "eq_t", "eq_mudrift", "eq_mu_ratio" : values at equatorial crossings,
+                           taken at full window resolution
     """
     window_steps = n_gyro * n_steps_per_gyro
     i0_phys, i1_phys = _gyro_window_indices(gyro_window, steps_ps, window_steps)
@@ -325,9 +326,7 @@ def compute_mu_deviation_ps(
     t_store = np.arange(j0, j1, dtype=ul.npfloat) * dt_ps_store + t0_ps
     moment_stride = max(1, len(mu_ps) // max_plot_points)
     t_plot = t_store[::moment_stride] * time_factor
-    # .copy() so the decimated plot arrays don't stay views onto the full-window
-    # mudrift / mu_ratio arrays — mu_ratio has no other consumer and can be
-    # freed once the shape plot has its points.
+    # .copy() so the plot arrays aren't views keeping the full window alive.
     mudrift_plot = mudrift[::moment_stride].copy()
     mu_ratio_plot = mu_ratio[::moment_stride].copy()
 

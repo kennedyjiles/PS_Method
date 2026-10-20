@@ -1465,8 +1465,7 @@ def main(cfg_path, replot=False):
     _ke = ea.compute_ke_errors(
         T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
         ps_fused=_ps_fused,
-        USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
-        ps_decimate=ps_decimate, e0_ps=e0_ps,
+        USE_PS=USE_PS, ps_step=ps_step,
         USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
         rk4_y_initial=rk4_y_initial,
         USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
@@ -1529,8 +1528,7 @@ def main(cfg_path, replot=False):
         _pphi = ea.compute_pphi_errors(
             T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
             ps_fused=_ps_fused,
-            USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
-            ps_decimate=ps_decimate, ps_y_initial=initial_pos_vel,
+            USE_PS=USE_PS, ps_step=ps_step,
             USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
             rk4_y_initial=rk4_y_initial,
             USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,
@@ -1573,8 +1571,7 @@ def main(cfg_path, replot=False):
         _mue = ea.compute_mu_errors(
             T_gyro, n_ps=steps_ps, max_plot_points=max_plot_points_local,
             ps_fused=_ps_fused,
-            USE_PS=USE_PS, cache_path=cache_path, ps_step=ps_step,
-            ps_decimate=ps_decimate, ps_y_initial=initial_pos_vel,
+            USE_PS=USE_PS, ps_step=ps_step,
             USE_RK4=USE_RK4, solution_rk4=solution_rk4, rk4_step=rk4_step,
             rk4_y_initial=rk4_y_initial,
             USE_RKG=USE_RKG, solution_rkg=solution_rkg, rkg_step=rkg_step,

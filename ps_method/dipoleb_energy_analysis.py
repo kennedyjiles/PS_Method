@@ -1,14 +1,19 @@
 """
 Kinetic energy, P_phi, and mu conservation diagnostics for dipole trajectories.
 
+    compute_ps_invariants_fused  — one streaming pass over the PS VDS feeding all three
     compute_ke_errors            — KE errors for all enabled solvers
     compute_pphi_errors          — P_phi errors for all enabled solvers
     compute_mu_errors            — full-run mu errors for all enabled solvers
 
+The PS series come only from compute_ps_invariants_fused (passed in as
+``ps_fused``); the three error functions compute the RK solvers and the
+external-h5 overlays themselves.
+
 Internal helpers:
     _vector_potential_batch      — vectorized dipole A for an (N,3) position array
+    _external_group              — load one solver group from an external h5, or None
     log_spaced_indices           — log-spaced sample indices (plot-only decimation)
-    _compute_energy_ps_chunked   — KE error from chunked PS h5 (uniform + log sampling)
     _pphi_from_xyz_v             — canonical P_phi from position/velocity
     _pphi_drift                  — relative (or absolute) P_phi drift
     _mu_from_xyz_v               — normalized mu from position/velocity (B from position)
@@ -21,12 +26,9 @@ from . import utils as ul
 
 
 def _vector_potential_batch(R):
-    """Vectorized dipole vector potential for an (N, 3) array of positions.
+    """Vectorized dipole vector potential A = (y, -x, 0)/r^3 for an (N, 3) array.
 
-    A = (y/r³, -x/r³, 0). Equivalent to calling
-    dipoleb_physics.vector_potential row-by-row, but in one numpy pass — the
-    per-point Python loop was a major stall once a decimated RKG array reaches
-    millions of points.
+    Same result as dipoleb_physics.vector_potential row by row, in one numpy pass.
     """
     R = np.asarray(R)
     x = R[:, 0]; y = R[:, 1]; z = R[:, 2]
@@ -78,86 +80,6 @@ def log_spaced_indices(n, max_points):
     return np.unique(np.concatenate(([0], idx)))
 
 
-def _compute_energy_ps_chunked(
-    ps_y_h5,
-    e0_ps,
-    dt_ps_store,
-    chunk_cols=200000,
-    stride=1,
-    log_indices=None,
-    dtype=None,
-):
-    """
-    Compute |E - E_0|/E_0 from a chunked h5 PS dataset, decimated by `stride`.
-
-    Memory-efficient: reads h5 in chunks of `chunk_cols` columns at a time,
-    computes the relative KE drift for that chunk, and writes the
-    stride-aligned points into pre-allocated output arrays.
-
-    The uniform `stride` decimation is the canonical output used by the
-    summary tail statistics (so those numbers are unchanged). If `log_indices`
-    is given (a sorted index array from ``log_spaced_indices``), a SECOND
-    log-spaced sampling is collected in the SAME pass — used only for the plot
-    so the early decades are visible — and returned alongside.
-
-    Returns
-    -------
-    t_plot, drift_plot                      (when log_indices is None)
-    t_plot, drift_plot, t_log, drift_log    (when log_indices is given)
-        Uniform-strided and (optionally) log-spaced time / relative-drift.
-    """
-    if dtype is None:
-        dtype = ul.npfloat
-    n_store = ps_y_h5.shape[1]
-
-    # Pre-allocate uniform (canonical) output (upper bound on size)
-    n_points = (n_store + stride - 1) // stride
-    t_plot = np.empty(n_points, dtype=ul.npfloat)
-    drift_plot = np.empty(n_points, dtype=ul.npfloat)
-    k = 0
-
-    want_log = log_indices is not None
-    if want_log:
-        log_indices = np.asarray(log_indices, dtype=np.int64)
-        t_log = np.empty(len(log_indices), dtype=ul.npfloat)
-        drift_log = np.empty(len(log_indices), dtype=ul.npfloat)
-        kl = 0
-
-    for j0 in range(0, n_store, chunk_cols):
-        j1 = min(j0 + chunk_cols, n_store)
-        v = ps_y_h5[3:6, j0:j1].astype(dtype, copy=False)
-
-        E = 0.5 * np.sum(v * v, axis=0)
-        rel = np.abs(E - e0_ps) / e0_ps
-
-        # Vectorized stride decimation: pick global indices in [j0, j1) that are
-        # multiples of stride. Equivalent to the per-step `j_global % stride == 0`
-        # check but done in one numpy slice instead of a Python loop.
-        first_aligned = ((j0 + stride - 1) // stride) * stride
-        if first_aligned < j1:
-            aligned_global = np.arange(first_aligned, j1, stride)
-            n_pts = len(aligned_global)
-            t_plot[k:k+n_pts]    = aligned_global * dt_ps_store
-            drift_plot[k:k+n_pts] = rel[aligned_global - j0]
-            k += n_pts
-
-        # Log-spaced sampling for the plot (same chunk, no extra h5 read).
-        if want_log:
-            lo = np.searchsorted(log_indices, j0, side="left")
-            hi = np.searchsorted(log_indices, j1, side="left")
-            sel = log_indices[lo:hi]
-            n_l = len(sel)
-            if n_l:
-                t_log[kl:kl+n_l]     = sel * dt_ps_store
-                drift_log[kl:kl+n_l] = rel[sel - j0]
-                kl += n_l
-
-    if want_log:
-        return t_plot[:k], drift_plot[:k], t_log[:kl], drift_log[:kl]
-    return t_plot[:k], drift_plot[:k]
-
-
-
 # ------------------------------------------------------------------
 #  compute_ps_invariants_fused — ONE h5 pass for KE + P_phi + mu
 # ------------------------------------------------------------------
@@ -165,27 +87,15 @@ def compute_ps_invariants_fused(
     cache_path, e0_ps, ps_y_initial, ps_step, ps_decimate,
     max_plot_points, energy_stride, charge_sign, dtype=None,
 ):
-    """Stream the PS trajectory ONCE and derive all three invariant errors.
+    """Stream the PS trajectory once and derive the KE, P_phi and mu errors.
 
-    compute_ke_errors, compute_pphi_errors and compute_mu_errors each used to
-    open `cache_path` and walk the whole VDS themselves — three full passes
-    over the same bytes (measured: 7.7 + 7.9 + 8.5 s per cec255 segment, i.e.
-    ~18 h across 2715 segments, vs ~8 h fused). They all chunk identically and
-    differ only in the per-chunk kernel, so one read feeds all three.
+    Each quantity gets two series from the same pass: a uniform decimation
+    by ``energy_stride`` aligned on the global index (all three have the same
+    length and cadence, which the summary writer's shared tail index relies
+    on), and a log-spaced sampling for the log-log plots.
 
-    Decimation semantics are preserved EXACTLY as each function had them, so
-    every downstream number is unchanged:
-      - KE   uniform output is aligned on the GLOBAL index (as
-        _compute_energy_ps_chunked did).
-      - P_phi / mu uniform outputs are aligned on the GLOBAL index too
-        (since 2026-10-02). They used to restart the stride at each chunk
-        boundary, which only matched KE when chunk_cols % energy_stride == 0;
-        otherwise the arrays were longer than KE and the summary writer,
-        which reuses the KE tail index j0_ps for them, averaged over a far
-        longer window (7.9% of the run instead of 0.01% on the 20-year VDS).
-    Plots use the log-spaced series, which is global-indexed for all three.
-
-    Returns a dict of per-quantity dicts, or None if there is nothing to read.
+    Returns {"ke": {...}, "pphi": {...}, "mu": {...}} with keys
+    uniform, t_log, drift_log, and for pphi/mu also initial and ylabel.
     """
     if dtype is None:
         dtype = ul.npfloat
@@ -282,8 +192,8 @@ def compute_ps_invariants_fused(
 def compute_ke_errors(
     T_gyro, n_ps=None,
     max_plot_points=1_000_000,
-    # PS
-    USE_PS=False, cache_path=None, ps_step=None, ps_decimate=1, e0_ps=None,
+    # PS (series come from ps_fused; ps_step also sets the RK45 grid)
+    USE_PS=False, ps_step=None,
     # RK4
     USE_RK4=False, solution_rk4=None, rk4_step=None, rk4_y_initial=None,
     # RKG
@@ -305,8 +215,8 @@ def compute_ke_errors(
 ):
     """Compute KE relative error arrays for every enabled solver.
 
-    Note: rel_drift_ps is decimated by `energy_stride` (the chunked PS reader
-    decimates inline to save memory). rel_drift_rk4/rk45/rkg are full-length.
+    rel_drift_ps is the uniform decimation by `energy_stride` from ps_fused;
+    rel_drift_rk4/rk45/rkg are full-length.
 
     Returns a dict with keys:
         time_factor, energy_stride,
@@ -442,30 +352,17 @@ def compute_ke_errors(
         t_ext_rkg = np.concatenate(t_parts)
         ke_ext_rkg = (t_ext_rkg, rel_drift_ext_rkg)
 
-    # --- Current-run PS energy (chunked from h5) ---
-    # rel_drift_ps = UNIFORM decimation -> feeds the summary tail (unchanged).
-    # (t_ps_log, drift_ps_log) = LOG-spaced -> plot only, so the early decades
-    # of τ/T are visible. Both are collected in one h5 pass.
+    # --- Current-run PS (from the fused VDS pass) ---
+    # rel_drift_ps is the uniform decimation (summary tail); the log-spaced
+    # pair is plot-only so the early decades of τ/T are visible.
     rel_drift_ps = None
     t_ps_log = drift_ps_log = None
-    if USE_PS and ps_fused is not None:
-        # PS series already produced by compute_ps_invariants_fused — skip this
-        # function's own full pass over the VDS.
+    if USE_PS:
+        if ps_fused is None:
+            raise ValueError("USE_PS requires ps_fused from compute_ps_invariants_fused")
         rel_drift_ps = ps_fused["ke"]["uniform"]
         t_ps_log     = ps_fused["ke"]["t_log"]
         drift_ps_log = ps_fused["ke"]["drift_log"]
-    elif USE_PS:
-        with h5py.File(cache_path, "r") as ps_h5:
-            ps_y_h5 = ps_h5["ps"]["y"]
-            log_idx = log_spaced_indices(ps_y_h5.shape[1], max_plot_points)
-            _, rel_drift_ps, t_ps_log, drift_ps_log = _compute_energy_ps_chunked(
-                ps_y_h5=ps_y_h5,
-                e0_ps=e0_ps,
-                dt_ps_store=ps_step * (ps_decimate if ps_decimate > 1 else 1),
-                chunk_cols=max_plot_points,
-                stride=energy_stride,
-                log_indices=log_idx,
-            )
 
     # --- Current-run RKG (Hamiltonian) ---
     # For trimmed files, *_y_initial preserves the source IC so E0 reflects
@@ -564,8 +461,8 @@ def _pphi_drift(P_phi_initial, P_phi_array):
 def compute_pphi_errors(
     T_gyro, n_ps=None,
     max_plot_points=1_000_000,
-    # PS
-    USE_PS=False, cache_path=None, ps_step=None, ps_decimate=1, ps_y_initial=None,
+    # PS (series come from ps_fused; ps_step also sets the RK45 grid)
+    USE_PS=False, ps_step=None,
     # RK4
     USE_RK4=False, solution_rk4=None, rk4_step=None, rk4_y_initial=None,
     # RKG
@@ -599,8 +496,9 @@ def compute_pphi_errors(
         time_factor, energy_stride,
         rel_pphi_ps, rel_pphi_rk4, rel_pphi_rk45, rel_pphi_rkg,
         pphi_ps, pphi_rk4, pphi_rk45, pphi_rkg,   (plot-ready tuples or None)
-        P_phi_initial_ps, P_phi_initial_rk4, P_phi_initial_rk45, P_phi_initial_rkg
-        ylabel_ps, ylabel_rk4, ylabel_rk45, ylabel_rkg
+        pphi_ext_ps, pphi_ext_rk4, pphi_ext_rk45, pphi_ext_rkg,
+        P_phi_initial_ps, P_phi_initial_rk4, P_phi_initial_rk45, P_phi_initial_rkg,
+        ylabel
     """
     time_factor = 1.0 / T_gyro
 
@@ -738,60 +636,22 @@ def compute_pphi_errors(
         t_ext_rkg = np.concatenate(t_parts)
         pphi_ext_rkg = (t_ext_rkg, rel_pphi_rkg_ext)
 
-    # --- PS: chunked from h5 to keep memory bounded ---
-    # rel_pphi_ps = UNIFORM decimation -> summary tail (unchanged). The
-    # (t_pphi_log, drift_pphi_log) pair is LOG-spaced -> plot only, collected
-    # in the same h5 pass so the early decades of τ/T are visible.
+    # --- PS (from the fused VDS pass) ---
+    # rel_pphi_ps is the uniform decimation (summary tail); the log-spaced
+    # pair is plot-only so the early decades of τ/T are visible.
     rel_pphi_ps = None
     t_pphi_log = drift_pphi_log = None
     P_phi_initial_ps = None
     ylabel_ps = None
-    if USE_PS and ps_fused is not None:
+    if USE_PS:
+        if ps_fused is None:
+            raise ValueError("USE_PS requires ps_fused from compute_ps_invariants_fused")
         _f = ps_fused["pphi"]
         rel_pphi_ps      = _f["uniform"]
         t_pphi_log       = _f["t_log"]
         drift_pphi_log   = _f["drift_log"]
         P_phi_initial_ps = _f["initial"]
         ylabel_ps        = _f["ylabel"]
-    elif USE_PS:
-        y0 = ps_y_initial
-        rho0  = np.sqrt(y0[0]**2 + y0[1]**2)
-        r0    = np.sqrt(y0[0]**2 + y0[1]**2 + y0[2]**2)
-        vphi0 = (y0[0]*y0[4] - y0[1]*y0[3]) / rho0
-        P_phi_initial_ps = float((rho0 * vphi0) - charge_sign * (rho0**2 / r0**3))
-
-        chunk_cols = max_plot_points
-        dt_ps_store = ps_step * (ps_decimate if ps_decimate > 1 else 1)
-        with h5py.File(cache_path, "r") as h5:
-            ds = h5["ps"]["y"]
-            N = ds.shape[1]
-            log_idx = log_spaced_indices(N, max_plot_points)
-            err_dec = []
-            err_log = []
-            t_log = []
-            for i0 in range(0, N, chunk_cols):
-                i1 = min(i0 + chunk_cols, N)
-                ch = ds[:6, i0:i1]
-                pp = _pphi_from_xyz_v(ch[0], ch[1], ch[2], ch[3], ch[4], ch[5], charge_sign)
-                err = _pphi_drift(P_phi_initial_ps, pp)
-                # .copy() is REQUIRED: err[::stride] is a view that would pin the
-                # whole chunk's `err` array alive via .base, so del err frees
-                # nothing and memory grows unbounded over a large VDS (the KE path
-                # avoids this by writing into a pre-allocated buffer). Copy the
-                # tiny decimated slice so each chunk is released each iteration.
-                err_dec.append(err[::energy_stride].copy())    # uniform (summary)
-                lo = np.searchsorted(log_idx, i0, side="left")  # log (plot)
-                hi = np.searchsorted(log_idx, i1, side="left")
-                sel = log_idx[lo:hi]
-                if len(sel):
-                    err_log.append(err[sel - i0])
-                    t_log.append(sel)
-                del ch, pp, err
-        rel_pphi_ps = np.concatenate(err_dec)
-        drift_pphi_log = np.concatenate(err_log)
-        t_pphi_log = np.concatenate(t_log).astype(ul.npfloat) * dt_ps_store
-        ylabel_ps = (r"$|\Delta P_\phi|$" if P_phi_initial_ps == 0
-                     else r"$|\Delta P_\phi|/|P_{\phi,0}|$")
 
     # --- RK4 ---
     rel_pphi_rk4 = None; P_phi_initial_rk4 = None; ylabel_rk4 = None
@@ -857,7 +717,7 @@ def compute_pphi_errors(
     # --- Time arrays for non-PS solvers ---
     t_rk4  = (rk4_step  * np.arange(len(rel_pphi_rk4),  dtype=ul.npfloat)) if USE_RK4  else None
     t_rkg  = (rkg_step  * np.arange(len(rel_pphi_rkg),  dtype=ul.npfloat)) if USE_RKG  else None
-    # RK45 was stored at PS-step cadence in the existing code path
+    # RK45 output is on the PS grid
     t_rk45 = (ps_step   * np.arange(len(rel_pphi_rk45), dtype=ul.npfloat)) if USE_RK45 else None
 
     # --- Plot-ready tuples ---
@@ -934,8 +794,8 @@ def _mu_drift(mu_initial, mu_array):
 def compute_mu_errors(
     T_gyro, n_ps=None,
     max_plot_points=1_000_000,
-    # PS
-    USE_PS=False, cache_path=None, ps_step=None, ps_decimate=1, ps_y_initial=None,
+    # PS (series come from ps_fused; ps_step also sets the RK45 grid)
+    USE_PS=False, ps_step=None,
     # RK4
     USE_RK4=False, solution_rk4=None, rk4_step=None, rk4_y_initial=None,
     # RKG
@@ -1110,58 +970,22 @@ def compute_mu_errors(
         t_ext_rkg = np.concatenate(t_parts)
         mu_ext_rkg = (t_ext_rkg, rel_mu_rkg_ext)
 
-    # --- PS: chunked from h5 to keep memory bounded ---
-    # rel_mu_ps = UNIFORM decimation -> summary-style tail stats. The
-    # (t_mu_log, drift_mu_log) pair is LOG-spaced -> plot only, collected
-    # in the same h5 pass so the early decades of τ/T are visible.
+    # --- PS (from the fused VDS pass) ---
+    # rel_mu_ps is the uniform decimation (whole-run max and tail stats); the
+    # log-spaced pair is plot-only so the early decades of τ/T are visible.
     rel_mu_ps = None
     t_mu_log = drift_mu_log = None
     mu_initial_ps = None
     ylabel_ps = None
-    if USE_PS and ps_fused is not None:
+    if USE_PS:
+        if ps_fused is None:
+            raise ValueError("USE_PS requires ps_fused from compute_ps_invariants_fused")
         _f = ps_fused["mu"]
         rel_mu_ps     = _f["uniform"]
         t_mu_log      = _f["t_log"]
         drift_mu_log  = _f["drift_log"]
         mu_initial_ps = _f["initial"]
         ylabel_ps     = _f["ylabel"]
-    elif USE_PS:
-        y0 = ps_y_initial
-        mu_initial_ps = float(_mu_from_xyz_v(
-            np.asarray([y0[0]]), np.asarray([y0[1]]), np.asarray([y0[2]]),
-            np.asarray([y0[3]]), np.asarray([y0[4]]), np.asarray([y0[5]]))[0])
-
-        chunk_cols = max_plot_points
-        dt_ps_store = ps_step * (ps_decimate if ps_decimate > 1 else 1)
-        with h5py.File(cache_path, "r") as h5:
-            ds = h5["ps"]["y"]
-            N = ds.shape[1]
-            log_idx = log_spaced_indices(N, max_plot_points)
-            err_dec = []
-            err_log = []
-            t_log = []
-            for i0 in range(0, N, chunk_cols):
-                i1 = min(i0 + chunk_cols, N)
-                ch = ds[:6, i0:i1]
-                mu = _mu_from_xyz_v(ch[0], ch[1], ch[2], ch[3], ch[4], ch[5])
-                err = _mu_drift(mu_initial_ps, mu)
-                # .copy() is REQUIRED: err[::stride] is a view that would pin the
-                # whole chunk's `err` array alive via .base, so del err frees
-                # nothing and memory grows unbounded over a large VDS. Copy the
-                # tiny decimated slice so each chunk is released each iteration.
-                err_dec.append(err[::energy_stride].copy())    # uniform (summary)
-                lo = np.searchsorted(log_idx, i0, side="left")  # log (plot)
-                hi = np.searchsorted(log_idx, i1, side="left")
-                sel = log_idx[lo:hi]
-                if len(sel):
-                    err_log.append(err[sel - i0])
-                    t_log.append(sel)
-                del ch, mu, err
-        rel_mu_ps = np.concatenate(err_dec)
-        drift_mu_log = np.concatenate(err_log)
-        t_mu_log = np.concatenate(t_log).astype(ul.npfloat) * dt_ps_store
-        ylabel_ps = (r"$|\Delta \mu_n|$" if mu_initial_ps == 0
-                     else r"$|\Delta \mu_n|/\mu_0$")
 
     # --- RK4 ---
     rel_mu_rk4 = None; mu_initial_rk4 = None; ylabel_rk4 = None
@@ -1224,7 +1048,7 @@ def compute_mu_errors(
     # --- Time arrays for non-PS solvers ---
     t_rk4  = (rk4_step  * np.arange(len(rel_mu_rk4),  dtype=ul.npfloat)) if USE_RK4  else None
     t_rkg  = (rkg_step  * np.arange(len(rel_mu_rkg),  dtype=ul.npfloat)) if USE_RKG  else None
-    # RK45 was stored at PS-step cadence in the existing code path
+    # RK45 output is on the PS grid
     t_rk45 = (ps_step   * np.arange(len(rel_mu_rk45), dtype=ul.npfloat)) if USE_RK45 else None
 
     # --- Plot-ready tuples ---
