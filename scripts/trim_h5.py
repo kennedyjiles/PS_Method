@@ -1,23 +1,19 @@
 """
-Trim a large dipoleb HDF5 file to keep only the first and/or last
-N seconds of PS trajectory data.
+Trim a dipoleb h5 (single-file or stitched VDS) to the first and/or last
+N physical seconds so a huge run can be replotted quickly.
 
 Usage:
-    python scripts/trim_h5.py path/to/run.h5 --window 60
+    python scripts/trim_h5.py <run_full.h5> --window SECONDS [--first-only | --last-only] [--dry-run]
 
-    Produces:
-        path/to/run_first_60.0s.h5
-        path/to/run_last_60.0s.h5
-
-    Each trimmed file preserves the full h5 structure (metadata, attrs,
-    PS group layout) so it can be fed directly back into the plotting
-    and analysis pipeline.
-
-Options:
-    --window SECONDS    Duration to keep at each end (physical seconds)
-    --first-only        Only produce the "first" file
-    --last-only         Only produce the "last" file
-    --dry-run           Print what would be done without writing files
+Writes, next to the source, trimmed/<stem>_first_<SECONDS>s.h5 and/or
+trimmed/<stem>_last_<SECONDS>s.h5 plus a companion .yml each (<stem> is the
+source name without a trailing _full). The h5 keeps the full layout (root
+attrs, meta, ps, rk4/rk45/rkg) with trim_* provenance attrs on each solver
+group; rk groups are sliced by physical time so every group spans the same
+window, rk45/t is rebased to 0 and y_initial keeps the source IC. The yml is
+self-contained (base_config: none, manual_h5_path = the h5 basename), so
+`python run.py <path-to-yml>` replots it. The window is sized from the PS
+column spacing (dt * decimate), so a run that halted early trims correctly.
 """
 
 import sys
@@ -289,7 +285,7 @@ def main():
         description="Trim a dipoleb HDF5 file to first/last N seconds.")
     parser.add_argument("h5_path", help="Path to the source HDF5 file")
     parser.add_argument("--window", type=float, required=True,
-                        help="Duration to keep at each end (physical seconds)")
+                        help="Duration to keep at each end (physical seconds, > 0)")
     parser.add_argument("--first-only", action="store_true",
                         help="Only produce the 'first' file")
     parser.add_argument("--last-only", action="store_true",
@@ -315,25 +311,22 @@ def main():
         ps_grp = f["ps"]
         dt, store_stride, dt_store_norm, n_cols = get_ps_timing(ps_grp)
 
-        # Get physical time for conversion
         physical_time = None
-        if "meta" in f and "physical_time" in f["meta"].attrs:
-            physical_time = float(f["meta"].attrs["physical_time"])
-
-        if physical_time is None:
-            # Try to get from params
-            if "params_json" in f.attrs:
-                params = json.loads(f.attrs["params_json"])
-                physical_time = params.get("physical_time")
-
-        if physical_time is None or physical_time <= 0:
-            print("Error: cannot determine physical_time from h5 metadata.")
-            print("       Ensure the file has meta/physical_time or params_json.")
+        norm_time = None
+        if "meta" in f:
+            physical_time = float(f["meta"].attrs.get("physical_time", 0.0)) or None
+            norm_time = float(f["meta"].attrs.get("norm_time", 0.0)) or None
+        if physical_time is None or norm_time is None:
+            print("Error: cannot determine physical_time / norm_time from meta attrs.")
+            sys.exit(1)
+        if args.window <= 0:
+            print(f"Error: --window must be positive (got {args.window}).")
             sys.exit(1)
 
-        # Convert seconds to columns
-        # total_physical_time corresponds to n_cols stored columns
-        secs_per_col = physical_time / n_cols
+        # Seconds per stored column from the step spacing, not from n_cols:
+        # column j is global step j*decimate, and n_cols can be short of the
+        # configured span on a run that halted early.
+        secs_per_col = dt_store_norm * physical_time / norm_time
         n_window = int(np.ceil(args.window / secs_per_col))
 
         if n_window >= n_cols:
@@ -448,7 +441,7 @@ def main():
         for p in rel_ymls:
             print(f"    python run.py {p}")
         print("\nNotes:")
-        print("  • Paths under data/ auto-trigger replot mode (no --replot needed).")
+        print("  • A yml under a data/<field>/ folder auto-triggers replot mode (no --replot needed).")
         print("  • The companion yml is self-contained (base_config: none) — identity")
         print("    fields match the source h5. Edit plotting / output overrides freely")
 

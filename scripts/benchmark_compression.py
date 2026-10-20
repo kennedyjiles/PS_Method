@@ -1,11 +1,13 @@
 """
-Quick benchmark: compare h5 compression strategies on an existing file.
+Benchmark h5 compression settings on an existing file.
 
 Usage:
-    python scripts/benchmark_compression.py path/to/your_file.h5
+    python scripts/benchmark_compression.py <file.h5>
 
-Reads all datasets from the file, recompresses each with different
-settings, and reports file size and write time.
+Loads EVERY dataset into RAM, rewrites them to a temp file under each gzip
+level with and without shuffle, and reports size, write and read time. Run it
+only on a small or trimmed file. Writes <stem>_compression_benchmark.log next
+to the source file (overwritten on each run).
 """
 
 import sys

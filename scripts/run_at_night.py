@@ -1,28 +1,31 @@
-#!/usr/bin/env python3
 """
-Script to run or continue a Python process within a specified time window.
+Run a long command only inside a nightly time window: SIGSTOP it outside the
+window, SIGCONT it inside, polling every `sleep` seconds.
+
 Usage:
-  python run_at_night.py "python /path/to/your_script.py"
-Start and end times can be configured in the config() function.
+    python scripts/run_at_night.py "<command line>"
+    python scripts/run_at_night.py test      # 10-s pause/resume cycle; needs a local test.py
 
-Testing and debugging this script:
-  python run_at_night.py test
-This will run a test script (test.py) that prints iterations every second. The
-time window will be set to start immediately and instead of pausing based on
-the time window, the process will be paused/unpaused every 10 seconds. test.py
-should execute 20 iterations in total if everything works correctly.
+Window (default 18:00-08:00) and poll interval are hard-coded in config().
+The child runs in its own process group and the whole group is paused and
+resumed, so a batch runner's workers stop with it. The child's PID is kept in
+/tmp/run_at_night.pid, so only one instance can run at a time; Ctrl-C
+terminates the child. Requires psutil.
 """
-
 import os
 import sys
 import time
 import psutil
+import shlex
+import signal
 import subprocess
 
 PID_FILE = "/tmp/run_at_night.pid"
 
 def config():
   from datetime import datetime
+  if len(sys.argv) < 2:
+    print(__doc__); sys.exit(2)
   default = {
     "start": "18:00:00",
     "end": "08:00:00",
@@ -114,7 +117,7 @@ def start_script(cfg):
   try:
     # Start the process in the background
     process = subprocess.Popen(
-        cfg["command"].split(),
+        shlex.split(cfg["command"]),   # shlex: paths with spaces survive
         stdout=None,  # Inherit stdout to print to console
         stderr=None,  # Inherit stderr to print to console
         preexec_fn=os.setpgrp  # Create new process group
@@ -138,7 +141,7 @@ def resume_script(pid):
     proc = psutil.Process(pid)
     msg = f"{now_str()} - Resuming script (PID {pid})..."
     print(msg)
-    proc.resume()
+    os.killpg(os.getpgid(pid), signal.SIGCONT)   # whole group: workers resume too
     print(f"{now_str()} - Script resumed (PID {pid})")
   except psutil.NoSuchProcess:
     print(f"{now_str()} - Process {pid} no longer exists.")
@@ -158,8 +161,7 @@ def pause_script(pid):
       msg = f"{now_str()} - Pausing script (PID {pid})..."
       print(msg)
 
-      # Send pause signal
-      proc.suspend() 
+      os.killpg(os.getpgid(pid), signal.SIGSTOP)   # whole group: workers pause too
       print(f"{now_str()} - Script paused (PID {pid})")
     except psutil.NoSuchProcess:
       print(f"{now_str()} - Process {pid} no longer exists.")

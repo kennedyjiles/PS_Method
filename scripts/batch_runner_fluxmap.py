@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-Dwell Map Batch Runner
-======================
-Preset-driven parameter sweep for building meridional dwell-occupancy maps
-from orbit integrations.  Sweeps a fine L-shell grid at each energy, producing
-h5 trajectories that flux_map_builder.py consumes.
+Dwell-map batch runner: fine L-shell sweeps of dipoleb.py at fixed proton
+energies, producing the h5 trajectories that scripts/plots/flux_map_builder.py
+bins into meridional dwell-occupancy maps.
 
-Presets cover 10 MeV – 400 MeV protons; L-shell and pitch ranges are
-configured per preset.  Custom scans override any axis from the CLI.
+Usage:
+    python scripts/batch_runner_fluxmap.py --list-presets
+    python scripts/batch_runner_fluxmap.py 10mev [--dry-run] [--resume] [--adaptive]
+    python scripts/batch_runner_fluxmap.py all --resume
+    python scripts/batch_runner_fluxmap.py --energy 4e7 --L-start 2.0 --L-stop 5.0 --L-step 0.02 --group fluxmap_40mev
+    python scripts/batch_runner_fluxmap.py 10mev --consolidate-only
+    python scripts/batch_runner_fluxmap.py 10mev --rerun-chaotic --adaptive
 
-Output lands under  data/dipoleb/fluxmap_<tag>/  (one folder per preset or
-custom group name).  Folder name pattern is kept as `fluxmap_*` for backward
-compatibility with existing data — only the user-facing terminology has
-shifted from "flux" to "dwell occupancy" to reflect what the maps actually
-are (trajectory dwell time per Cartesian bin, without the toroidal Jacobian
-or pitch-angle integration required for a true omnidirectional flux).
+Output: data/dipoleb/fluxmap_<preset|custom|--group>/fm_<run_key>/ per cell plus
+a merged master_simulation_log.csv at group level (the "fluxmap_" prefix is
+historical). Progress lives in scripts/batch_progress_fluxmap.json; a cell
+counts as completed only if its per-run CSV exists. --adaptive wipes each
+cell's folder before re-running.
 
-# After runs complete, build the dwell map:
-python scripts/plots/flux_map_builder.py --group fluxmap_10mev
-python scripts/plots/flux_map_builder.py --group fluxmap_all --per-energy
+Then: python scripts/plots/flux_map_builder.py --group fluxmap_10mev
 """
 
 import os
@@ -56,7 +56,6 @@ gyroperiods = 1e5
 PRESETS = {
     # ── Single-energy sweeps ──────────────────────────────────────────────────
     "10mev": {
-        "description": "10 MeV proton, L = 1.0 – 3.8, dL = 0.1",
         "energy_eV":   10e6,
         "L_start":     L_start,
         "L_stop":      3.8,
@@ -65,7 +64,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
     "15mev": {
-        "description": "15 MeV proton, L = 1.0 – 3.6, dL = 0.1",
         "energy_eV":   15e6,
         "L_start":     L_start,
         "L_stop":      3.6,
@@ -74,7 +72,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
     "20mev": {
-        "description": "20 MeV proton, L = 1.0 – 3.5, dL = 0.1",
         "energy_eV":   20e6,
         "L_start":     L_start,
         "L_stop":      3.5,
@@ -83,7 +80,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
     "30mev": {
-        "description": "30 MeV proton, L = 1.0 – 3.2, dL = 0.1",
         "energy_eV":   30e6,
         "L_start":     L_start,
         "L_stop":      3.2,
@@ -92,7 +88,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
     "50mev": {
-        "description": "50 MeV proton, L = 1.0 – 3.0, dL = 0.1",
         "energy_eV":   50e6,
         "L_start":     L_start,
         "L_stop":      3.0,
@@ -101,7 +96,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
         "60mev": {
-        "description": "60 MeV proton, L = 1.0 – 2.9, dL = 0.1",
         "energy_eV":   60e6,
         "L_start":     L_start,
         "L_stop":      2.9,
@@ -110,7 +104,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
         "80mev": {
-        "description": "80 MeV proton, L = 1.0 – 2.8, dL = 0.1",
         "energy_eV":   80e6,
         "L_start":     L_start,
         "L_stop":      2.8,
@@ -119,7 +112,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
     "100mev": {
-        "description": "100 MeV proton, L = 1.0 – 2.7, dL = 0.1",
         "energy_eV":   100e6,
         "L_start":     L_start,
         "L_stop":      2.7,
@@ -128,7 +120,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
     "200mev": {
-        "description": "200 MeV proton, L = 1.0 – 2.4, dL = 0.1",
         "energy_eV":   200e6,
         "L_start":     L_start,
         "L_stop":      2.4,
@@ -137,7 +128,6 @@ PRESETS = {
         "gyroperiods": gyroperiods,
     },
     "400mev": {
-        "description": "400 MeV proton, L = 1.0 – 2.1, dL = 0.1",
         "energy_eV":   400e6,
         "L_start":     L_start,
         "L_stop":      2.1,
@@ -156,7 +146,7 @@ META_PRESETS = {
 }
 
 
-# ═════════════════════════════════════════════════════2══════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Run-list construction
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -252,7 +242,7 @@ def build_runs_custom(energy_eV, L_start, L_stop, L_step, pitch_deg, gyroperiods
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Config writing + execution (mirrors batch_runner.py pattern)
+#  Config writing + execution
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_key(run):

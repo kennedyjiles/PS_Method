@@ -1,13 +1,15 @@
 """
-Work-precision bubble plot from a hand-assembled CSV (Book2.csv).
+Work-precision bubble plot: |dE|/E0 vs wall-clock time, bubble = steps/gyro.
 
-Reads a CSV containing one or more "steps per gyro / error / wall_clock"
-column blocks (one per method: RK4, PS-adaptive, PS16), located by scanning
-for the 'steps per gyro' header row, and plots |ΔE|/E₀ vs wall-clock time as
-a scatter where bubble size encodes steps-per-gyro. One function:
-
-    generate_performance_plot — parse the CSV blocks and render the plot
+Usage:  python scripts/plots/timestepplots.py      (any cwd)
+Input:  Book2.csv next to this script: a hand-assembled sheet with side-by-side
+        "steps per gyro, error, wall clock" blocks for RK4, PS (adaptive) and
+        PS16; the header row is found by searching for 'steps per gyro'.
+Output: performance_plot_final.png next to this script (300 dpi), then plt.show().
+Supplementary figure; not generated from run outputs.
 """
+import os
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
@@ -75,11 +77,11 @@ def generate_performance_plot(csv_file):
                     offset = (0, -(radius + 7.5))
                     ha, va = 'center', 'top'
                 elif label == 'PS (Adaptive)':
-                    # Labels below - gap pushed to a "tiny bit more" (2 pts)
+                    # Labels below
                     offset = (0, -(radius + 2))
                     ha, va = 'center', 'top'
                 elif label == 'PS16':
-                    # Labels above - gap pushed to a "tiny bit more" (1.5 pts)
+                    # Labels above
                     offset = (0, radius + 1.5)
                     ha, va = 'center', 'bottom'
 
@@ -99,7 +101,6 @@ def generate_performance_plot(csv_file):
     plt.yscale('log')
     plt.xlabel('Wall Clock Time (s)', fontsize=12)
     plt.ylabel(r'$|\Delta E|/E_0$', fontsize=12)
-    # plt.title('Algorithm Efficiency: Error vs. Execution Time\n(Labels = Steps per Gyro Period)', fontsize=14)
     plt.grid(True, which="both", ls="--", alpha=0.2)
     
     # 6. Fixed-size Legend
@@ -120,8 +121,8 @@ def generate_performance_plot(csv_file):
     plt.legend(handles=final_handles, loc='best', frameon=True)
 
     plt.tight_layout()
-    plt.savefig('performance_plot_final.png', dpi=300)
+    plt.savefig(os.path.join(_SCRIPT_DIR, 'performance_plot_final.png'), dpi=300)
     plt.show()
 
 if __name__ == "__main__":
-    generate_performance_plot('Book2.csv')
+    generate_performance_plot(os.path.join(_SCRIPT_DIR, 'Book2.csv'))

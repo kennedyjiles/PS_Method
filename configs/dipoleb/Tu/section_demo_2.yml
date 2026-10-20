@@ -1,0 +1,9 @@
+phi_deg: -75 # gyrophase angle (degrees)
+x_initial: 2.6665375266094262
+energy_eV: 1e8        # kinetic energy in eV
+gyroperiods: 1e5
+
+
+solvers:
+  ps: true
+  adaptive: true

@@ -49,6 +49,14 @@ _NON_HASH_KEYS = {
     # output / IO / runtime
     "output_root", "read_data", "write_data",
     "manual_h5_path", "ps_chunk_steps",
+    # checkpointing granularity — pure I/O, same physics regardless of value,
+    # so a segmented run shares its hash with the equivalent single run.
+    "ps_segment_gyroperiods",
+    # offload-resume mode — how resume finds its restart point; pure I/O.
+    "ps_segment_offload",
+    # data-only mode — writes the h5 then stops before plotting/analysis;
+    # doesn't affect the trajectory, so it shares the normal run's hash.
+    "data_only",
     # post-processing only — operates on the trajectory, doesn't change it
     "user_min_phase", "bounce_drift", "r_atmosphere",
     # warning thresholds — don't affect output values
@@ -95,10 +103,63 @@ def physics_hash(cfg):
     Numeric-looking strings are canonicalized to floats first (see
     _canonicalize_for_hash) so YAML 1.1 quirks like `1.0e7` (string)
     vs `1.0e+7` (float) don't produce different hashes for the same run.
+
+    LEGACY BORIS COMPAT: the removed boris solver keys (solvers.boris,
+    steps_per_gyro.boris, step_overrides.boris) are stripped before
+    hashing. Boris was a hash-neutral audit overlay, so stored provenance
+    ymls under data/ (and any other pre-removal configs) still carry these
+    keys — stripping them keeps every such yml hashing to its original
+    value, so re-runs and segmented resumes still find their cached h5.
+    For cleaned configs the strip is a no-op.
+
+    FIXED-STEP ps_adaptive COMPAT: when solvers.adaptive is false the
+    ps_adaptive block never touches the trajectory, but it has always been
+    hashed. The three tuning keys retuned in 2026-10 (order_high,
+    steps_per_local_gyro, min_fast_path_N) are therefore pinned to their
+    historical values (300 / 200 / 100) for fixed-step configs before
+    hashing, so retuning the defaults in base.yml does not invalidate any
+    cached fixed-step h5 (every stored fixed-step provenance yml carried
+    exactly those values). Adaptive configs hash their real values, as the
+    tuning does change their step sequence.
     """
     from ps_method.writers import run_hash
-    physics = {k: _canonicalize_for_hash(v) for k, v in cfg.items()
-               if k not in _NON_HASH_KEYS}
+    _is_adaptive = bool((cfg.get("solvers") or {}).get("adaptive", False))
+    # STOP-ON-ATMOSPHERE: the toggle (and the r_atmosphere threshold it acts
+    # on) can truncate the trajectory, but only on the adaptive path. Hash
+    # both ONLY when the toggle is on for an adaptive run; otherwise strip
+    # them (r_atmosphere is a post-processing flag there) so every pre-toggle
+    # config, and any config with the key false/absent, keeps its hash.
+    _stop_atm = _is_adaptive and bool(cfg.get("stop_on_atmosphere", False))
+    pruned = {}
+    for k, v in cfg.items():
+        if k == "stop_on_atmosphere":
+            if not _stop_atm:
+                continue
+        elif k == "ps_horner":
+            # Horner summation changes the trajectory at round-off level, so
+            # it is physics — but it is hashed ONLY when on, so every config
+            # written before the flag existed (and any with it false/absent)
+            # keeps its hash and its cached h5.
+            if not v:
+                continue
+        elif k in _NON_HASH_KEYS and not (k == "r_atmosphere" and _stop_atm):
+            continue
+        if k in ("solvers", "steps_per_gyro", "step_overrides") \
+                and isinstance(v, dict) and "boris" in v:
+            v = {kk: vv for kk, vv in v.items() if kk != "boris"}
+        if k == "ps_adaptive" and isinstance(v, dict) and not _is_adaptive:
+            v = {**v, "order_high": 300, "steps_per_local_gyro": 200,
+                 "min_fast_path_N": 100}
+        pruned[k] = v
+    # RK45 ENGINE: solvers.rk45 now runs the compiled Dormand–Prince port
+    # (ul.rk45_numba) instead of scipy.integrate.solve_ivp. The trajectories
+    # follow the same step sequence, but the run time — the quantity the RK45
+    # comparison exists to measure — does not carry over, so RK45-enabled
+    # configs hash into a new namespace rather than reuse pre-swap caches.
+    # Configs with rk45 off are unaffected.
+    if bool((cfg.get("solvers") or {}).get("rk45", False)):
+        pruned["rk45_engine"] = "numba"
+    physics = {k: _canonicalize_for_hash(v) for k, v in pruned.items()}
     return run_hash(physics)
 
 
@@ -173,12 +234,26 @@ def _resolve_ext_path(root, path):
 def _compute_step_sizes(T_gyro, steps_per_gyro, round_decimals=1):
     """Compute step sizes from T_gyro and a {solver: N} dict.
 
-    Returns a dict of {solver: step_size}.
+    Returns a dict of {solver: step_size}, each rounded to `round_decimals`
+    decimals. The derived step is NOT part of the run hash (only
+    steps_per_gyro / round_decimals / step_overrides are), so this rounding
+    must stay exactly as it is or cached runs would silently stop matching
+    their configs.
+
+    A fixed decimal count quantises small steps: at L = 5 with one decimal,
+    steps_per_gyro of 1100 and 1200 both give 0.7, and anything above 6500
+    gives 0.1 (7854 steps/gyro). A note is printed whenever the realised
+    steps-per-gyro is more than 2% from the request; use step_overrides (or
+    a larger round_decimals, which changes the hash) for an exact value.
     """
     steps = {}
     for solver, N in steps_per_gyro.items():
         raw = T_gyro / N
         steps[solver] = round(raw, round_decimals)
+        realised = T_gyro / steps[solver] if steps[solver] else float("inf")
+        if abs(realised - N) / N > 0.02:
+            print(f"  Note: steps_per_gyro.{solver} = {N:g} rounds (round_decimals={round_decimals}) to a step "
+                  f"of {steps[solver]:g} = {realised:.1f} steps/gyro; set step_overrides.{solver} for an exact value.")
     return steps
 
 
@@ -406,6 +481,20 @@ def copy_config_to_output(cfg_path, output_folder, cfg=None):
     for k in _bottom:
         if k in merged:
             ordered[k] = merged[k]
+
+    # Was this a segmented (checkpointed) run? If so the header documents how to
+    # manual-load one segment vs. the full stitched VDS. Derived purely from the
+    # config (gyroperiod ranges are exact); values may be YAML-1.1 strings.
+    def _as_float(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+    _seg_gp = _as_float(merged.get("ps_segment_gyroperiods", 0)) or 0.0
+    _gp = _as_float(merged.get("gyroperiods"))
+    _segmented = _seg_gp > 0 and _gp is not None and _seg_gp < _gp
+    _nseg = int(np.ceil(_gp / _seg_gp)) if _segmented else 0
+
     with open(dest, "w") as f:
         f.write(f"# Fully merged config — generated from {os.path.basename(cfg_path)}\n")
         f.write(f"# Re-run with: python run.py {dest}\n")
@@ -419,7 +508,31 @@ def copy_config_to_output(cfg_path, output_folder, cfg=None):
         f.write(f"#   2. Edit any plotting / solvers fields you want to change.\n")
         f.write(f"#      e.g. solvers.rk4: false suppresses RK4 from plots without\n")
         f.write(f"#      triggering a fresh solver run.\n")
-        f.write(f"#   3. Re-run with the same command above.\n\n")
+        f.write(f"#   3. Re-run with the same command above.\n")
+        if _segmented:
+            # e.g. 1e+09 -> 1e9, 1e+10 -> 1e10 (match the yml's own style)
+            _fmt = lambda v: (f"{v:g}".replace("e+0", "e").replace("e+", "e")
+                              .replace("e-0", "e-"))
+            _segrel = f"../_rawdata/{stem}_seg"
+            f.write(f"#\n")
+            f.write(f"# --- This run is SEGMENTED ({_nseg} checkpoint segments) ---\n")
+            f.write(f"# Load the FULL run (all segments stitched via VDS) — the normal replot:\n")
+            f.write(f"#   manual_h5_path: {relative_h5}\n")
+            f.write(f"# Load a SINGLE segment k (000–{_nseg - 1:03d}), each spanning "
+                    f"{_fmt(_seg_gp)} gyroperiods:\n")
+            f.write(f"#   manual_h5_path: {_segrel}000.h5   "
+                    f"# gyroperiods 0–{_fmt(min(_seg_gp, _gp))}\n")
+            if _nseg > 2:
+                f.write(f"#                  {_segrel}001.h5   "
+                        f"# gyroperiods {_fmt(_seg_gp)}–{_fmt(2 * _seg_gp)}\n")
+                f.write(f"#                  ...\n")
+            if _nseg > 1:
+                f.write(f"#                  {_segrel}{_nseg - 1:03d}.h5   "
+                        f"# gyroperiods {_fmt((_nseg - 1) * _seg_gp)}–{_fmt(_gp)} "
+                        f"(last; may be shorter)\n")
+            f.write(f"# NOTE: a single-segment plot's time axis currently starts at 0\n")
+            f.write(f"#       (relative); the full VDS load is on the correct global axis.\n")
+        f.write("\n")
         yaml.dump(ordered, f, default_flow_style=False, sort_keys=False)
 
     print(f"Config copied → {dest}")
@@ -529,7 +642,12 @@ def load_config(conf_file):
         "output_folder", "run_storage", "output_root", "batch_group",
         "git_commit",
     }
-    real_unknown = {k for k in unknown if k.split(".")[0] not in _known_extras}
+    # Removed-solver keys still present in stored provenance ymls; ignored
+    # by the loader and stripped from the hash (see physics_hash).
+    _legacy_ignored = {"solvers.boris", "steps_per_gyro.boris", "step_overrides.boris"}
+    real_unknown = {k for k in unknown
+                    if k.split(".")[0] not in _known_extras
+                    and k not in _legacy_ignored}
     if real_unknown:
         print(f"\n  WARNING: Unknown config keys (possible typos): {sorted(real_unknown)}")
         print(f"  Valid top-level keys: {sorted(k for k in base_keys if '.' not in k)}\n")
@@ -709,6 +827,7 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         # Plotting
         "USE_PLOT_TITLES": plot_cfg["titles"],
         "USE_FULL_PLOT":   plot_cfg["full_plot"],
+        "INVARIANTS_ONLY": plot_cfg.get("invariants_only", False),
         "slice_mode":      plot_cfg["slice_mode"],
         "gyro_window":     plot_cfg["gyro_window"],
 
@@ -751,6 +870,21 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         # Optional overrides
         "ps_order":        cfg["ps_order"],
         "ps_chunk_steps":  int(cfg["ps_chunk_steps"]),
+        # Horner evaluation of the PS step increment (results-changing at the
+        # round-off level). Hashed only when true — see physics_hash.
+        "ps_horner":       bool(cfg.get("ps_horner", False)),
+        # Segmented-checkpoint granularity, expressed as PS steps per segment.
+        # 0 = disabled. Derived from gyroperiods so the yml stays in physical
+        # units; the driver tiles [0, steps_ps] with a shorter final segment.
+        "ps_segment_gyroperiods": float(cfg.get("ps_segment_gyroperiods", 0) or 0),
+        "ps_segment_steps": int(round(
+            float(cfg.get("ps_segment_gyroperiods", 0) or 0) * spg["ps"])),
+        # Resume from the highest LOCAL segment (earlier ones offloaded to other
+        # storage) and skip the local VDS stitch. See _run_ps_segments.
+        "ps_segment_offload": bool(cfg.get("ps_segment_offload", False)),
+        # Data-only: write the h5/VDS + provenance config, then stop before any
+        # plotting or trajectory-reading analysis.
+        "data_only": bool(cfg.get("data_only", False)),
         "rtol_rk45":       cfg["rtol_rk45"],
         "atol_rk45":       cfg["atol_rk45"],
         "user_min_phase":  cfg["user_min_phase"],
@@ -771,8 +905,10 @@ def compute_derived_dipoleb(cfg, npfloat=None):
         # Bounce/drift detection
         "bounce_drift": cfg["bounce_drift"],
 
-        # Atmospheric impact threshold (R_E)
+        # Atmospheric impact threshold (R_E), and whether the adaptive PS
+        # path stops the run at the first sample below it (see base.yml).
         "r_atmosphere": cfg["r_atmosphere"],
+        "stop_on_atmosphere": bool(cfg.get("stop_on_atmosphere", False)),
     }
 
     return params

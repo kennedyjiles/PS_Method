@@ -48,7 +48,7 @@ plotting:
   slice_mode: last        # "first" or "last" — which window for slice plots
   gyro_window: last       # "first" or "last" — window for detailed view
   n_gyro: 75              # gyroperiods in the slice window
-                          # IMPORTANT: for trimmed files, n_gyro must be
+  invariants_only: true                        # IMPORTANT: for trimmed files, n_gyro must be
                           # ≤ the trimmed file's gyroperiods or the slice
                           # will be empty.
 
@@ -118,6 +118,7 @@ r_atmosphere: 1.0
 ps_decimate: 1
 ps_order: 40
 ps_chunk_steps: 10000
+ps_horner: false          # Horner evaluation of the PS step increment (see base.yml)
 rtol_rk45: 1.0e-8
 atol_rk45: 1.0e-10
 cache_velocity_rtol: 0.005
@@ -136,12 +137,10 @@ round_decimals: 1
 
 # --- Adaptive PS settings (no fresh solve in manual mode) ---
 ps_adaptive:
-  order_low: 50
-  order_high: 300
-  grow_factor: 1.5
-  shrink_factor: 0.5
-  steps_per_local_gyro: 200
-  min_fast_path_N: 100
-
-# --- Dragt conservation monitor (no fresh solve in manual mode) ---
+  order_low: 50  # only sets how fast dt recovers toward the |B|-derived dt after a rejected substep (growth is capped at dt_B)
+  order_high: 60  # reject + shrink a substep that needs more than this PS order (was 300: never fired below ps_order=100)
+  grow_factor: 1.5  # dt recovery multiplier after a rejected substep; growth is capped at the |B|-derived dt
+  shrink_factor: 0.5  # dt multiplier after a rejected substep
+  steps_per_local_gyro: 10  # substeps per LOCAL gyroperiod in adaptive regions (was 200: ~5x the cost optimum of 6-10, same ~1e-13 energy error)
+  min_fast_path_N: 10  # fast (fixed-step) path allowed while >= this many ps_steps fit in one local gyroperiod; MUST be <= steps_per_gyro.ps or the fast path never runs (was 100 with 20 steps/gyro -> always adaptive)
 dragt_monitor_rtol: 1.0e-4

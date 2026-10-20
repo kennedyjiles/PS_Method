@@ -5,7 +5,7 @@ Given physical inputs (KE, pitch angle, launch phi, target L-shell,
 particle type), computes:
   - x_initial such that the conserved canonical momentum gives L_dragt = L_target exactly
   - Dragt dimensionless parameters (W0^2, rho, P_phi)
-  - Simulator initial conditions ready to paste into dipoleb_testparticles.py
+  - Config values for a dipoleb yml (x_initial, pitch_deg, phi_deg, energy_eV)
   - Trapping and stability diagnostics
 
 The launch position is computed from the exact constraint:
@@ -14,19 +14,44 @@ This is a quadratic in x with an analytic solution — no iteration needed.
 The approximate guiding center position is also reported for reference.
 
 Usage:
-    Edit the USER INPUTS section below, then run:
-        python si_to_dragt.py
+    python scripts/si_to_dragt.py                        # defaults from USER INPUTS below
+    python scripts/si_to_dragt.py --L-target 2.5 --KE-MeV 100 --pitch 30 --phi 90
+    python scripts/si_to_dragt.py --particle electron --KE-MeV 1 --L-target 4
+Any flag left off falls back to its USER INPUTS default (see --help).
 """
+import argparse
 import numpy as np
 
 # ==========================
 #       USER INPUTS
 # ==========================
-L_target    = 5.7              # Dragt L-shell 
-KE_MeV      = 100           # Kinetic energy in MeV
-pitch_deg   = 60.0           # Equatorial pitch angle in degrees
-phi_deg     = 0.0           # degrees
+# Defaults; each is overridable on the command line.
+L_target    = 5.0            # Dragt L-shell 
+KE_MeV      = 10             # Kinetic energy in MeV
+pitch_deg   = 30.0           # Equatorial pitch angle in degrees
+phi_deg     = 85.0           # degrees
 particle    = 'proton'       # 'proton' or 'electron'
+
+_p = argparse.ArgumentParser(description="SI -> Dragt converter: launch x_initial "
+                             "for a target L_dragt, plus Dragt diagnostics")
+_p.add_argument("--L-target", type=float, default=L_target, dest="L_target",
+                help=f"target Dragt L-shell (default: {L_target})")
+_p.add_argument("--KE-MeV",   type=float, default=KE_MeV, dest="KE_MeV",
+                help=f"kinetic energy in MeV (default: {KE_MeV})")
+_p.add_argument("--pitch",    type=float, default=pitch_deg, dest="pitch_deg",
+                help=f"equatorial pitch angle in degrees (default: {pitch_deg})")
+_p.add_argument("--phi",      type=float, default=phi_deg, dest="phi_deg",
+                help=f"launch gyrophase in degrees (default: {phi_deg})")
+_p.add_argument("--particle", type=str,   default=particle,
+                choices=["proton", "electron"],
+                help=f"particle species (default: {particle})")
+_args = _p.parse_args()
+
+L_target  = _args.L_target
+KE_MeV    = _args.KE_MeV
+pitch_deg = _args.pitch_deg
+phi_deg   = _args.phi_deg
+particle  = _args.particle
 
 
 
@@ -207,7 +232,7 @@ print(f"{'='*60}")
 print(f"\n--- Physical Inputs ---")
 print(f"  Particle:       {particle}")
 print(f"  L_target:       {L_target}")
-print(f"  KE:             {KE_MeV} MeV")
+print(f"  KE:             {KE_MeV:g} MeV")
 print(f"  Pitch angle:    {pitch_deg} deg")
 print(f"  Launch phi:     {phi_deg} deg")
 print(f"  Lorentz gamma:  {lorentz_gamma:.6f}")
@@ -233,13 +258,14 @@ else:
 print(f"  mu^2:           {mu_sq:.6f}  (sin^2 alpha_eq)")
 print(f"  Orbit character: {orbit_char}  (W0^2={W0_sq:.6f}, threshold={stab_threshold:.6f})")
 
-print(f"\n--- Simulator Initial Conditions (paste into testparticles) ---")
-print(f"  x_initial   = npfloat({x_initial})")
-print(f"  y_initial   = npfloat(0)")
-print(f"  z_initial   = npfloat(0)")
-print(f"  pitch_deg   = npfloat({pitch_deg})")
-print(f"  phi_deg     = npfloat({phi_deg})")
-print(f"  KE_particle = npfloat({KE_MeV*1e6})")
+print(f"\n--- dipoleb config keys (paste into a configs/dipoleb yml) ---")
+print(f"  particle:   {particle}")
+print(f"  energy_eV:  {KE_MeV*1e6:g}")
+print(f"  pitch_deg:  {pitch_deg}")
+print(f"  phi_deg:    {phi_deg}")
+print(f"  x_initial:  {x_initial:.6f}")
+print(f"  y_initial:  0.0")
+print(f"  z_initial:  0.0")
 
 print(f"\n--- Physical Orbit Parameters ---")
 print(f"  Gyroperiod:     {gyroperiod:.4e} s")

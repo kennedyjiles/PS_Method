@@ -1,0 +1,13 @@
+phi_deg:    -75.0
+x_initial:  9.836153
+
+energy_eV: 1e7        # kinetic energy in eV
+gyroperiods: 1e5
+pitch_deg: 85.0           # pitch angle (degrees)
+steps_per_gyro:
+  ps: 40
+
+
+solvers:
+  ps: true
+  adaptive: true

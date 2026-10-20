@@ -1,8 +1,11 @@
 """
 Bounce and drift period analysis for dipole trajectories (streaming pipeline).
 
-Bounce detection identifies mirror points by sign changes of s = v·B
-(proportional to the parallel velocity v_parallel). Small-|s| values are
+Bounce detection identifies MIRROR POINTS by sign changes of s = v·B
+(proportional to the parallel velocity v_parallel). These are NOT equatorial
+(z = 0) crossings -- for those see analysis_chunked in dipoleb_dragt_analysis.py.
+Both occur twice per bounce, so the two counts are nearly equal; do not use one
+where the other is meant. Small-|s| values are
 suppressed to avoid numerical jitter, and a minimum time gap is enforced
 to avoid double-counting. Linear interpolation gives sub-step mirror times.
 
@@ -122,10 +125,15 @@ def _process_chunk_kernel(
                     sample_phis[n_samples] = phi_tc
                     n_samples += 1
 
-        last_s = si
-        last_t = ti
-        last_y = y_chunk[:, i].copy()
-        has_prev = True
+        # Only advance the reference sample when this one is significant.
+        # Advancing unconditionally let a sub-threshold (or exactly zero)
+        # sample sit between two opposite signs: the next pair then shared a
+        # sign and the crossing was lost rather than deferred.
+        if abs(si) >= s_eps:
+            last_s = si
+            last_t = ti
+            last_y = y_chunk[:, i].copy()
+            has_prev = True
 
     return (last_s, last_t, last_y, last_cross_t, last_phi,
             has_phi_prev,

@@ -1,5 +1,8 @@
 """
-Thorough validation of corrected Dragt ↔ SI conversions.
+Thorough validation of the Dragt ↔ SI conversions.
+
+Usage:
+    python scripts/test_dragt_thorough.py
 
 Tests (numbered to match the TEST blocks below):
   1. Round-trip: Dragt → SI → dipoleb sim → Dragt (protons, wide energy range)
@@ -105,16 +108,9 @@ print()
 print("="*90)
 print("TEST 3: Verify γ₁ relation (Dragt eq 2.20 & 2.22)")
 print("="*90)
-# Eq 2.20: γ₁⁴ = (1/16)(qM/(γm))²Γ⁴  [in CGS this is dimensionless; in SI we verify the chain]
-# Eq 2.22: W₀ = 1/(4γ₁²) → W₀² = 1/(16γ₁⁴)
-# Combining: W₀² = (γm)²/(qMΓ²)² = 1/((qMΓ²/(γm))²) = 1/(v_scale_true)²
-# where v_scale_true = qMΓ²/(γm). And W₀ = 1/v_scale_true.
-# At the thalweg (ρ=1, z=0), the dimensionless velocity is W₀.
-# Physical velocity at thalweg: v = W₀ · v_scale_true = W₀ · qMΓ²/(γm) = 1.
-# Wait, that gives v = v_scale_true · (1/v_scale_true) = 1... that's the definition.
-#
-# The check: for a particle ON the thalweg (ρ=1), with total dimless velocity W₀,
-# verify γ₁⁴ = 1/(16·W₀²) and γ₁⁴ = (1/16)(qM/(γm))²Γ⁴
+# Dragt eq 2.22 gives W0 = 1/(4 γ1²) and eq 2.20 gives γ1⁴ ∝ (qMΓ²/(γm))²,
+# which combine to W0² = (γv / v_scale)² with v_scale = qMΓ²/m (rest mass).
+# Check that identity numerically.
 
 for L in [4, 7, 10]:
     for W0sq in [0.005, 0.01]:
@@ -122,27 +118,7 @@ for L in [4, 7, 10]:
         gv = np.sqrt(W0sq)*vs; u = gv/c
         gam = np.sqrt(1+u**2)
 
-        # From eq 2.22: γ₁⁴ = 1/(16·W₀²)
-        gamma1_4_from_W0 = 1.0/(16*W0sq)
-
-        # From eq 2.20: γ₁⁴ = (1/16)(qM/(γm))²Γ⁴
-        # In SI: (qM/(γm))² has dimensions (m³/s)², Γ⁴ has dim 1/m⁴
-        # Product has dim m²/s² (velocity²). For γ₁ to be dimensionless,
-        # Dragt's eq 2.20 must be in natural units where this IS dimensionless.
-        # The physical content is: γ₁² = (1/4)·qMΓ²/(γm) = v_scale_true/4
-        # And W₀ = 1/(4γ₁²) = γm/(qMΓ²) = 1/v_scale_true
-        # Check: W₀² = 1/v_scale_true² = (γm/(qMΓ²))²
-
-        v_scale_true = q*M*Gam**2/(gam*m_p)  # with γ in denominator
-        W0sq_from_eq = 1.0/v_scale_true**2
-
-        # But this would mean W₀ is in units of s/m... unless we're in natural units.
-        # The correct relation is: v_scale_true is the velocity scale that makes
-        # the dimensionless velocity equal to 1 at the thalweg.
-        # At thalweg: v_physical = W₀ · v_scale_true.
-        # And: ½γmv² = (qMΓ²)²/(γm) · W₀²/2
-        # So: W₀² = γ²m²v²/(qMΓ²)² = (γv)²/v_scale² = gv²/vs²
-        W0sq_check = gv**2/vs**2  # should equal W0sq since gv = sqrt(W0sq)*vs
+        W0sq_check = gv**2/vs**2
         err = abs(W0sq_check - W0sq)/W0sq
         check(f"γ₁ relation L={L}, W₀²={W0sq}: (γv/v_scale)² = W₀² err={err:.2e}",
               err < 1e-14)

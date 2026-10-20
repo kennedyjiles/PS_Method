@@ -1,12 +1,12 @@
 """
-Trajectory animation from an h5 run — 2D (x–y) and 3D (x–y–z).
+Separate 2-D (x-y) and 3-D trajectory videos of the PS orbit (legacy).
 
-Loads the PS trajectory (and RK4, reserved for a planned side-by-side
-comparison) from a hardcoded h5 file and renders two FuncAnimation videos
-(trajectory_2d.mp4, trajectory_3d_fullgyro.mp4) on a dark background.
-Edit FILE_PATH / DECIMATION at the top to point at a run. (INTEGRATOR is a
-leftover knob from the commented-out single-solver load; the active load
-hardcodes ps/y and rk4/y.)
+Superseded by animate_merged.py, which draws both views in one video; kept
+only for reference. No CLI: edit FILE_PATH / DECIMATION below.
+Input:  an h5 run with ps/y rows [x, y, z, ...].
+Output: trajectory_2d.mp4 and trajectory_3d_fullgyro.mp4 in the cwd, 70 fps,
+        one frame per DECIMATION-th sample (keep samples/DECIMATION to a few
+        thousand). Needs ffmpeg on PATH.
 """
 import h5py
 import numpy as np
@@ -15,27 +15,13 @@ from matplotlib.animation import FuncAnimation
 
 # --- Configuration ---
 plt.style.use('dark_background') 
-# FILE_PATH = 'outputs_rawdata/run_4d9ed424eaa51022.h5' #dipole 
-FILE_PATH = 'outputs_rawdata/run_a7b4deb3c2df7d53.h5'
-INTEGRATOR = 'ps' 
-DECIMATION = 1     
+FILE_PATH = 'outputs_rawdata/run_a7b4deb3c2df7d53.h5'   # edit: path to a run h5
+DECIMATION = 1
 CUSTOM_BG = '#212330' 
 
-# # 1. Load Data
-# with h5py.File(FILE_PATH, 'r') as f:
-#     data = f[f'{INTEGRATOR}/y'][:, ::DECIMATION]
-#     x, y, z = data[0], data[1], data[2]
-
-# Modified Loading Section to compare both
 with h5py.File(FILE_PATH, 'r') as f:
-    # Load PS data
     data_ps = f['ps/y'][:, ::DECIMATION]
-    # Load RK data
-    data_rk = f['rk4/y'][:, ::DECIMATION]
-
-# Set your active plotting variables
 x, y, z = data_ps[0], data_ps[1], data_ps[2]
-x_rk, y_rk, z_rk = data_rk[0], data_rk[1], data_rk[2]
 
 # --- 2D Animation Setup ---
 fig2d, ax2d = plt.subplots(figsize=(8, 6))

@@ -9,7 +9,21 @@ Shared utilities:
     build_filename     — assemble a figure/output path from stem + tag
     summarize          — mean / max / rms statistics for an error array
     summarize_to_file  — write summarize() output to an open file handle
+    summarize_value_to_file — write (mean, min, max) of an invariant's tail values
+    pphi_from_state    — canonical angular momentum from a state row
     write_dict         — pretty-print a nested dict to a file handle
+
+Segmented checkpoints / VDS (dipoleb PS runs, see dipoleb._run_ps_segments):
+    seg_path_for                  — <hash>_segNNN.h5 path
+    find_committed_segments       — all cleanly-committed segments
+    contiguous_committed_segments — unbroken 0,1,2,… prefix (resume / stitch set)
+    latest_committed_segment      — highest local segment (offload resume)
+    clear_building_segments       — remove stray .building temps
+    build_vds                     — stitch segments into a virtual <hash>_full.h5
+    synthesize_full_summary       — rebuild summary_json on a VDS built outside the driver
+    missing_vds_sources           — segment files a VDS references but cannot reach
+    vds_has_missing_sources       — bool wrapper used by the cache check
+    check_vds_readable            — raise with the fix if a VDS can't reach its segments
 
 Field-specific run-param builders (saved as params_json in h5 for manual-
 mode identity recovery — not used for cache hashing; that's physics_hash):
@@ -38,6 +52,8 @@ Dipoleb-only extras:
 
 import os
 import gc
+import re
+import glob
 import json
 import hashlib
 
@@ -59,7 +75,15 @@ def _to_serializable(x):
         return int(x)
     if isinstance(x, (np.ndarray,)):
         return x.tolist()
-    return x
+    if isinstance(x, np.bool_):
+        return bool(x)
+    # Native JSON types pass through (get_run_params_* call this directly).
+    if x is None or isinstance(x, (bool, int, float, str)):
+        return x
+    # json.dumps only calls `default` for objects it cannot serialise, so
+    # returning x unchanged here makes it report "Circular reference
+    # detected" instead of naming the offending type.
+    raise TypeError(f"summary value of type {type(x).__name__} is not JSON-serialisable")
 
 
 def run_hash(params: dict) -> str:
@@ -96,6 +120,285 @@ def stem_from_h5(h5_path):
     return s
 
 
+# ---------------------------------------------------------------------------
+# Segmented-checkpoint runs (driven by dipoleb._run_ps_segments)
+# ---------------------------------------------------------------------------
+# A long run is split into fixed-size segments, each written to its own
+# cleanly-closed <hash>_segNNN.h5 (via a .building temp + atomic rename), then
+# stitched into <hash>_full.h5 as an HDF5 Virtual Dataset. A crash costs at
+# most the current segment; relaunching resumes from the last committed one.
+
+def seg_path_for(hash_str, seg_index, output_folder):
+    """Path for one checkpoint segment: <hash>_seg{NNN}.h5."""
+    return os.path.join(output_folder, f"{hash_str}_seg{int(seg_index):03d}.h5")
+
+
+def find_committed_segments(hash_str, output_folder):
+    """Return sorted [(index, path)] of cleanly-committed segment files.
+
+    A segment counts as committed only if it opens AND carries the
+    ``ps/end_state`` handoff dataset. Half-written ``.building`` temps and
+    crash-truncated files are skipped, so resume always restarts from the
+    last fully-flushed boundary.
+    """
+    pattern = os.path.join(output_folder, f"{hash_str}_seg*.h5")
+    rx = re.compile(rf"{re.escape(hash_str)}_seg(\d+)\.h5$")
+    out = []
+    for path in glob.glob(pattern):
+        m = rx.search(os.path.basename(path))
+        if not m:
+            continue
+        try:
+            with h5py.File(path, "r") as f:
+                if "ps/end_state" not in f:
+                    continue
+        except OSError:
+            continue  # unreadable / truncated → treat as not committed
+        out.append((int(m.group(1)), path))
+    out.sort()
+    return out
+
+
+def contiguous_committed_segments(hash_str, output_folder):
+    """Committed segments forming the unbroken prefix 0, 1, 2, … (stops at the
+    first gap).
+
+    Deleting any segment — trailing or middle — shortens this prefix, so resume
+    refills from the gap and the VDS never stitches around a hole. Orphan
+    segments past a gap are ignored (and get overwritten when the run refills).
+    """
+    by_idx = dict(find_committed_segments(hash_str, output_folder))
+    out = []
+    k = 0
+    while k in by_idx:
+        out.append((k, by_idx[k]))
+        k += 1
+    return out
+
+
+def latest_committed_segment(hash_str, output_folder):
+    """The highest-indexed committed segment present, or None.
+
+    Unlike contiguous_committed_segments this does NOT require the earlier
+    segments to be present — it's for the 'offload as you go' workflow, where
+    completed segments are moved to other storage to free local space. Resume
+    only needs the last segment's end_state to continue, so the highest local
+    segment is a sufficient (and consistency-checked) restart point.
+    """
+    segs = find_committed_segments(hash_str, output_folder)
+    return segs[-1] if segs else None
+
+
+def vds_has_missing_sources(h5_path):
+    """True iff *h5_path* is a VDS whose backing segment files are (partly) gone.
+
+    A VDS silently returns fill-value (0) for absent source files, so a dangling
+    stitch reads as corrupt-but-valid data (all-zero position columns → r=0 →
+    NaNs downstream). Callers use this to refuse to trust such a file. Returns
+    False for non-VDS files, unreadable files, or fully-intact VDSes.
+
+    Delegates to missing_vds_sources so the staleness decision uses the same
+    search order HDF5 itself uses ($HDF5_VDS_PREFIX, the file's folder, cwd).
+    """
+    if not os.path.exists(h5_path):
+        return False
+    try:
+        return len(missing_vds_sources(h5_path)) > 0
+    except (OSError, KeyError, RuntimeError):
+        return False
+
+
+def synthesize_full_summary(hash_str, output_folder, full_path=None):
+    """Reconstruct run-level ``summary_json`` + ``meta`` group on a stitched
+    ``_full.h5`` from the per-segment summaries.
+
+    The driver writes the authoritative summary via append_results_h5_dipoleb
+    at run end; this exists for VDS files rebuilt OUTSIDE the driver (the
+    scripts/build_vds.py CLI — e.g. after segments were moved to another
+    drive), which would otherwise lack the identity metadata that manual
+    loading and trim_h5 require.
+
+    Identity fields are taken from segment 0's summary; span fields
+    (gyroperiods, norm_time, physical_time, ps.steps) are summed over the
+    stitched segments so a partial (contiguous-prefix) stitch is described
+    accurately; ps.max_ps is the max and timing.ps the sum. Does nothing if
+    the file already has a summary (driver flow stays authoritative) or if
+    segments predate per-segment summaries.
+
+    Returns True if a summary was written.
+    """
+    if full_path is None:
+        full_path = h5_path_for(hash_str, output_folder)
+    if not os.path.exists(full_path):
+        return False
+    segs = contiguous_committed_segments(hash_str, output_folder)
+    if not segs:
+        return False
+
+    with h5py.File(full_path, "r") as f:
+        if "summary_json" in f.attrs:
+            return False  # driver-written summary present — leave it alone
+
+    per_seg = []
+    for _, path in segs:
+        with h5py.File(path, "r") as f:
+            if "summary_json" not in f.attrs:
+                return False  # segments without per-segment summaries
+            per_seg.append(json.loads(f.attrs["summary_json"]))
+
+    s = json.loads(json.dumps(per_seg[0]))  # deep copy
+    meta = s["meta"]
+    meta["stem"] = hash_str
+    meta.pop("segment_index", None)
+    for k in ("gyroperiods", "norm_time", "physical_time"):
+        meta[k] = float(sum(p["meta"].get(k) or 0.0 for p in per_seg))
+    meta["timing"] = {"ps": float(sum(p["meta"].get("timing", {}).get("ps") or 0.0
+                                      for p in per_seg))}
+    s["ps"]["steps"] = int(sum(p["ps"].get("steps") or 0 for p in per_seg))
+    s["ps"]["max_ps"] = int(max(p["ps"].get("max_ps") or 0 for p in per_seg))
+
+    with h5py.File(full_path, "a") as f:
+        f.attrs["summary_json"] = json.dumps(s)
+        gmeta = f.require_group("meta")
+        gmeta.attrs["norm_time"] = meta["norm_time"]
+        gmeta.attrs["physical_time"] = meta["physical_time"]
+        gmeta.attrs["percent_c"] = float(meta.get("percent_c") or 0.0)
+        gmeta.attrs["timing_ps"] = meta["timing"]["ps"]
+    return True
+
+
+def clear_building_segments(hash_str, output_folder):
+    """Delete stray ``*.building`` temps left by a crashed segment/VDS write."""
+    for pat in (f"{hash_str}_seg*.h5.building", f"{hash_str}_full.h5.building"):
+        for path in glob.glob(os.path.join(output_folder, pat)):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def build_vds(hash_str, output_folder, verify_chain=True):
+    """(Re)build <hash>_full.h5 as a Virtual Dataset over committed segments.
+
+    The virtual ``ps/y`` / ``ps/orders`` datasets concatenate each segment's
+    data along the time axis, so existing readers open <hash>_full.h5 and slice
+    it exactly as a single-file run. Physics attrs are copied from the first
+    segment; run-level stats (max_ps, mean_ps, hit_*) are aggregated.
+
+    Source paths are stored as basenames (folder-relative) so the run folder
+    stays movable. Refuses to overwrite a real (non-virtual) <hash>_full.h5 so
+    a segmented test can never clobber a pre-existing single-file dataset.
+
+    Returns the VDS path, or None if there are no committed segments.
+    """
+    # Only the unbroken 0,1,2,… prefix — never stitch around a missing segment.
+    segs = contiguous_committed_segments(hash_str, output_folder)
+    if not segs:
+        return None
+
+    n_save = y_dtype = o_dtype = base_attrs = None
+    cols = []                     # (basename, ncols) per segment, in order
+    total_cols = 0
+    last_end_index = 0
+    agg = dict(max_ps=0, sum_orders=0, count_orders=0, total_steps=0,
+               total_substeps=0, total_rejections=0,
+               hit_atmosphere=False, hit_atm_step=-1, hit_atm_r=0.0,
+               stopped_on_atmosphere=False)
+    prev_end = None
+    for idx, path in segs:
+        with h5py.File(path, "r") as f:
+            ps = f["ps"]
+            c = ps["y"].shape[1]
+            if base_attrs is None:
+                n_save = ps["y"].shape[0]
+                y_dtype = ps["y"].dtype
+                o_dtype = ps["orders"].dtype
+                base_attrs = dict(ps.attrs)
+            start_state = ps["start_state"][()]
+            end_state = ps["end_state"][()]
+            if verify_chain and prev_end is not None and not np.array_equal(prev_end, start_state):
+                raise RuntimeError(
+                    f"broken checkpoint chain: segment {idx} start_state does "
+                    f"not match the previous segment's end_state")
+            prev_end = end_state
+            last_end_index = int(ps.attrs.get("end_global_index", last_end_index))
+            agg["max_ps"] = max(agg["max_ps"], int(ps.attrs.get("max_ps", 0)))
+            agg["sum_orders"]   += int(ps.attrs.get("sum_orders", 0))
+            agg["count_orders"] += int(ps.attrs.get("count_orders", 0))
+            # Actual steps integrated (end - start) when the handoff attrs
+            # exist; a halted/stopped segment's nominal "steps" over-reports.
+            if "end_global_index" in ps.attrs and "start_global_index" in ps.attrs:
+                agg["total_steps"] += (int(ps.attrs["end_global_index"])
+                                       - int(ps.attrs["start_global_index"]))
+            else:
+                agg["total_steps"] += int(ps.attrs.get("steps", 0))
+            agg["total_substeps"]   += int(ps.attrs.get("total_substeps", 0))
+            agg["total_rejections"] += int(ps.attrs.get("total_rejections", 0))
+            if bool(ps.attrs.get("hit_atmosphere", False)):
+                s = int(ps.attrs.get("hit_atm_step", -1))
+                r = float(ps.attrs.get("hit_atm_r", 0.0))
+                if not agg["hit_atmosphere"]:
+                    agg.update(hit_atmosphere=True, hit_atm_step=s, hit_atm_r=r)
+                else:
+                    agg["hit_atm_step"] = min(agg["hit_atm_step"], s)
+                    agg["hit_atm_r"]    = min(agg["hit_atm_r"], r)
+            if bool(ps.attrs.get("stopped_on_atmosphere", False)):
+                agg["stopped_on_atmosphere"] = True
+        cols.append((os.path.basename(path), c))
+        total_cols += c
+
+    full = h5_path_for(hash_str, output_folder)
+    if os.path.exists(full):
+        try:
+            with h5py.File(full, "r") as f:
+                if "ps/y" in f and not f["ps/y"].is_virtual:
+                    raise RuntimeError(
+                        f"refusing to overwrite non-virtual {os.path.basename(full)} "
+                        f"(a real single-file run already lives there)")
+        except OSError:
+            pass  # unreadable existing file → safe to replace
+
+    y_layout = h5py.VirtualLayout(shape=(n_save, total_cols), dtype=y_dtype)
+    o_layout = h5py.VirtualLayout(shape=(total_cols,), dtype=o_dtype)
+    col = 0
+    for base, c in cols:
+        y_layout[:, col:col + c] = h5py.VirtualSource(base, "ps/y", shape=(n_save, c))
+        o_layout[col:col + c]    = h5py.VirtualSource(base, "ps/orders", shape=(c,))
+        col += c
+
+    # per-segment-only attrs that would be misleading on the stitched file
+    for k in ("segment_index", "start_global_index", "end_global_index"):
+        base_attrs.pop(k, None)
+
+    tmp = full + ".building"
+    with h5py.File(tmp, "w") as f:
+        ps = f.create_group("ps")
+        for k, v in base_attrs.items():
+            ps.attrs[k] = v
+        ps.attrs["t0"]                 = 0.0
+        ps.attrs["steps"]              = int(agg["total_steps"])
+        ps.attrs["max_ps"]             = int(agg["max_ps"])
+        ps.attrs["mean_ps"]            = (agg["sum_orders"] / agg["count_orders"]
+                                          if agg["count_orders"] > 0 else 0.0)
+        ps.attrs["sum_orders"]         = int(agg["sum_orders"])
+        ps.attrs["count_orders"]       = int(agg["count_orders"])
+        ps.attrs["hit_atmosphere"]     = agg["hit_atmosphere"]
+        ps.attrs["hit_atm_step"]       = agg["hit_atm_step"]
+        ps.attrs["hit_atm_r"]          = agg["hit_atm_r"]
+        ps.attrs["stopped_on_atmosphere"] = agg["stopped_on_atmosphere"]
+        ps.attrs["segmented"]          = True
+        ps.attrs["n_segments"]         = len(segs)
+        if "total_substeps" in base_attrs:      # adaptive runs only
+            ps.attrs["total_substeps"]   = int(agg["total_substeps"])
+            ps.attrs["total_rejections"] = int(agg["total_rejections"])
+        ps.attrs["start_global_index"] = 0
+        ps.attrs["end_global_index"]   = int(last_end_index)
+        ps.create_virtual_dataset("y", y_layout)
+        ps.create_virtual_dataset("orders", o_layout)
+    os.replace(tmp, full)
+    return full
+
+
 def build_filename(output_folder, stem, figure_tag, ext="png"):
     """Build the full path for a figure or output file."""
     return os.path.join(output_folder, f"{stem}_{figure_tag}.{ext}")
@@ -113,13 +416,35 @@ def write_dict(f, d, indent=0):
 
 
 def summarize(err):
-    """Return mean / max / rms of |err| as a dict."""
+    """Return mean / max / rms of |err| as a dict.
+
+    Tolerates err=None or an empty array (e.g. when an upstream analysis was
+    skipped or failed) by returning NaNs, so a partial run can still be logged.
+    """
+    if err is None:
+        return {"mean": np.nan, "max": np.nan, "rms": np.nan}
     ae = np.abs(err)
+    if ae.size == 0:
+        return {"mean": np.nan, "max": np.nan, "rms": np.nan}
     return {
         "mean": np.mean(ae),
         "max":  np.max(ae),
         "rms":  np.sqrt(np.mean(ae**2)),
     }
+
+
+def summarize_value_to_file(label, stats, f):
+    """Write an invariant's tail VALUE statistics; stats = (mean, min, max)."""
+    mean, lo, hi = (float(v) for v in stats)
+    f.write(f"  {label:<8}: mean = {mean:.6e}, min = {lo:.6e}, max = {hi:.6e}\n")
+
+
+def pphi_from_state(x, y, z, vx, vy, charge_sign):
+    """Canonical angular momentum P_phi = rho*v_phi - charge_sign*rho^2/r^3
+    (normalised units, same expression as the energy analysis)."""
+    rho2 = x * x + y * y
+    r = np.sqrt(rho2 + z * z)
+    return (x * vy - y * vx) - charge_sign * rho2 / (r * r * r)
 
 
 def summarize_to_file(label, err, f):
@@ -257,14 +582,24 @@ def save_results_h5_dipoleb(h5_path, results, summary):
                 gmeta.attrs[sk] = meta[sk]
 
 
-def load_results_h5_dipoleb(h5_path):
+def load_results_h5_dipoleb(h5_path, groups=None):
     """Load solver arrays and metadata from an HDF5 cache file.
 
     Note: dipoleb's save writes ``summary_json``, not ``params_json``,
-    so no params dict is returned. The cache filename is derived from
-    a hash of the run-params dict in the driver, not from anything in
-    the file itself, so consumers don't need it.
+    so no params dict is returned; the cache filename comes from
+    physics_hash(cfg) in the driver, not from the file.
+
+    groups : iterable of group names to actually read into memory, or None
+        for all of ("ps", "rk4", "rk45", "rkg"). This loads whole datasets,
+        so on a combined h5 (one file holding every solver) asking for all
+        groups pulls the full PS trajectory into RAM even when the caller
+        only wants, say, the RK4 overlay. Pass the group you need. Groups
+        that are present but not requested come back as None.
     """
+    if groups is None:
+        groups = ("ps", "rk4", "rk45", "rkg")
+    groups = set(groups)
+
     with h5py.File(h5_path, "r") as f:
         loaded = {"meta": {"timing": {}}}
 
@@ -280,14 +615,17 @@ def load_results_h5_dipoleb(h5_path):
             return out
 
         for k in ("ps", "rk4", "rk45", "rkg"):
-            loaded[k] = _read_grp(k)
+            loaded[k] = _read_grp(k) if k in groups else None
 
-        gmeta = f["meta"]
-        for a in gmeta.attrs:
-            if a.startswith("timing_"):
-                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
-            else:
-                loaded["meta"][a] = gmeta.attrs[a]
+        # PS-only streaming files and segment files have no "meta" group;
+        # leave the timing dict empty rather than fail.
+        if "meta" in f:
+            gmeta = f["meta"]
+            for a in gmeta.attrs:
+                if a.startswith("timing_"):
+                    loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+                else:
+                    loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
 
@@ -375,12 +713,15 @@ def load_results_h5_constb(h5_path):
         for k in ("ps", "rk4", "rk45"):
             loaded[k] = _read_grp(k)
 
-        gmeta = f["meta"]
-        for a in gmeta.attrs:
-            if a.startswith("timing_"):
-                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
-            else:
-                loaded["meta"][a] = gmeta.attrs[a]
+        # PS-only streaming files and segment files have no "meta" group;
+        # leave the timing dict empty rather than fail.
+        if "meta" in f:
+            gmeta = f["meta"]
+            for a in gmeta.attrs:
+                if a.startswith("timing_"):
+                    loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+                else:
+                    loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
 
@@ -434,12 +775,15 @@ def load_results_h5_hyperb(h5_path):
         for k in ("ps", "rk4", "rk45", "rkg"):
             loaded[k] = _read_grp(k)
 
-        gmeta = f["meta"]
-        for a in gmeta.attrs:
-            if a.startswith("timing_"):
-                loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
-            else:
-                loaded["meta"][a] = gmeta.attrs[a]
+        # PS-only streaming files and segment files have no "meta" group;
+        # leave the timing dict empty rather than fail.
+        if "meta" in f:
+            gmeta = f["meta"]
+            for a in gmeta.attrs:
+                if a.startswith("timing_"):
+                    loaded["meta"]["timing"][a.replace("timing_", "")] = gmeta.attrs[a]
+                else:
+                    loaded["meta"][a] = gmeta.attrs[a]
 
         return loaded
 
@@ -465,10 +809,21 @@ def summary_txt_dipoleb(
     solution_rk4=None, solution_rkg=None, y_rk45_common=None,
     # PS storage info
     ps_store_stride=1,
+    # Extra plot-side decimation applied to rel_drift_ps / rel_pphi_ps by the
+    # analysis layer, ON TOP of ps_store_stride. Needed to locate the tail
+    # window correctly — see step_ps below.
+    energy_stride=1,
     # npfloat type
     npfloat=np.float64,
     # Physics functions (injected to avoid circular imports)
     compute_mu_ps=None, compute_mu_rk=None, vector_potential=None,
+    # Whole-run max |delta mu|/mu0, taken from the full-run mu error array
+    # (ea.compute_mu_errors -> rel_mu_ps). None when PS did not run, in which
+    # case only the tail-window figures above are reported.
+    mu_max_run=None,
+    # Charge sign for the RKG canonical -> kinetic velocity conversion
+    # (v = p - charge_sign * A).
+    charge_sign=1,
 ):
     """Write the dipoleb summary text file, including tail-averaged energy
     and mu errors, Dragt diagnostics, and bounce/drift statistics."""
@@ -485,7 +840,7 @@ def summary_txt_dipoleb(
     j0_ps = j0_rk4 = j0_rk45 = j0_rkg = 0
 
     if USE_PS:
-        step_ps = ps_store_stride * ps_step
+        step_ps = ps_store_stride * ps_step * energy_stride
         j0_ps = _tail_start_index(rel_drift_ps.size, step_ps, tail_start, MAX_TAIL_STEPS)
 
     if USE_RK45:
@@ -518,8 +873,9 @@ def summary_txt_dipoleb(
             summarize_to_file("PS", rel_drift_ps[j0_ps:], f)
 
         # --- P_phi (canonical angular momentum) tail errors ---
-        # Same tail-window indices as the energy block — the arrays are sampled
-        # at the same cadence per solver, so reusing j0_* is correct.
+        # Same tail-window indices as the energy block; for PS this relies on
+        # compute_ps_invariants_fused aligning all three uniform series on the
+        # global index.
         f.write("\n=== |delta P_phi|/|P_phi_0| (tail average) ===\n")
         if USE_RK45 and rel_pphi_rk45 is not None:
             summarize_to_file("RK45", rel_pphi_rk45[j0_rk45:], f)
@@ -532,22 +888,31 @@ def summary_txt_dipoleb(
 
         # --- Mu tail errors ---
         f.write("\n=== |delta mu|/mu0 (tail average) ===\n")
+        # Tail VALUES of the invariants (not errors), collected alongside the
+        # error statistics and written in their own blocks below.
+        mu_vals, pphi_vals = {}, {}
 
-        if USE_RK45:
+        if USE_RK45 and mu0_rk45 is not None:
             y_tail = y_rk45_common[:, j0_rk45:]
             mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK45", np.abs(mu_tail - mu0_rk45) / mu0_rk45, f)
+            mu_vals["RK45"] = (mu_tail.mean(), mu_tail.min(), mu_tail.max())
+            _pp = pphi_from_state(y_tail[0], y_tail[1], y_tail[2], y_tail[3], y_tail[4], charge_sign)
+            pphi_vals["RK45"] = (_pp.mean(), _pp.min(), _pp.max()); del _pp
             del y_tail, mu_tail
             gc.collect()
 
-        if USE_RK4:
+        if USE_RK4 and mu0_rk4 is not None:
             y_tail = solution_rk4[:, j0_rk4:]
             mu_tail = compute_mu_rk(y_tail.T)
             summarize_to_file("RK4", np.abs(mu_tail - mu0_rk4) / mu0_rk4, f)
+            mu_vals["RK4"] = (mu_tail.mean(), mu_tail.min(), mu_tail.max())
+            _pp = pphi_from_state(y_tail[0], y_tail[1], y_tail[2], y_tail[3], y_tail[4], charge_sign)
+            pphi_vals["RK4"] = (_pp.mean(), _pp.min(), _pp.max()); del _pp
             del y_tail, mu_tail
             gc.collect()
 
-        if USE_RKG:
+        if USE_RKG and mu0_rkg is not None:
             r_tail = solution_rkg[j0_rkg:, 0:3]
             p_tail = solution_rkg[j0_rkg:, 3:6]
 
@@ -555,15 +920,18 @@ def summary_txt_dipoleb(
             for i in range(len(r_tail)):
                 A_tail[i] = vector_potential(r_tail[i])
 
-            v_tail = p_tail - A_tail
+            v_tail = p_tail - charge_sign * A_tail
             state_tail = np.hstack((r_tail, v_tail))
 
             mu_tail = compute_mu_rk(state_tail)
             summarize_to_file("RKG", np.abs(mu_tail - mu0_rkg) / mu0_rkg, f)
+            mu_vals["RKG"] = (mu_tail.mean(), mu_tail.min(), mu_tail.max())
+            _pp = pphi_from_state(r_tail[:, 0], r_tail[:, 1], r_tail[:, 2], v_tail[:, 0], v_tail[:, 1], charge_sign)
+            pphi_vals["RKG"] = (_pp.mean(), _pp.min(), _pp.max()); del _pp
             del r_tail, p_tail, A_tail, v_tail, state_tail, mu_tail
             gc.collect()
 
-        if USE_PS:
+        if USE_PS and mu0_ps is not None:
             step_ps_store = ps_store_stride * ps_step
 
             with h5py.File(cache_path, "r") as ps_h5:
@@ -580,8 +948,28 @@ def summary_txt_dipoleb(
 
             mu_tail = compute_mu_ps(y_tail)
             summarize_to_file("PS", np.abs(mu_tail - mu0_ps) / mu0_ps, f)
+            mu_vals["PS"] = (mu_tail.mean(), mu_tail.min(), mu_tail.max())
+            _pp = pphi_from_state(y_tail[0], y_tail[1], y_tail[2], y_tail[3], y_tail[4], charge_sign)
+            pphi_vals["PS"] = (_pp.mean(), _pp.min(), _pp.max()); del _pp
             del y_tail, mu_tail
             gc.collect()
+
+        # --- Invariant VALUES over the same tail window (normalised units) ---
+        # mu = v_perp^2 / (2|B|);  P_phi = rho v_phi - charge_sign rho^2 / r^3.
+        if mu_vals:
+            f.write("\n=== mu (tail average, normalised units) ===\n")
+            for lab in ("RK45", "RK4", "RKG", "PS"):
+                if lab in mu_vals:
+                    summarize_value_to_file(lab, mu_vals[lab], f)
+        if pphi_vals:
+            f.write("\n=== P_phi (tail average, normalised units) ===\n")
+            for lab in ("RK45", "RK4", "RKG", "PS"):
+                if lab in pphi_vals:
+                    summarize_value_to_file(lab, pphi_vals[lab], f)
+
+        if mu_max_run is not None:
+            f.write("\n=== |delta mu|/mu0 (whole run) ===\n")
+            f.write(f"  PS      : max = {mu_max_run:.6e}\n")
 
         # --- Dragt diagnostics ---
         if dragt_log["L_eff"] is not None:
@@ -594,8 +982,11 @@ def summary_txt_dipoleb(
             f.write(f"Adiabaticity (initial)  : {dragt_log['eps_initial']:.4f}\n")
             f.write(f"Adiabaticity (mean)     : {dragt_log['eps_mean']:.4f}\n")
             f.write(f"Adiabaticity (max)      : {dragt_log['eps_max']:.4f}\n")
+            if dragt_log.get("n_eq_crossings") is not None:
+                f.write(f"Equatorial crossings    : {dragt_log['n_eq_crossings']:,}\n")
             if dragt_log["hit_atmosphere"]:
-                f.write(f"Atmosphere flag         : HIT (r_min = {dragt_log['hit_atm_r']:.4f} R_E)\n")
+                _stopped = " — run stopped at impact" if dragt_log.get("stopped_on_atmosphere") else ""
+                f.write(f"Atmosphere flag         : HIT (r_min = {dragt_log['hit_atm_r']:.4f} R_E){_stopped}\n")
             else:
                 f.write(f"Atmosphere flag         : CLEAR\n")
 
@@ -604,9 +995,9 @@ def summary_txt_dipoleb(
             f.write("\n=== Bounce and Drift Motion ===\n")
 
             if bounce_results is None or bounce_results.get("full_mean_s") is None:
-                f.write("Bounce: not detected / insufficient mirror crossings\n")
+                f.write("Bounce: not detected / insufficient mirror points\n")
             else:
-                f.write(f"Mirror crossings        : {bounce_results['n_crossings']}\n")
+                f.write(f"Mirror points (v·B = 0) : {bounce_results['n_crossings']}\n")
                 f.write(f"Bounce period (s)       : {bounce_results['full_mean_s']:.6g}\n")
                 f.write(f"Bounce frequency (Hz)   : {bounce_results['frequency_hz']:.6g}\n")
 
@@ -791,6 +1182,69 @@ def summary_txt_hyperb(
 # =================  Dipoleb-only extras  =============================
 # =====================================================================
 
+def missing_vds_sources(h5_path, group="ps", dset="y"):
+    """Source files a virtual dataset references but cannot reach.
+
+    build_vds writes its VirtualSources by BASENAME, so a stitched
+    <hash>_full.h5 only resolves while the <hash>_segNNN.h5 files sit in the
+    same directory (HDF5 also falls back to the process cwd, and to
+    $HDF5_VDS_PREFIX when that is set). This matters because an unresolvable
+    VDS does NOT raise: HDF5 quietly returns the fill value, which is 0.0
+    here since create_virtual_dataset is called without one. Every read then
+    yields zeros, positions collapse to the origin, and the whole
+    post-processing run produces blank/NaN figures with no error anywhere.
+
+    Returns [] when the dataset is not virtual or every source resolves.
+    """
+    out = []
+    try:
+        with h5py.File(h5_path, "r") as f:
+            if group not in f or dset not in f[group]:
+                return out
+            d = f[group][dset]
+            if not d.is_virtual:
+                return out
+            search = []
+            prefix = os.environ.get("HDF5_VDS_PREFIX")
+            if prefix:
+                search.append(prefix)
+            search.append(os.path.dirname(os.path.abspath(h5_path)))
+            search.append(os.getcwd())
+            seen = set()
+            for src in d.virtual_sources():
+                name = src.file_name
+                if name in seen:
+                    continue
+                seen.add(name)
+                if os.path.isabs(name):
+                    if not os.path.exists(name):
+                        out.append(name)
+                    continue
+                if not any(os.path.exists(os.path.join(r, name)) for r in search):
+                    out.append(name)
+    except OSError:
+        pass
+    return out
+
+
+def check_vds_readable(h5_path, group="ps", dset="y"):
+    """Raise with an actionable message if a VDS can't reach its segments."""
+    missing = missing_vds_sources(h5_path, group=group, dset=dset)
+    if not missing:
+        return
+    shown = ", ".join(missing[:5]) + (f", ... (+{len(missing) - 5} more)"
+                                      if len(missing) > 5 else "")
+    raise FileNotFoundError(
+        f"{os.path.basename(h5_path)} is a virtual dataset whose segment files "
+        f"cannot be found: {len(missing)} missing [{shown}].\n"
+        f"  HDF5 would NOT error on this — it returns the 0.0 fill value, so every "
+        f"figure would come out blank or NaN with no warning.\n"
+        f"  Segment sources are stored by basename, so fix it by either:\n"
+        f"    - putting the *_segNNN.h5 files (or symlinks to them) next to "
+        f"{os.path.basename(h5_path)}, or\n"
+        f"    - running with HDF5_VDS_PREFIX=/path/to/segments")
+
+
 def expand_h5_to_full(compact_arr):
     """Expand a 9-row compact h5 array back to 17-row full layout.
     If the array already has 17 rows, return it unchanged."""
@@ -823,6 +1277,7 @@ def master_csv(
     method_records,
     bounce_results=None,
     drift_results=None,
+    mu_max_run=None,
 ):
     """Build records and append to master_simulation_log.csv with duplicate detection."""
     # Trajectory-derived diagnostics (eps_*, hit_atm_*, bounce/drift) come
@@ -864,11 +1319,14 @@ def master_csv(
             "energy_max_err": e["max"],
             "mu_mean_err": mu["mean"],
             "mu_max_err": mu["max"],
+            "mu_max_run": mu_max_run if is_ps else None,
             # --- PS-only trajectory diagnostics (blank on non-PS rows) ---
             "eps_initial":        dragt_log["eps_initial"]    if is_ps else None,
             "eps_mean":           dragt_log["eps_mean"]       if is_ps else None,
             "eps_max":            dragt_log["eps_max"]        if is_ps else None,
+            "n_eq_crossings":     dragt_log.get("n_eq_crossings") if is_ps else None,
             "hit_atmosphere":     dragt_log["hit_atmosphere"] if is_ps else None,
+            "stopped_on_atmosphere": bool(dragt_log.get("stopped_on_atmosphere", False)) if is_ps else None,
             "hit_atm_r":          dragt_log["hit_atm_r"]      if is_ps else None,
             "n_mirror_crossings": _b.get("n_crossings")       if is_ps else None,
             "bounce_period_s":    _b.get("full_mean_s")       if is_ps else None,

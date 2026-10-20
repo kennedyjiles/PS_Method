@@ -187,18 +187,18 @@ def ke_error(
 
     endpoints = []
     if use_rk45 and "rk45" in lines:
-        endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]), "RK45", lines["rk45"].get_color()))
+        endpoints.append((t_eval_rk45[-1] * time_factor, np.abs(rel_drift_rk45[-1]), "RK45", lines["rk45"].get_color()))
     if use_rk4 and "rk4" in lines:
-        endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]), "RK4", lines["rk4"].get_color()))
-    endpoints.append((t_eval_ps[-1], np.abs(rel_drift_ps[-1]),
+        endpoints.append((t_eval_rk4[-1] * time_factor, np.abs(rel_drift_rk4[-1]), "RK4", lines["rk4"].get_color()))
+    endpoints.append((t_eval_ps[-1] * time_factor, np.abs(rel_drift_ps[-1]),
                        f"PS{ul.ps_order_label_from_orders(orders_used)}", lines["ps"].get_color()))
     if ext_data is not None:
         t_ext, drift_ext, ps_order_ext = ext_data
-        endpoints.append((t_ext[-1], np.abs(drift_ext[-1]),
+        endpoints.append((t_ext[-1] * time_factor, np.abs(drift_ext[-1]),
                           f"PS{ps_order_ext}*", lines["ext"].get_color()))
     if extb_data is not None:
         t_extb, drift_extb, ps_order_extb = extb_data
-        endpoints.append((t_extb[-1], np.abs(drift_extb[-1]),
+        endpoints.append((t_extb[-1] * time_factor, np.abs(drift_extb[-1]),
                           f"PS{ps_order_extb}*", lines["extb"].get_color()))
 
     ul.place_endpoint_labels(fig, ax, endpoints)
@@ -371,22 +371,22 @@ def ke_error_multi(
 
     endpoints = []
     if use_rk45 and "rk45" in lines:
-        endpoints.append((t_eval_rk45[-1], np.abs(rel_drift_rk45[-1]),
+        endpoints.append((t_eval_rk45[-1] * time_factor, np.abs(rel_drift_rk45[-1]),
                           "RK45", lines["rk45"].get_color()))
     if use_rk4 and "rk4" in lines:
-        endpoints.append((t_eval_rk4[-1], np.abs(rel_drift_rk4[-1]),
+        endpoints.append((t_eval_rk4[-1] * time_factor, np.abs(rel_drift_rk4[-1]),
                           "RK4", lines["rk4"].get_color()))
 
     for order, drift, color, ls in ps_drifts:
         key = f"ps{order}"
-        endpoints.append((t_eval_ps[-1], np.abs(drift[-1]),
+        endpoints.append((t_eval_ps[-1] * time_factor, np.abs(drift[-1]),
                           f"PS{order}", ps_lines[key].get_color()))
 
     if ext_data is not None:
-        endpoints.append((t_ext[-1], np.abs(drift_ext[-1]),
+        endpoints.append((t_ext[-1] * time_factor, np.abs(drift_ext[-1]),
                           f"PS{ps_order_ext}*", lines["ext"].get_color()))
     if extb_data is not None:
-        endpoints.append((t_extb[-1], np.abs(drift_extb[-1]),
+        endpoints.append((t_extb[-1] * time_factor, np.abs(drift_extb[-1]),
                           f"PS{ps_order_extb}*", lines["extb"].get_color()))
 
     ul.place_endpoint_labels(fig, ax, endpoints)
@@ -448,15 +448,15 @@ def trajectory_error(
 
     endpoints = []
     if use_rk45 and "rk45" in lines:
-        endpoints.append((t_eval_rk45[-1], np.abs(rel_traj_err_rk45[-1]),
+        endpoints.append((t_eval_rk45[-1] * time_factor, np.abs(rel_traj_err_rk45[-1]),
                           "RK45", lines["rk45"].get_color()))
     if use_rk4 and "rk4" in lines:
-        endpoints.append((t_eval_rk4[-1], np.abs(rel_traj_err_rk4[-1]),
+        endpoints.append((t_eval_rk4[-1] * time_factor, np.abs(rel_traj_err_rk4[-1]),
                           "RK4", lines["rk4"].get_color()))
     if use_external_h5 and "ext" in lines:
-        endpoints.append((t_ext[-1], np.abs(rel_traj_err_ext[-1]),
+        endpoints.append((t_ext[-1] * time_factor, np.abs(rel_traj_err_ext[-1]),
                           f"PS{ps_order_ext}*", lines["ext"].get_color()))
-    endpoints.append((t_eval_ps[-1], np.abs(rel_traj_err_ps[-1]),
+    endpoints.append((t_eval_ps[-1] * time_factor, np.abs(rel_traj_err_ps[-1]),
                       f"PS{ul.ps_order_label_from_orders(orders_used)}", lines["ps"].get_color()))
 
     ul.place_endpoint_labels(fig, ax, endpoints)
@@ -533,22 +533,22 @@ def trajectory_error_multi(
 
     endpoints = []
     if use_rk45 and "rk45" in lines:
-        endpoints.append((t_eval_rk45[-1], np.abs(rel_traj_err_rk45[-1]),
+        endpoints.append((t_eval_rk45[-1] * time_factor, np.abs(rel_traj_err_rk45[-1]),
                           "RK45", lines["rk45"].get_color()))
     if use_rk4 and "rk4" in lines:
-        endpoints.append((t_eval_rk4[-1], np.abs(rel_traj_err_rk4[-1]),
+        endpoints.append((t_eval_rk4[-1] * time_factor, np.abs(rel_traj_err_rk4[-1]),
                           "RK4", lines["rk4"].get_color()))
 
     for order, traj_err, color, ls in ps_traj_errs:
         key = f"ps{order}"
-        endpoints.append((t_eval_ps[-1], np.abs(traj_err[-1]),
+        endpoints.append((t_eval_ps[-1] * time_factor, np.abs(traj_err[-1]),
                           f"PS{order}", ps_lines[key].get_color()))
 
     if ext_data is not None:
-        endpoints.append((t_ext[-1], np.abs(traj_err_ext[-1]),
+        endpoints.append((t_ext[-1] * time_factor, np.abs(traj_err_ext[-1]),
                           f"PS{ps_order_ext}*", lines["ext"].get_color()))
     if extb_data is not None:
-        endpoints.append((t_extb[-1], np.abs(traj_err_extb[-1]),
+        endpoints.append((t_extb[-1] * time_factor, np.abs(traj_err_extb[-1]),
                           f"PS{ps_order_extb}*", lines["extb"].get_color()))
 
     ul.place_endpoint_labels(fig, ax, endpoints)

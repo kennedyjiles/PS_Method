@@ -36,7 +36,7 @@ use_gyroradius_L_correction: false  # Uses gyroradius-corrected L_eff for T_gyro
 solvers:
   ps: true
   rk4: false
-  rk45: false
+  rk45: false             # adaptive Dormand–Prince, compiled port of SciPy's RK45 (same step sequence); timed without dense output
   rkg: false
   adaptive: false         # true = adaptive PS stepping
 
@@ -47,6 +47,15 @@ plotting:
   slice_mode: last        # "first" or "last" — which gyro window to slice
   gyro_window: last       # "first" or "last" — which gyro window for detailed view
   n_gyro: 150              # number of gyroperiods in slice window
+  invariants_only: false  # true = emit ONLY <hash>_invariants.png and skip every
+                          # other figure, PLUS the Dragt / mu-deviation /
+                          # bounce-drift streams that exist only to fill in
+                          # summary diagnostics. Cuts a long replot to roughly
+                          # the cost of the single fused invariant pass (~4x
+                          # faster on cec255). The summary is still written, but
+                          # its Dragt / bounce-drift / mu-window fields come out
+                          # blank — so use it for a figure-only rerun, not to
+                          # regenerate a full summary.
 
 window_time: 300.0         # time window for slice plots (normalized units)
 
@@ -55,6 +64,8 @@ window_time: 300.0         # time window for slice plots (normalized units)
 # Set output_root to prepend a path:
 #   output_root: "thesis/chapter3"  → thesis/chapter3/data/dipoleb/<config-name>/
 # Leave null for the default layout.
+# output_root: /Volumes/Extreme SSD
+# output_root: /Volumes/Extreme
 output_root: null
 read_data: true                # scan for cached runs and load from disk
 
@@ -70,10 +81,34 @@ manual_h5_path: null      # path to specific h5 file for manual loading
 ps_decimate: 1            # save every Nth PS step (1 = save all)
 ps_order: 40              # max power series order (system will truncate)
 ps_chunk_steps: 10000     # number of PS steps per h5 streaming chunk
+ps_horner: false          # evaluate each step's series increment with Horner's rule (highest order
+                          # first, numpy.polyval's scheme) instead of the running sum. Same
+                          # coefficients and convergence test; only the summation order changes.
+                          # Lowers the round-off floor of the energy error ~10x at 65 steps/gyro
+                          # (no gain near 20). NOT bit-identical with existing runs; hashed only
+                          # when true, so every existing cache keeps its hash.
+
+# Checkpointed segmented output: split a long run into fixed-size segments,
+# each written to its own cleanly-closed <hash>_segNNN.h5 and stitched into
+# <hash>_full.h5 as an HDF5 Virtual Dataset. A crash costs at most the
+# current segment; relaunching resumes from the last committed one.
+# 0 (or >= total gyroperiods) = disabled → single <hash>_full.h5 as before.
+ps_segment_gyroperiods: 1e6   # gyroperiods per segment (0 = no segmentation)
+
+# Offload-resume: when true, resume from the highest LOCAL segment (earlier ones
+# moved to other storage) instead of requiring the contiguous prefix from seg000,
+# and skip the local VDS stitch. For runs too big to keep or move back — rebuild
+# the stitched _full.h5 at the destination with scripts/build_vds.py afterward.
+ps_segment_offload: false
+
+# Data-only: write the h5 (segments + VDS) + provenance config, then stop —
+# no plots or trajectory analysis. For long production runs; replot later
+# from the copied yml once the segments are reassembled.
+data_only: false
 
 # --- RK45 Tolerances ---
-rtol_rk45: 1.0e-8         # RK45 relative tolerance
-atol_rk45: 1.0e-10        # RK45 absolute tolerance
+rtol_rk45: 1.0e-18         # RK45 relative tolerance
+atol_rk45: 1.0e-20        # RK45 absolute tolerance
 
 # --- System Tolerances ---
 cache_velocity_rtol: 0.005   # relative tolerance for cache velocity mismatch warning
@@ -103,12 +138,12 @@ round_decimals: 1         # decimal places for step size rounding
 # --- Adaptive PS Settings ---
 # Only used when solvers.adaptive = true. Safe to ignore for fixed-step runs.
 ps_adaptive:
-  order_low: 50             # minimum PS order for adaptive stepping
-  order_high: 300           # maximum PS order for adaptive stepping
-  grow_factor: 1.5          # step-size growth multiplier on success
-  shrink_factor: 0.5        # step-size shrink multiplier on failure
-  steps_per_local_gyro: 200 # target steps per local gyroperiod
-  min_fast_path_N: 100      # minimum steps before fast-path kicks in
+  order_low: 50  # only sets how fast dt recovers toward the |B|-derived dt after a rejected substep (growth is capped at dt_B)
+  order_high: 60  # reject + shrink a substep that needs more than this PS order (was 300: never fired below ps_order=100)
+  grow_factor: 1.5  # dt recovery multiplier after a rejected substep; growth is capped at the |B|-derived dt
+  shrink_factor: 0.5  # dt multiplier after a rejected substep
+  steps_per_local_gyro: 10  # substeps per LOCAL gyroperiod in adaptive regions (was 200: ~5x the cost optimum of 6-10, same ~1e-13 energy error)
+  min_fast_path_N: 10  # fast (fixed-step) path allowed while >= this many ps_steps fit in one local gyroperiod; MUST be <= steps_per_gyro.ps or the fast path never runs (was 100 with 20 steps/gyro -> always adaptive)
 
 # --- Dragt Monitor ---
 dragt_monitor_rtol: 1.0e-4  # relative tolerance for Dragt conservation monitor
@@ -117,6 +152,15 @@ dragt_monitor_rtol: 1.0e-4  # relative tolerance for Dragt conservation monitor
 # Particle is marked as atmosphere-impacted when r < r_atmosphere (in R_E).
 # 1.0 = Earth's surface; 1.0157 ≈ 100 km altitude.
 r_atmosphere: 1.0157
+
+# Stop the run at the first sample with r < r_atmosphere (adaptive PS only;
+# the fixed-step integrator ignores this). The impact sample is kept as the
+# final output point and the run is treated like a halted adaptive run: the
+# h5 covers the shortened span and the summary/plots are reconciled to it.
+# Hash-neutral unless BOTH this is true AND solvers.adaptive is true, so
+# existing cache files keep their names; a stop-run (which can truncate the
+# trajectory) gets its own hash, as does its r_atmosphere threshold.
+stop_on_atmosphere: false
 
 # --- Bounce/Drift Detection ---
 # Controls how mirror-bounce crossings and azimuthal drift are detected.

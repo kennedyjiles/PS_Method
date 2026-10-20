@@ -1,31 +1,22 @@
 #!/usr/bin/env python3
 """
-Batch Runner
-=============
-Does a parameter sweep of dipoleb.py across (energy, L-shell, pitch angle)
-and consolidates results into a single master CSV per batch group. These match the paper
-runs in the appendix for protons and electrons. Each run produces its own output folder with plots, h5, etc.
+Batch runner for the proton/electron four-method comparison tables (paper appendix).
 
-Supports parallel execution on multi-core machines (e.g. M4 Max with 16 cores).
-Each worker gets its own minimal YAML config file (merged with base.yml at load time)
-to avoid race conditions.
-
-This script does NOT modify dipoleb.py or any core library files. It writes a
-minimal YAML config per run, then calls `python dipoleb.py <path/to/config.yml>`.
-dipoleb.py's __main__ block detects the .yml extension and passes it to load_config(),
-which auto-merges with base.yml via the `base_config` key.
-
-Output layout:
-    data/dipoleb/<group>/<run_key>/           per-run output (plots, h5, etc.)
-    data/dipoleb/<group>/master_simulation_log.csv   consolidated CSV for the batch
+Runs dipoleb.py over a fixed (energy, pitch) grid at L=5 with PS/RK4/RK45/RKG
+enabled, one subprocess per cell, then merges the per-run CSVs into one
+master_simulation_log.csv for the group.
 
 Usage:
-    python scripts/batch_runner_eandp.py --Phase 1      # phase 1, n_cores-2 workers
-    python scripts/batch_runner_eandp.py --workers 8    # cap workers (there are only 8 protons and 8 electrons, so 8 is enough)
-    python scripts/batch_runner_eandp.py --resume       # skip already-completed runs
-    python scripts/batch_runner_eandp.py --adaptive     # use adaptive PS stepping (NOT PART OF 2026 PAPER)
+    python scripts/batch_runner_eandp.py --phase 1 [--workers N] [--dry-run] [--resume]
+        --phase 1  protons   -> data/dipoleb/protons/
+        --phase 2  electrons -> data/dipoleb/electrons/
+    python scripts/batch_runner_eandp.py --single E1.0e+04_L5.00_P30.0
+    python scripts/batch_runner_eandp.py --phase 2 --rerun-chaotic --adaptive
 
-Output always lands in data/dipoleb/<group>/ (DEFAULT_GROUPS in this script).
+Each cell gets a minimal YAML in scripts/batch_tmp/ (base_config -> base.yml,
+merged by load_config). Progress is kept by run key in
+scripts/batch_progress.json. --adaptive and --rerun-chaotic are not part of
+the paper runs.
 """
 
 import os
@@ -110,7 +101,7 @@ DEFAULT_GROUPS = {
 # comparison rows in the table. (base.yml has rk4/rk45/rkg false.)
 OVERRIDES = {
     1: {"solvers": {"rk4": True, "rk45": True, "rkg": True},},
-    2: {"solvers": {"rk4": True, "rk45": True, "rkg": False},},
+    2: {"solvers": {"rk4": True, "rk45": True, "rkg": True},},
 }
 
 
@@ -121,10 +112,7 @@ OVERRIDES = {
 #
 # Key:   (energy_eV, x_initial, pitch_deg)
 # Value: dict of solver flags to force False (True wouldn't make sense here)
-SKIP_SOLVERS = {
-    (1e4, 5, 30.0): {"rk45": False},   
-    (1e6, 5, 60.0): {"rk45": False},   
-}
+SKIP_SOLVERS = {}
 
 
 def _deep_merge(base, override):
@@ -159,9 +147,6 @@ def build_run_list(phase):
                 "pitch_deg":  pitch,
                 "phase":      phase,
             }
-            # Only include gyroperiods if set. None means the phase is
-            # driven by total_steps (set via OVERRIDES) and we shouldn't
-            # write a gyroperiods value to the per-worker yml.
             if gyros is not None:
                 run["gyroperiods"] = gyros
             if steps_per_gyro is not None:
@@ -238,6 +223,9 @@ def build_chaotic_rerun_list(group):
             "gyroperiods": float(row["gyroperiods"]),
             "phase": "rerun",
             "use_adaptive": True,
+            # Carry the particle from the CSV; the "rerun" phase has no entry
+            # in PARTICLE, which used to re-run every electron as a proton.
+            "particle": str(row["particle"]).strip().lower() if "particle" in row and pd.notna(row["particle"]) else None,
         })
 
     print(f"  Found {len(runs)} chaotic runs to re-run with adaptive stepping.")
@@ -291,13 +279,11 @@ def write_config(run, config_path, group):
         "energy_eV":   float(run["energy_eV"]),
         "x_initial":   float(run["x_initial"]),
         "pitch_deg":   float(run["pitch_deg"]),
-        "particle":    PARTICLE.get(run["phase"], "proton"),
+        "particle":    run.get("particle") or PARTICLE.get(run["phase"], "proton"),
         "read_data":   False,
         "solvers":     sweep_solvers,
     }
-    # Only include gyroperiods in sweep when it's actually set per-run;
-    # otherwise let OVERRIDES (e.g. {"gyroperiods": null, "total_steps": N})
-    # or base.yml decide. Same pattern as phi_deg below.
+    # gyroperiods / phi_deg only when set per run; otherwise OVERRIDES or base.yml decide.
     if "gyroperiods" in run:
         sweep["gyroperiods"] = float(run["gyroperiods"])
     # Only include phi_deg in sweep if it's actually a per-run value;
@@ -400,14 +386,20 @@ def run_parallel(runs, max_workers, group, dry_run=False):
                 if status == "completed":
                     print(f"  [{completed_total:>4d}/{total}] ok {key}  "
                           f"{elapsed:.1f} min")
-                    progress["completed"].append(key)
+                    if key not in progress["completed"]:
+                        progress["completed"].append(key)
+                    if key in progress["failed"]:          # success supersedes an old failure
+                        progress["failed"].remove(key)
                 else:
                     print(f"  [{completed_total:>4d}/{total}] FAIL {key}  "
                           f"{status} after {elapsed:.1f} min")
                     if err:
                         for line in err.split("\n")[-3:]:
                             print(f"           {line}")
-                    progress["failed"].append(key)
+                    if key not in progress["failed"]:
+                        progress["failed"].append(key)
+                    if key in progress["completed"]:       # failure supersedes an old success
+                        progress["completed"].remove(key)
 
                 # Save progress periodically (every 10 completions)
                 if completed_total % 10 == 0:
@@ -474,13 +466,14 @@ def run_sequential(runs, group, dry_run=False):
 
 
 def main():
+    _default_workers = max(1, (os.cpu_count() or 2) - 2)
     parser = argparse.ArgumentParser(
         description="Batch parameter sweep runner for dipoleb.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s --dry-run                          Preview Phase 1 (default)
-  %(prog)s                                    Run Phase 1 with n_cores-1 workers
+  %(prog)s                                    Run Phase 1 with n_cores-2 workers
   %(prog)s --workers 4                        Cap to 4 workers
   %(prog)s --adaptive                         Use adaptive PS stepping
   %(prog)s --resume                           Skip cells already completed
@@ -491,13 +484,6 @@ Examples:
                              "Phase 1 = protons (4 energies × 2 pitches at "
                              "L=5 = 8 cells); Phase 2 = electrons. Each phase "
                              "has its own group (protons / electrons).")
-    # NOTE: --group intentionally removed. Output group is fixed by
-    # DEFAULT_GROUPS[phase] in this runner so e/p runs always land in
-    # data/dipoleb/protons/ or data/dipoleb/electrons/ (not the walt folder,
-    # which the walt runner owns).
-    # Default to (n_cores - 2), detected automatically, so the machine stays
-    # responsive without the user having to look up their core count.
-    _default_workers = max(1, (os.cpu_count() or 2) - 2)
     parser.add_argument("--workers", type=int, default=_default_workers,
                         help=f"Number of parallel workers "
                              f"(default: auto = n_cores-2 = {_default_workers} on this machine). "
@@ -638,7 +624,7 @@ def consolidate_csv_logs(group):
     frames = []
     for f in csv_files:
         try:
-            frames.append(pd.read_csv(f))
+            frames.append(pd.read_csv(f, dtype={"run_id": str}))  # keep hex hashes like 052699 intact
         except Exception as e:
             print(f"  Warning: could not read {f}: {e}")
 

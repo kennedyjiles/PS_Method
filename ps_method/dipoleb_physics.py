@@ -1,21 +1,18 @@
 """
-Physics kernels and analysis for charged particle motion in a magnetic dipole.
+Physics kernels for charged-particle motion in a magnetic dipole (dipoleb).
 
-Core solvers:
-    lorentz_force                — dipole Lorentz force (numba-compiled)
-    ps_integrate                 — power series integrator (chunked, streamed to h5)
-    hamiltonian_rhs              — Hamilton's equations for symplectic integrator
-    rkgl4_hamiltonian_step_fp    — single Gauss-Legendre step (s=2, order 4), fixed-point solver (active)
-    rkgl4_hamiltonian_step       — same step via Newton/finite-diff Jacobian (retained for reference, not called)
-    rkgl4_hamiltonian            — full symplectic integration loop
+Solvers (all numba-compiled via maybe_njit):
+    lorentz_force_inplace        — dipole Lorentz force, dy/dt written into a buffer (RK4 / RK45 kernels)
+    ps_integrate                 — power series integrator over a block of fixed steps
+    hamiltonian_rhs_inplace      — Hamilton's equations in canonical (q, p) coordinates (RKG kernel)
+    _rkgl4_step_fp_inplace       — one 2-stage Gauss–Legendre step, fixed-point stage solver
+    rkgl4_hamiltonian            — symplectic RKG integration loop
 
 Vector potential:
-    vector_potential             — A_phi for canonical momentum
+    vector_potential             — A = (y, -x, 0)/r^3 for the canonical momentum
 
-Streaming / decimation:
-    run_ps_streaming_with_decimation — full PS run with decimated output
-
-
+Streaming:
+    run_ps_streaming_with_decimation — fixed-step PS run streamed to h5 in chunks
 """
 
 import numpy as np
@@ -31,31 +28,44 @@ five = ul.npfloat(5.0)
 twopointfive = ul.npfloat(2.5)
 
 @ul.maybe_njit
-def lorentz_force(t, d, charge_sign):
-    # t is required by the solver's RHS call signature (solve_ivp /
-    # rk4_fixed_step); unused here.
-    x, y, z, vx, vy, vz = d
+def lorentz_force_inplace(d, charge_sign, out):
+    """Dipole Lorentz force: writes dy/dt = (v, charge_sign * v x B) into ``out``.
+
+    B = -(3xz, 3yz, 3z^2 - r^2) / r^5 in normalised units. In-place so the RK
+    kernels allocate nothing per evaluation.
+    """
+    x, y, z, vx, vy, vz = d[0], d[1], d[2], d[3], d[4], d[5]
     r2 = x**two + y**two + z**two
     r5inv = r2**(-twopointfive) if r2 != 0 else ul.npfloat(0.0)
 
-    # Magnetic field components
     Bx = -three * x * z * r5inv
     By = -three * y * z * r5inv
     Bz = -(three * z**two - r2) * r5inv
 
-    # Lorentz force
-    ax = charge_sign * (vy * Bz - vz * By)
-    ay = charge_sign * (vz * Bx - vx * Bz)
-    az = charge_sign * (vx * By - vy * Bx)
+    out[0] = vx
+    out[1] = vy
+    out[2] = vz
+    out[3] = charge_sign * (vy * Bz - vz * By)
+    out[4] = charge_sign * (vz * Bx - vx * Bz)
+    out[5] = charge_sign * (vx * By - vy * Bx)
 
-    return np.array([vx, vy, vz, ax, ay, az], dtype=ul.npfloat)
 
 @ul.maybe_njit
-def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelta):
+def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelta,
+                 warn=True, horner=False):
+    """Integrate ``steps_ps`` fixed steps of size ``timedelta`` by power series.
+
+    Each step builds Taylor coefficients up to ``ps_order`` (stopping early
+    once the largest relative contribution drops below ``tol``) for the 6
+    state rows plus 11 auxiliary rows (r^2, r^-5, and the products that make
+    the B-field recurrence polynomial).
+
+    Returns (state_history (17, steps_ps + 1), orders_used (steps_ps + 1,)).
+    """
     n_total = 17
     state_history = np.zeros((n_total, steps_ps + 1), dtype=ul.npfloat)
 
-    # For sanity tracking of all variables
+    # row indices of the 17-row PS state
     x, y, z, vx, vy, vz = 0, 1, 2, 3, 4, 5
     r2_aux, a_aux, b_aux, c_aux, d_aux, e_aux, f_aux, g_aux = 6, 7, 8, 9, 10, 11, 12, 13
     Bx_aux, By_aux, Bz_aux = 14, 15, 16
@@ -120,10 +130,15 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
             c[vy, i+1] = charge_sign * cauchy_sum_inline(c[a_aux], c[f_aux], i) * oip1[i]
             c[vz, i+1] = charge_sign * cauchy_sum_inline(c[a_aux], c[g_aux], i) * oip1[i]
 
-            c[r2_aux, i+1] = cauchy_sum_inline(c[x], c[x], i+1) + cauchy_sum_inline(c[y], c[y], i+1) + cauchy_sum_inline(c[z], c[z], i+1)
+            # self-convolutions shared by r2 and b; operation order matches the
+            # original inline expressions so results are bit-identical.
+            xx = cauchy_sum_inline(c[x], c[x], i+1)
+            yy = cauchy_sum_inline(c[y], c[y], i+1)
+            zz = cauchy_sum_inline(c[z], c[z], i+1)
+            c[r2_aux, i+1] = xx + yy + zz
 
-            # (1) incremental division — compute only the new zeta[i]; zeta[0..i-1]
-            #     persist from earlier orders (a_aux/r2_aux coeffs are fixed once set).
+            # Series division a = zeta * r2: only the new zeta[i] is needed,
+            # earlier entries persist across orders.
             if i >= 1:
                 acc = c[a_aux, i]
                 for jj in range(1, i + 1):
@@ -135,7 +150,7 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
                 a_prime += (i - k + 1) * zeta[k] * c[r2_aux, i - k + 1]
             c[a_aux, i+1] = - (five / (two * (i + 1))) * a_prime
 
-            c[b_aux, i+1] = two * cauchy_sum_inline(c[z], c[z], i+1) - cauchy_sum_inline(c[x], c[x], i+1) - cauchy_sum_inline(c[y], c[y], i+1)
+            c[b_aux, i+1] = two * zz - xx - yy
             c[c_aux, i+1] = cauchy_sum_inline(c[y], c[z], i+1)
             c[d_aux, i+1] = cauchy_sum_inline(c[x], c[z], i+1)
 
@@ -143,14 +158,11 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
             c[f_aux, i+1] = -(three * cauchy_sum_inline(c[d_aux], c[vz], i+1) - cauchy_sum_inline(c[b_aux], c[vx], i+1))
             c[g_aux, i+1] = -(three * (cauchy_sum_inline(c[c_aux], c[vx], i+1) - cauchy_sum_inline(c[d_aux], c[vy], i+1)))
 
-            # (2) B-field Taylor coefficients dropped — unused here; output B is
-            #     computed directly from the advanced state below.
-
-            # (4) finite check on the divergence source only
+            # Bail out if the r^-5 series blows up.
             if not np.isfinite(c[a_aux, i+1]):
                 break
 
-            # (3) accumulate + convergence over the 6 state rows only
+            # Accumulate the increment; convergence is judged on the 6 state rows.
             max_contrib = ul.npfloat(0.0)
             for k in range(6):
                 nt = c[k, i+1] * power
@@ -168,6 +180,20 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
 
             power *= timedelta
             i += 1
+
+        if horner:
+            # Re-evaluate the converged increment with Horner's rule (highest
+            # order first, numpy.polyval's scheme). Same coefficients and the
+            # same convergence decision as the running sum above; only the
+            # summation order changes. Combining the small high-order terms
+            # first avoids re-rounding the dominant c_1*dt term once per order,
+            # which lowers the round-off floor of the energy error (~10x at
+            # 65 steps/gyro, no gain at ~20). Not bit-identical to horner=False.
+            for k in range(6):
+                acc = ul.npfloat(0.0)
+                for q in range(i, 0, -1):
+                    acc = acc * timedelta + c[k, q]
+                sum_terms[k] = acc * timedelta
 
         state_history[0:6, j] = state_history[0:6, j - 1] + sum_terms[0:6]
 
@@ -199,7 +225,11 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
         if max_contrib > tol:
             n_unconverged += 1
 
-    if n_unconverged > 0:
+    # In fixed-step runs unconverged steps enter the output, so this is a real
+    # accuracy alarm. Adaptive probe calls pass warn=False: their unconverged
+    # steps are rejected by the quality mask (orders >= cap) and never reach
+    # the output — rejections are reported in the adaptive summary instead.
+    if warn and n_unconverged > 0:
         print("  [dipoleb ps_integrate] WARNING:", n_unconverged, "/", steps_ps,
               "steps hit ps_order=", ps_order, "without reaching tol=", tol)
 
@@ -211,6 +241,7 @@ def ps_integrate(ps_order, steps_ps, initial_pos_vel, tol, charge_sign, timedelt
 
 @ul.maybe_njit
 def vector_potential(r):
+    """A = (y, -x, 0) / r^3, the normalised dipole vector potential."""
     x, y, z = r
     r2 = x**2 + y**2 + z**2
     r3 = r2 * np.sqrt(r2)
@@ -225,9 +256,11 @@ def vector_potential(r):
     return np.array([Ax, Ay, Az], dtype=ul.npfloat)
 
 @ul.maybe_njit
-def hamiltonian_rhs(t, d, charge_sign):
-    # t is required by the solver's RHS call signature (solve_ivp /
-    # rkgl4_hamiltonian_step_fp); unused here.
+def hamiltonian_rhs_inplace(d, charge_sign, out):
+    """Hamilton's equations for the dipole in canonical coordinates; writes into ``out``.
+
+    d = (x, y, z, px, py, pz) with p = v + charge_sign * A and A = (y, -x, 0)/r^3.
+    """
     x, y, z = d[0], d[1], d[2]
     px, py, pz = d[3], d[4], d[5]
 
@@ -237,137 +270,51 @@ def hamiltonian_rhs(t, d, charge_sign):
     r5 = r2 * r3
 
     if r5 == 0:
-        return np.zeros(6, dtype=ul.npfloat)
+        for i in range(6):
+            out[i] = 0.0
+        return
 
-    # Vector potential (Az = 0 for the dipole)
     Ax = y / r3
     Ay = -x / r3
 
-    # Mechanical momentum
     Pix = px - charge_sign * Ax
     Piy = py - charge_sign * Ay
     Piz = pz
 
-    # dq/dt
-    dxdt = Pix
-    dydt = Piy
-    dzdt = Piz
-
-    # dp/dt (hardcoded)
-    dpxdt = charge_sign * (
+    out[0] = Pix
+    out[1] = Piy
+    out[2] = Piz
+    out[3] = charge_sign * (
         -three * x * y / r5 * Pix
         - (one / r3 - three * x * x / r5) * Piy
     )
-
-    dpydt = charge_sign * (
+    out[4] = charge_sign * (
         (one / r3 - three * y * y / r5) * Pix
         + three * x * y / r5 * Piy
     )
-
-    dpzdt = charge_sign * three * z / r5 * (-y * Pix + x * Piy)
-
-    return np.array([dxdt, dydt, dzdt, dpxdt, dpydt, dpzdt], dtype=ul.npfloat)
+    out[5] = charge_sign * three * z / r5 * (-y * Pix + x * Piy)
 
 @ul.maybe_njit
-def rkgl4_hamiltonian_step(func, y0, dt, args=(), max_iter=10, tol=1e-12, eps=1e-13):
-    # RETAINED FOR REFERENCE — Newton (finite-difference Jacobian) stage solver.
-    # No longer called: rkgl4_hamiltonian() now uses fixed-point iteration
-    # (rkgl4_hamiltonian_step_fp) to match Yugo & Iyemori (2007). To switch back,
-    # point the loop's step call at this function instead.
-    sqrt3 = np.sqrt(3.0)
-    a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
-    a21, a22 = 0.25 + sqrt3 / 6.0, 0.25
-    b1 = b2 = 0.5
+def _rkgl4_step_fp_inplace(func, y0, dt, charge_sign, max_iter, tol,
+                           Y1, Y2, K0, K1, K0n, K1n, out):
+    """One 2-stage Gauss–Legendre step (order 4) by fixed-point iteration on
+    the stage derivatives, believed to match Yugo & Iyemori (2007) with the
+    Calvo et al. (2003) explicit-Euler starting guess.
 
-    dim = len(y0)
-    K = np.zeros((2, dim), dtype=ul.npfloat)
-
-    # Pre-allocate scratch arrays (avoids per-iteration allocation)
-    F = np.zeros(2 * dim, dtype=ul.npfloat)
-    J = np.zeros((2 * dim, 2 * dim), dtype=ul.npfloat)
-    K_save = np.zeros((2, dim), dtype=ul.npfloat)
-    Y1 = np.zeros(dim, dtype=ul.npfloat)
-    Y2 = np.zeros(dim, dtype=ul.npfloat)
-
-    # Initial guess from explicit Euler
-    K[0] = func(0.0, y0, *args)
-    K[1] = K[0].copy()
-
-    converged = False
-    for n in range(max_iter):
-        # Stage values
-        for d in range(dim):
-            Y1[d] = y0[d] + dt * (a11 * K[0, d] + a12 * K[1, d])
-            Y2[d] = y0[d] + dt * (a21 * K[0, d] + a22 * K[1, d])
-
-        F1 = K[0] - func(0.0, Y1, *args)
-        F2 = K[1] - func(0.0, Y2, *args)
-        F[:dim] = F1
-        F[dim:] = F2
-
-        # Convergence check
-        normF = np.max(np.abs(F))
-        if normF < tol:
-            converged = True
-            break
-
-        # Build Jacobian by finite differences (rebuilt each iteration → full
-        # Newton, quadratic convergence to ~machine precision).
-        J.fill(0.0)
-        for i in range(2):
-            for j in range(dim):
-                # Save, perturb, evaluate, restore
-                K_save[i, j] = K[i, j]
-                K[i, j] += eps
-
-                for d in range(dim):
-                    Y1[d] = y0[d] + dt * (a11 * K[0, d] + a12 * K[1, d])
-                    Y2[d] = y0[d] + dt * (a21 * K[0, d] + a22 * K[1, d])
-
-                F1_pert = K[0] - func(0.0, Y1, *args)
-                F2_pert = K[1] - func(0.0, Y2, *args)
-
-                for d in range(dim):
-                    J[d,       i * dim + j] = (F1_pert[d] - F1[d]) / eps
-                    J[dim + d, i * dim + j] = (F2_pert[d] - F2[d]) / eps
-
-                K[i, j] = K_save[i, j]
-
-        dK_flat = np.linalg.solve(J, -F)
-        for d in range(dim):
-            K[0, d] += dK_flat[d]
-            K[1, d] += dK_flat[dim + d]
-
-    # Number of Newton updates actually performed this step (0 if the Euler
-    # guess already met tol; max_iter if it never converged).
-    iters = n if converged else max_iter
-
-    result = np.zeros(dim, dtype=ul.npfloat)
-    for d in range(dim):
-        result[d] = y0[d] + dt * (b1 * K[0, d] + b2 * K[1, d])
-    return result, converged, iters
-
-
-@ul.maybe_njit
-def rkgl4_hamiltonian_step_fp(func, y0, dt, args=(), max_iter=100, tol=1e-15):
-    """One step of the 2-stage Gauss-Legendre method via FIXED-POINT
-    iteration — (I THINK) the scheme used by Yugo & Iyemori (2007), following
-    the starting algorithms of Calvo et al. (2003).
-
-    Returns (result, converged, iters).
+    ``func`` writes in place and the stage buffers are passed in, so nothing
+    is allocated per step. Writes the new state into ``out``; returns
+    (converged, iters).
     """
     sqrt3 = np.sqrt(3.0)
     a11, a12 = 0.25, 0.25 - sqrt3 / 6.0
     a21, a22 = 0.25 + sqrt3 / 6.0, 0.25
     b1 = b2 = 0.5
+    dim = y0.shape[0]
 
-    dim = len(y0)
-    Y1 = np.zeros(dim, dtype=ul.npfloat)
-    Y2 = np.zeros(dim, dtype=ul.npfloat)
-
-    # Initial guess from explicit Euler
-    K0 = func(0.0, y0, *args)
-    K1 = K0.copy()
+    # Initial guess from explicit Euler (K1 = copy of K0)
+    func(y0, charge_sign, K0)
+    for d in range(dim):
+        K1[d] = K0[d]
 
     converged = False
     iters = 0
@@ -376,57 +323,60 @@ def rkgl4_hamiltonian_step_fp(func, y0, dt, args=(), max_iter=100, tol=1e-15):
             Y1[d] = y0[d] + dt * (a11 * K0[d] + a12 * K1[d])
             Y2[d] = y0[d] + dt * (a21 * K0[d] + a22 * K1[d])
 
-        K0_new = func(0.0, Y1, *args)
-        K1_new = func(0.0, Y2, *args)
+        func(Y1, charge_sign, K0n)
+        func(Y2, charge_sign, K1n)
 
-        # Convergence: largest change in the stage derivatives this sweep.
         diff = 0.0
         for d in range(dim):
-            c0 = abs(K0_new[d] - K0[d])
-            c1 = abs(K1_new[d] - K1[d])
+            c0 = abs(K0n[d] - K0[d])
+            c1 = abs(K1n[d] - K1[d])
             if c0 > diff:
                 diff = c0
             if c1 > diff:
                 diff = c1
 
-        K0 = K0_new
-        K1 = K1_new
+        # K0 <- K0n, K1 <- K1n (swap buffers instead of copying)
+        K0, K0n = K0n, K0
+        K1, K1n = K1n, K1
         iters = n + 1
         if diff < tol:
             converged = True
             break
 
-    result = np.zeros(dim, dtype=ul.npfloat)
     for d in range(dim):
-        result[d] = y0[d] + dt * (b1 * K0[d] + b2 * K1[d])
-    return result, converged, iters
+        out[d] = y0[d] + dt * (b1 * K0[d] + b2 * K1[d])
+    return converged, iters
 
 
 @ul.maybe_njit
-def rkgl4_hamiltonian(func, y0, dt, steps, args=()):
-    """Symplectic integration loop (fixed-point stage solver — Yugo/Calvo).
+def rkgl4_hamiltonian(func, y0, dt, steps, charge_sign):
+    """Symplectic RKG (Gauss–Legendre s=2) integration loop.
 
-    Returns (trajectory, n_failed, avg_iters, max_iters):
-        n_failed   steps that hit max_iter without the iteration converging
-        avg_iters  mean fixed-point sweeps per step (solver-effort diagnostic)
-        max_iters  worst-case sweeps over the whole run
+    ``func`` is an in-place right-hand side, func(y, charge_sign, out)
+    (hamiltonian_rhs_inplace). Stage solve: fixed-point, tol 1e-15, cap 100.
 
-    To use the Newton solver instead, change the step call below back to
-    rkgl4_hamiltonian_step (retained above).
+    Returns (trajectory (steps + 1, dim), n_failed, avg_iters, max_iters):
+        n_failed   steps that hit the sweep cap without converging
+        avg_iters  mean fixed-point sweeps per step
+        max_iters  worst-case sweeps over the run
     """
-    d_out = np.zeros((steps + 1, len(y0)), dtype=ul.npfloat)
+    dim = y0.shape[0]
+    d_out = np.zeros((steps + 1, dim), dtype=ul.npfloat)
     d_out[0] = y0
     n_failed = 0
     total_iters = 0
     max_iters = 0
+    Y1 = np.empty(dim, dtype=ul.npfloat); Y2 = np.empty(dim, dtype=ul.npfloat)
+    K0 = np.empty(dim, dtype=ul.npfloat); K1 = np.empty(dim, dtype=ul.npfloat)
+    K0n = np.empty(dim, dtype=ul.npfloat); K1n = np.empty(dim, dtype=ul.npfloat)
 
     for i in range(1, steps + 1):
-        d_out[i], converged, iters = rkgl4_hamiltonian_step_fp(
-            func, d_out[i - 1], dt, args
-        )
+        converged, iters = _rkgl4_step_fp_inplace(
+            func, d_out[i - 1], dt, charge_sign, 100, 1e-15,
+            Y1, Y2, K0, K1, K0n, K1n, d_out[i])
         if not converged:
             n_failed += 1
-        total_iters += iters # keep track of total iterations per reviewer comment
+        total_iters += iters
         if iters > max_iters:
             max_iters = iters
 
@@ -453,12 +403,27 @@ def run_ps_streaming_with_decimation(
     user_min_phase,
     dragt_monitor=None,
     r_atmosphere=1.0,
+    global_index_start=0,
+    total_steps=None,
+    segment_index=None,
+    horner=False,
 ):
+    """Fixed-step PS run streamed to ``cache_path`` in chunks of ``chunk_steps``.
+
+    Keeps every ``decimate``-th global step (plus the last). In a segmented
+    run this integrates one segment: ``global_index_start`` is its first
+    global step and ``total_steps`` the whole run's count. Returns
+    (max_ps, t_integ), where t_integ is kernel time only.
+    """
     start_time_ps = time.time()
+    t_integ = 0.0      # time spent inside the PS kernel only (no h5 write, monitors, or JIT)
+
+    if total_steps is None:
+        total_steps = steps_ps
 
     cur_state = initial_pos_vel_ps.copy()
     remaining = steps_ps
-    global_index = 0
+    global_index = global_index_start
     max_ps = 0
     sum_orders = 0      # for mean over kept (output-grid) orders
     count_orders = 0
@@ -477,11 +442,14 @@ def run_ps_streaming_with_decimation(
         ps_grp.attrs["streaming"] = True
         ps_grp.attrs["chunksize"]= int(chunk_steps)
         ps_grp.attrs["decimate"] = int(decimate)
+        ps_grp.attrs["horner"]   = bool(horner)
         ps_grp.attrs["tol"] = ul.npfloat(tol)
         ps_grp.attrs["minphase"] = ul.npfloat(user_min_phase)
         ps_grp.attrs["E0"]       = float(e0_ps)
         ps_grp.attrs["mu0"]      = float(mu0_ps)
-        ps_grp.attrs["t0"]       = 0.0
+        # t0 is derived from the global step clock: dt * first-step index.
+        # For a single run global_index_start == 0, so this stays 0.0.
+        ps_grp.attrs["t0"]       = ul.npfloat(ps_step) * np.int64(global_index_start)
         # Row layout: [x,y,z, vx,vy,vz, Bx,By,Bz]
         ps_grp.attrs["save_rows"] = "pos_vel_B"
         ps_grp.attrs["n_save"]    = wr.n_save
@@ -514,9 +482,12 @@ def run_ps_streaming_with_decimation(
         while remaining > 0:
             this_chunk = min(chunk_steps, remaining)
 
+            _t0 = time.perf_counter()
             sol_chunk, orders_chunk = ps_integrate(
-                ps_order, this_chunk, cur_state, tol, charge_sign, ps_step
+                ps_order, this_chunk, cur_state, tol, charge_sign, ps_step,
+                horner=horner,
             )
+            t_integ += time.perf_counter() - _t0
 
             idx_chunk = np.arange(global_index, global_index + this_chunk + 1)
 
@@ -532,7 +503,7 @@ def run_ps_streaming_with_decimation(
             if decimate <= 1:
                 keep = np.ones_like(idx_eff, dtype=bool)
             else:
-                keep = (idx_eff % decimate == 0) | (idx_eff == steps_ps)
+                keep = (idx_eff % decimate == 0) | (idx_eff == total_steps)
 
             sol_keep = sol_eff[:, keep]
             orders_keep = orders_eff[keep]
@@ -573,17 +544,38 @@ def run_ps_streaming_with_decimation(
         if write_data:
             ps_grp.attrs["max_ps"] = max_ps
             ps_grp.attrs["mean_ps"] = (sum_orders / count_orders) if count_orders > 0 else 0.0
+            ps_grp.attrs["integ_time"] = float(t_integ)                      # kernel only
+            ps_grp.attrs["wall_time_incl_h5_write"] = float(time.time() - start_time_ps)  # NOT an integrator timing
+            # sum/count kept so the VDS can aggregate a true cross-segment mean.
+            ps_grp.attrs["sum_orders"]   = int(sum_orders)
+            ps_grp.attrs["count_orders"] = int(count_orders)
             ps_grp.attrs["hit_atmosphere"] = hit_atmosphere
             ps_grp.attrs["hit_atm_step"]   = hit_atm_step
             ps_grp.attrs["hit_atm_r"]      = hit_atm_r
 
-        elapsed_ps = time.time() - start_time_ps
+            # --- checkpoint handoff -------------------------------------------
+            # The only thing needed to continue the (autonomous) trajectory is
+            # the boundary state; the global step index is the exact clock.
+            # start/end states are stored as full-precision datasets (not attrs)
+            # so a restarted segment continues bit-for-bit.
+            ps_grp.attrs["start_global_index"] = int(global_index_start)
+            ps_grp.attrs["end_global_index"]   = int(global_index)
+            ps_grp.attrs["total_steps"]        = int(total_steps)
+            if segment_index is not None:
+                ps_grp.attrs["segment_index"]  = int(segment_index)
+            ps_grp.create_dataset(
+                "start_state", data=np.asarray(initial_pos_vel_ps, dtype=ul.npfloat))
+            ps_grp.create_dataset(
+                "end_state", data=np.asarray(cur_state, dtype=ul.npfloat))
 
         if hit_atmosphere:
             print(f"\n    *** ATMOSPHERE FLAG: particle crossed r < {r_atmosphere} R_E "
                   f"at step {hit_atm_step:,} (r_min = {hit_atm_r:.4f} R_E) ***\n")
 
-        return max_ps, elapsed_ps
+        # Returned time is INTEGRATION ONLY (kernel calls), so it is comparable
+        # with the RK timers, which never include output I/O. Wall time is in
+        # the h5 attrs as wall_time_incl_h5_write.
+        return max_ps, t_integ
 
     finally:
         if f is not None:

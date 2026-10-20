@@ -1,15 +1,21 @@
 """
-=====================================
-eps vs L with three HORIZONTAL zone bands:
-  1. Trapped 20+ years     (eps below ~0.8)  — green
-  2. Trapped, hits atm     (eps ~0.8 to ~1)  — blue
-  3. Untrapped / open      (eps above ~1)    — red
-
-L=1 removed (misleading — surface proximity, not GCA issue).
-Dragt REGULAR/CHAOTIC colors the points.
+eps_max vs L-shell for one master_simulation_log.csv, with three horizontal
+bands (trapped / trapped but hits atmosphere / untrapped) whose edges are set
+by the data, points coloured by Dragt orbit_character and x-marks on
+atmosphere hits.
 
 Usage:
-    python trappedbands.py path/to/master_simulation_log.csv
+    python scripts/plots/trappedbands.py data/dipoleb/<group>/master_simulation_log.csv [out.png]
+
+Input : columns L_eff, eps_max, energy_eV, pitch_deg, boundary, hit_atmosphere,
+        orbit_character.
+Output: out.png (default walt_eps_vs_L_zones_v3.png in the cwd).
+eps_max is clipped at EPS_DISPLAY_CAP before use, and the band edges are
+computed on the clipped values: OPEN runs carry eps_max ~1e16, so the upper
+(blue/red) edge is the geometric mean of the highest closed-and-hit value and
+the cap, i.e. a display convention rather than a measured threshold. Only the
+first (lowest-L) OPEN point per energy is drawn; rows with L_eff <= 1 are
+dropped.
 """
 import sys
 import numpy as np
@@ -17,13 +23,29 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+
+def _sci_label(v):
+    """Scientific-notation label with trailing zeros stripped, so a whole-mantissa
+    value stays compact (1e7) but a fractional one keeps its digits (1.5e7 —
+    not rounded to 2e7)."""
+    mant, exp = f"{v:.3e}".split("e")
+    mant = mant.rstrip("0").rstrip(".")
+    return f"{mant}e{int(exp)}"
+
 csv_path = sys.argv[1] if len(sys.argv) > 1 else "master_simulation_log.csv"
+out_path = sys.argv[2] if len(sys.argv) > 2 else "walt_eps_vs_L_zones_v3.png"
 # on_bad_lines='warn' skips rows whose column count doesn't match the header,
 # printing a warning so we know which rows were dropped.  Defensive: a single
 # corrupt row shouldn't prevent the whole plot from rendering.
+# Above this adiabaticity everything is equally "well past the GCA limit," so
+# the exact value carries no information. Cap the DISPLAY here: high-eps points
+# (high energy / large gyroradius) pin to the top edge instead of stretching the
+# axis out to 10^8+ and crushing the interesting 0.01–1 transition band. Tune freely.
+EPS_DISPLAY_CAP = 5.0
+
 df = pd.read_csv(csv_path, on_bad_lines='warn')
 df["L"] = df["L_eff"].round(2)
-df["eps_plot"] = df["eps_max"].clip(upper=5.0)
+df["eps_plot"] = df["eps_max"].clip(upper=EPS_DISPLAY_CAP)
 
 # ── Remove L=1 ──
 df = df[df["L"] > 1.0].copy()
@@ -75,6 +97,21 @@ print(f"Zone boundaries: trapped < {eps_boundary_1:.2f} < atmosphere < {eps_boun
 print(f"  (atm min: {eps_bot_atm if eps_bot_atm is not None else 'N/A'}, "
       f"atm max (closed): {eps_top_atm if eps_top_atm is not None else 'N/A'})")
 
+# ── Keep only the FIRST open point per energy ──
+# An L-sweep stays open for every L beyond the trapping boundary, so the open
+# diamonds form a long redundant tail per energy. Keep the lowest-L open point
+# (the boundary crossing itself) and drop the rest — from the PLOT only; the
+# zone-band boundaries above are computed from the full data. REGULAR/CHAOTIC
+# (closed) points are not affected.
+_open_mask = df["boundary"] == "OPEN"
+if _open_mask.any():
+    _first_open = df[_open_mask].groupby("energy_eV")["L"].idxmin()
+    n_dropped = int(_open_mask.sum()) - len(_first_open)
+    df = pd.concat([df[~_open_mask], df.loc[_first_open]]).sort_index()
+    if n_dropped:
+        print(f"  Open points: keeping first (lowest-L) per energy — "
+              f"{len(_first_open)} shown, {n_dropped} dropped from plot.")
+
 # ── Point colors (Dragt classification) ──
 zone_colors = {"REGULAR": "#2ca02c", "CHAOTIC": "#ff7f0e"}
 zone_labels_pts = {
@@ -87,8 +124,12 @@ zone_labels_pts = {
 # ══════════════════════════════════════════════════════════════════
 fig, ax = plt.subplots(figsize=(11, 7))
 
-y_lo = 0.003
-y_hi = 5.0
+# y-limits (log axis): data-driven BOTTOM (half a decade below the smallest
+# eps, so deeply-adiabatic low-energy points stay visible — the part you liked),
+# FIXED TOP at the display cap (high-eps points are clipped there, so the axis
+# top never blows out regardless of how extreme the largest eps is).
+y_lo = df["eps_plot"].min() / 2.0
+y_hi = EPS_DISPLAY_CAP
 
 # ── Three horizontal band fills ──
 ax.axhspan(y_lo, eps_boundary_1, color="#d4edda", alpha=0.45, zorder=0)
@@ -106,7 +147,7 @@ ax.text(9.7, 1.0, r"$\epsilon = 1.0$" "\n" r"GCA meaningless",
         fontsize=8, color="0.3", va="center", ha="left", fontstyle="italic", clip_on=False)
 
 # ── Zone labels inside plot area (right side) ──
-ax.text(8.8, np.sqrt(y_lo * eps_boundary_1) * 0.5, "Trapped (20+ years)",
+ax.text(8.8, np.sqrt(y_lo * eps_boundary_1) * 0.5, "Trapped (full run)",
         fontsize=10, color="#1b5e20", va="center", ha="right", fontstyle="italic",
         fontweight="bold", alpha=0.5)
 ax.text(8.8, np.sqrt(eps_boundary_1 * eps_boundary_2), "Trapped, hits atm",
@@ -128,7 +169,7 @@ for zone in ["REGULAR", "CHAOTIC"]:
     if not closed.empty:
         ax.scatter(
             closed["L"], closed["eps_plot"],
-            c=zone_colors[zone], s=60,
+            c=zone_colors[zone], s=30,
             label=zone_labels_pts[zone],
             edgecolors="none", linewidths=0, alpha=0.85, zorder=5,
         )
@@ -136,8 +177,8 @@ for zone in ["REGULAR", "CHAOTIC"]:
     if not opened.empty:
         ax.scatter(
             opened["L"], opened["eps_plot"],
-            c="#d62728", s=60,
-            label=r"Open boundary ($W_0^2 > P_\phi^4/16$)",
+            c="#d62728", s=30,
+            label=r"First open per energy ($W_0^2 > P_\phi^4/16$)",
             edgecolors="none", linewidths=0, alpha=0.85, zorder=5,
             marker="D",
         )
@@ -145,7 +186,7 @@ for zone in ["REGULAR", "CHAOTIC"]:
 # ── Atmosphere X markers ──
 atm = df[df["hit_atmosphere"] == True]
 if len(atm) > 0:
-    ax.scatter(atm["L"], atm["eps_plot"], marker="x", s=40, c="navy",
+    ax.scatter(atm["L"], atm["eps_plot"], marker="x", s=20, c="navy",
                linewidths=1.2, zorder=10, label="Hits atmosphere")
 
 # ── Energy series: faint connecting line per energy, labeled once ──
@@ -159,7 +200,7 @@ for e_kev, grp in df.groupby("energy_eV"):
     # Label once at the leftmost (lowest-L) point of the series
     x_lbl = series["L"].iloc[0]
     y_lbl = series["eps_plot"].iloc[0]
-    label_txt = f"{e_kev:.0e}".replace("e+0", "e").replace("e+", "e").replace("e-0", "e-")
+    label_txt = _sci_label(e_kev)
     ax.annotate(label_txt, (x_lbl, y_lbl), fontsize=8,
                 ha="right", va="center",
                 xytext=(-5, 0), textcoords="offset points",
@@ -176,7 +217,7 @@ if not df[df["boundary"] == "OPEN"].empty:
     point_handles.append(
         Line2D([0], [0], marker="D", color="w", markerfacecolor="#d62728",
                markeredgecolor="none", markersize=9,
-               label=r"Open ($W_0^2 > P_\phi^4/16$)")
+               label=r"First open per energy ($W_0^2 > P_\phi^4/16$)")
     )
 if len(atm) > 0:
     point_handles.append(
@@ -196,12 +237,12 @@ ax.set_title(
 )
 ax.set_yscale("log")
 ax.set_ylim(y_lo, y_hi)
-ax.set_xlim(0.8, 9.5)
+ax.set_xlim(0.5, 9.5)
 ax.grid(True, alpha=0.15, which="both")
 
 fig.subplots_adjust(right=0.82)
 fig.tight_layout(rect=[0, 0, 0.85, 1])
-fig.savefig("walt_eps_vs_L_zones_v3.png", dpi=300, bbox_inches="tight")
-print("Saved: walt_eps_vs_L_zones_v3.png")
+fig.savefig(out_path, dpi=300, bbox_inches="tight")
+print(f"Saved: {out_path}")
 
 plt.show()

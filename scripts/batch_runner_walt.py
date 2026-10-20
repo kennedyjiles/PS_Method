@@ -1,30 +1,20 @@
 #!/usr/bin/env python3
 """
-Batch Runner
-=============
-Orchestrates a parameter sweep of dipoleb.py across (energy, L-shell, pitch angle)
-and consolidates results into a single master CSV per batch group.
+Batch runner for the bounce/drift period tables (thesis Tables A.4 / A.5).
 
-Supports parallel execution on multi-core machines (e.g. M4 Max with 16 cores).
-Each worker gets its own minimal YAML config file (merged with base.yml at load time)
-to avoid race conditions.
-
-This script does NOT modify dipoleb.py or any core library files. It writes a
-minimal YAML config per run, then calls `python dipoleb.py <path/to/config.yml>`.
-dipoleb.py's __main__ block detects the .yml extension and passes it to load_config(),
-which auto-merges with base.yml via the `base_config` key.
-
-Output layout:
-    data/dipoleb/<group>/<run_key>/           per-run output (plots, h5, etc.)
-    data/dipoleb/<group>/master_simulation_log.csv   consolidated CSV for the batch
+Runs dipoleb.py over explicit (energy, L) cell lists at pitch 85, grouped into
+phases by gyroperiod tier (1-4 electrons, 5-6 protons), then merges the
+per-run CSVs into data/dipoleb/<group>/<particle>s/master_simulation_log.csv.
 
 Usage:
-    python scripts/batch_runner.py --phase 1 --workers 10
-    python scripts/batch_runner.py --phase 1 --workers 10 --adaptive
-    python scripts/batch_runner.py --phase 1 --workers 10 --dry-run
-    python scripts/batch_runner.py --phase 1 --workers 10 --resume
-    python scripts/batch_runner.py --phase 1 --group my_sweep --workers 10
+    python scripts/batch_runner_walt.py --phase N [--workers M] [--dry-run] [--resume]
+    python scripts/batch_runner_walt.py --phase 5 --group my_sweep     # -> data/dipoleb/my_sweep/protons/
+    python scripts/batch_runner_walt.py --single E1e+04_L5.00_P85.0
 
+Run keys are E<.0e>_L<.2f>_P<.1f>; the particle is carried by the group
+folder, not the key, so the progress ledger is kept per particle
+(scripts/batch_progress_walt_<particle>s.json). Per-cell YAMLs go to
+scripts/batch_tmp/.
 """
 
 import os
@@ -254,6 +244,9 @@ def build_chaotic_rerun_list(group):
             "gyroperiods": float(row["gyroperiods"]),
             "phase": "rerun",
             "use_adaptive": True,
+            # Carry the particle from the CSV; the "rerun" phase has no entry
+            # in PARTICLE, which used to re-run every electron as a proton.
+            "particle": str(row["particle"]).strip().lower() if "particle" in row and pd.notna(row["particle"]) else None,
         })
 
     print(f"  Found {len(runs)} chaotic runs to re-run with adaptive stepping.")
@@ -301,7 +294,7 @@ def write_config(run, config_path, group):
         "x_initial":   float(run["x_initial"]),
         "pitch_deg":   float(run["pitch_deg"]),
         "gyroperiods": float(run["gyroperiods"]),
-        "particle":    PARTICLE.get(run["phase"], "proton"),
+        "particle":    run.get("particle") or PARTICLE.get(run["phase"], "proton"),
         "read_data":   False,
         "solvers": {
             "adaptive": run.get("use_adaptive", False),
@@ -311,7 +304,7 @@ def write_config(run, config_path, group):
     # otherwise let OVERRIDES (or base.yml) decide.
     if "phi_deg" in run:
         sweep["phi_deg"] = float(run["phi_deg"])
-    # Phase 4 sets per-cell steps_per_gyro_ps; otherwise base.yml default applies.
+    # Per-phase steps_per_gyro.ps; otherwise base.yml default applies.
     if run.get("steps_per_gyro_ps") is not None:
         sweep["steps_per_gyro"] = {"ps": int(run["steps_per_gyro_ps"])}
     _deep_merge(cfg, sweep)
@@ -321,20 +314,18 @@ def write_config(run, config_path, group):
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
 
-# Module-level variable set by main() so execute_single_run can access it
-_batch_group = "walt"
-
-
-def execute_single_run(run):
+def execute_single_run(run, group):
     """
     Execute one dipoleb batch run.
     Called by worker processes -- must be a top-level function for pickling.
+    `group` is passed as an argument (not a module global): spawn-based
+    workers re-import this module and would see the default, not main()'s.
     Returns (run_key, status, elapsed_min, error_msg).
     """
     key = run_key(run)
 
     config_path = os.path.join(BATCH_TMP_DIR, f"{key}.yml")
-    write_config(run, config_path, _batch_group)
+    write_config(run, config_path, group)
 
     start = time.time()
     try:
@@ -370,7 +361,7 @@ def execute_single_run(run):
         return (key, "failed", elapsed, str(e))
 
 
-def run_parallel(runs, max_workers, dry_run=False):
+def run_parallel(runs, max_workers, group, dry_run=False):
     """Execute runs in parallel using ProcessPoolExecutor."""
     progress = load_progress()
     n_done = 0
@@ -392,7 +383,7 @@ def run_parallel(runs, max_workers, dry_run=False):
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_to_run = {}
         for run in runs:
-            future = executor.submit(execute_single_run, run)
+            future = executor.submit(execute_single_run, run, group)
             future_to_run[future] = run
 
         try:
@@ -408,14 +399,20 @@ def run_parallel(runs, max_workers, dry_run=False):
                 if status == "completed":
                     print(f"  [{completed_total:>4d}/{total}] ok {key}  "
                           f"{elapsed:.1f} min")
-                    progress["completed"].append(key)
+                    if key not in progress["completed"]:
+                        progress["completed"].append(key)
+                    if key in progress["failed"]:          # success supersedes an old failure
+                        progress["failed"].remove(key)
                 else:
                     print(f"  [{completed_total:>4d}/{total}] FAIL {key}  "
                           f"{status} after {elapsed:.1f} min")
                     if err:
                         for line in err.split("\n")[-3:]:
                             print(f"           {line}")
-                    progress["failed"].append(key)
+                    if key not in progress["failed"]:
+                        progress["failed"].append(key)
+                    if key in progress["completed"]:       # failure supersedes an old success
+                        progress["completed"].remove(key)
 
                 # Save progress periodically (every 10 completions)
                 if completed_total % 10 == 0:
@@ -435,7 +432,7 @@ def run_parallel(runs, max_workers, dry_run=False):
     return n_done, n_fail
 
 
-def run_sequential(runs, dry_run=False):
+def run_sequential(runs, group, dry_run=False):
     """Execute runs one at a time (original behavior)."""
     progress = load_progress()
     n_done = 0
@@ -453,7 +450,7 @@ def run_sequential(runs, dry_run=False):
             if dry_run:
                 continue
 
-            key, status, elapsed, err = execute_single_run(run)
+            key, status, elapsed, err = execute_single_run(run, group)
 
             if status == "completed":
                 print(f"         ok completed in {elapsed:.1f} min")
@@ -541,7 +538,10 @@ Examples:
     base_group = args.group or DEFAULT_GROUPS[args.phase]
     particle = PARTICLE.get(args.phase, "proton")
     group = f"{base_group}/{particle}s"
-    _batch_group = group
+    # One ledger per particle: electron and proton phases reuse the same
+    # (E, L, pitch) keys, so a shared ledger made --resume skip real cells.
+    global PROGRESS_PATH
+    PROGRESS_PATH = os.path.join(SCRIPT_DIR, f"batch_progress_walt_{particle}s.json")
 
     # ── Rerun-chaotic mode ─────────────────────────────────────────
     if args.rerun_chaotic:
@@ -605,9 +605,9 @@ Examples:
 
     # Execute
     if args.workers > 1:
-        n_done, n_fail = run_parallel(runs, args.workers, dry_run=args.dry_run)
+        n_done, n_fail = run_parallel(runs, args.workers, group, dry_run=args.dry_run)
     else:
-        n_done, n_fail = run_sequential(runs, dry_run=args.dry_run)
+        n_done, n_fail = run_sequential(runs, group, dry_run=args.dry_run)
 
     if args.dry_run:
         return
@@ -659,7 +659,7 @@ def consolidate_csv_logs(group):
     frames = []
     for f in csv_files:
         try:
-            frames.append(pd.read_csv(f))
+            frames.append(pd.read_csv(f, dtype={"run_id": str}))  # keep hex hashes like 052699 intact
         except Exception as e:
             print(f"  Warning: could not read {f}: {e}")
 
